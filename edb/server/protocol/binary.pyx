@@ -1905,6 +1905,7 @@ cdef class EdgeConnection:
                     await self.wait_for_message(report_idling=True)
 
                 mtype = self.buffer.get_message_type()
+                logger.info(f'Get message type: {mtype}')
 
                 flush_sync_on_error = False
 
@@ -1924,6 +1925,9 @@ cdef class EdgeConnection:
 
                     elif mtype == b'O':
                         await self.optimistic_execute()
+
+                    elif mtype == b'F':
+                        await self.fast_query()
 
                     elif mtype == b'Q':
                         flush_sync_on_error = True
@@ -2420,6 +2424,7 @@ cdef class EdgeConnection:
             self.abort()
 
     def data_received(self, data):
+        logger.info(f'Received data: {data}')
         self.buffer.feed_data(data)
         if self._msg_take_waiter is not None and self.buffer.take_message():
             self._msg_take_waiter.set_result(True)
@@ -2876,6 +2881,41 @@ cdef class EdgeConnection:
                     descriptor_stack.append(desc.elements)
 
         return type_map
+
+    async def fast_query(self):
+        cdef:
+            bytes eql
+            QueryRequestInfo query_req
+
+        self._last_anon_compiled = None
+
+        eql, query_req, stmt_name = self.parse_prepare_query_part(True)
+        compiled_query = await self._parse(eql, query_req)
+
+        self._last_anon_compiled = compiled_query
+
+        rtype = self.buffer.read_byte()
+        if rtype == b'T':
+            desc_msg = self.make_describe_msg(compiled_query)
+        else:
+            raise errors.BinaryProtocolError(
+                f'unsupported "describe" message mode {chr(rtype)!r}')
+
+        arguments = self.buffer.read_len_prefixed_bytes()
+        if arguments:
+            raise errors.UnsupportedFeatureError(
+                'arguments are not yet supporteed')
+
+        self.buffer.finish_message()
+
+        if compiled_query.query_unit.capabilities & ~query_req.allow_capabilities:
+            raise compiled_query.query_unit.capabilities.make_error(
+                query_req.allow_capabilities,
+                errors.DisabledCapabilityError,
+            )
+
+        self.write(desc_msg)
+        await self._execute(compiled_query, arguments, False)
 
 
 @cython.final
