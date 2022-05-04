@@ -262,6 +262,13 @@ def pg_type_from_ir_typeref(
 
 
 class _PointerStorageInfo:
+    __slots__ = (
+        'table_name',
+        'table_type',
+        'column_name',
+        'column_type',
+    )
+
     @classmethod
     def _source_table_info(cls, schema, pointer):
         table = common.get_backend_name(
@@ -383,7 +390,7 @@ class _PointerStorageInfo:
                 self.table_type, self.column_name, self.column_type, id(self))
 
 
-@functools.lru_cache()
+@functools.lru_cache(maxsize=5000)
 def get_pointer_storage_info(
         pointer, *, schema, source=None, resolve_type=True,
         link_bias=False):
