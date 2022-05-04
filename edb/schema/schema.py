@@ -1415,6 +1415,9 @@ class FlatSchema(Schema):
         return (
             f'<{type(self).__name__} gen:{self._generation} at {id(self):#x}>')
 
+    def __hash__(self):
+        return hash((self._generation, super().__hash__()))
+
 
 class SchemaIterator(Generic[so.Object_T]):
     def __init__(
