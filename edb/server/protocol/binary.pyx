@@ -1905,7 +1905,6 @@ cdef class EdgeConnection:
                     await self.wait_for_message(report_idling=True)
 
                 mtype = self.buffer.get_message_type()
-                logger.info(f'Get message type: {mtype}')
 
                 flush_sync_on_error = False
 
@@ -2424,7 +2423,6 @@ cdef class EdgeConnection:
             self.abort()
 
     def data_received(self, data):
-        logger.info(f'Received data: {data}')
         self.buffer.feed_data(data)
         if self._msg_take_waiter is not None and self.buffer.take_message():
             self._msg_take_waiter.set_result(True)
