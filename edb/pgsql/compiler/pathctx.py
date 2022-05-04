@@ -844,12 +844,16 @@ def maybe_get_path_rvar(
         flavor: str='normal',
         env: context.Environment) -> Optional[pgast.PathRangeVar]:
     rvar = env.external_rvars.get((path_id, aspect))
+    if rvar is not None:
+        return rvar
+
     path_rvar_map = stmt.maybe_get_rvar_map(flavor)
-    if path_rvar_map is not None:
-        if rvar is None and path_rvar_map:
+    if path_rvar_map:
+        if aspect == 'identity':
+            rvar = path_rvar_map.get((path_id, aspect)) or \
+                path_rvar_map.get((path_id, 'value'))
+        else:
             rvar = path_rvar_map.get((path_id, aspect))
-        if rvar is None and aspect == 'identity':
-            rvar = path_rvar_map.get((path_id, 'value'))
     return rvar
 
 

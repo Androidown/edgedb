@@ -774,8 +774,8 @@ def update_scope(
         assert p.path_id is not None
         ctx.path_scope[p.path_id] = stmt
 
+    parent_scope = scope_tree.parent
     for child_path in scope_tree.get_all_paths():
-        parent_scope = scope_tree.parent
         if (parent_scope is None or
                 not parent_scope.is_visible(child_path)):
             pathctx.put_path_id_mask(stmt, child_path)
