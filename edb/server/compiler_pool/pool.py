@@ -35,6 +35,7 @@ import immutables
 
 from edb.common import debug
 from edb.common import taskgroup
+from edb.common import util
 
 from edb.pgsql import params as pgparams
 
@@ -64,7 +65,7 @@ _ENV = os.environ.copy()
 _ENV['PYTHONPATH'] = ':'.join(sys.path)
 
 
-@functools.lru_cache()
+@util.simple_lru()
 def _pickle_memoized(schema):
     return pickle.dumps(schema, -1)
 
