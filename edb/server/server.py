@@ -429,11 +429,11 @@ class Server(ha_base.ClusterProtocol):
             'session_idle_timeout', self._dbindex.get_sys_config())
 
         timeout = session_idle_timeout.to_microseconds()
-        timeout /= 1_000_000.0  # convert to seconds
+        timeout_secs = timeout / 1_000_000.0  # convert to seconds
 
-        if timeout > 0:
+        if timeout_secs > 0:
             self._idle_gc_handler = self.__loop.call_later(
-                timeout, self._idle_gc_collector)
+                timeout_secs, self._idle_gc_collector)
 
         return timeout
 
