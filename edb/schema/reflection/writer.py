@@ -1021,16 +1021,15 @@ def write_meta_delete_object(
             pgql = f"""
             WITH D as (
             DELETE FROM
-                edgedbstd."{table.id}" as {table_name}
+                edgedbstd."{table.id}" as "{table_name}"
             WHERE
-                {table_name}."{ptr.id}" = $1
+                "{table_name}"."{ptr.id}" = $1
             RETURNING
-                to_json(json_build_object('id', {table_name}.ID)) AS deleted_id
+                to_json(json_build_object('id', "{table_name}".ID)) AS deleted_id
             )
             SELECT COALESCE(json_agg(deleted_id), '[]')
             FROM D
             """
-            print(pgql)
             blocks.append((False, pgql, {'__classname': str(cmd.classname)}))
         else:
             to_delete = ['D'] + [f'D.{link}' for link in proxy_links]
