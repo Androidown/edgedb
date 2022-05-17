@@ -93,7 +93,7 @@ def needs_quoting(string):
 
 def qname(*parts):
     assert len(parts) <= 3, parts
-    return '.'.join([quote_ident(q) for q in parts])
+    return '.'.join(map(quote_ident, parts))
 
 
 def quote_type(type_):
