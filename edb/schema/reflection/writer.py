@@ -30,6 +30,7 @@ from edb.edgeql import qltypes
 
 from edb.schema import constraints as s_constr
 from edb.schema import delta as sd
+from edb.schema import name as sn
 from edb.schema import objects as so
 from edb.schema import objtypes as s_objtypes
 from edb.schema import referencing as s_ref
@@ -40,6 +41,17 @@ from edb.schema import types as s_types
 from edb.schema.reflection import structure as sr_struct
 
 
+def _resolve_ptr_from_name(source, ptr_name, *schemas):
+    for schema in schemas:
+        ptr = source.get_pointers(schema).get(
+            schema,
+            sn.UnqualName(name=ptr_name),
+            None
+        )
+        if ptr is not None:
+            return ptr
+
+
 @functools.singledispatch
 def write_meta(
     cmd: sd.Command,
@@ -47,9 +59,10 @@ def write_meta(
     classlayout: Dict[Type[so.Object], sr_struct.SchemaTypeLayout],
     schema: s_schema.Schema,
     context: sd.CommandContext,
-    blocks: List[Tuple[str, Dict[str, Any]]],
+    blocks: List[Tuple[bool, str, Dict[str, Any]]],
     internal_schema_mode: bool,
     stdmode: bool,
+    refl_schema: s_schema.Schema,
 ) -> None:
     """Generate EdgeQL statements populating schema metadata.
 
@@ -70,6 +83,8 @@ def write_meta(
             If True, *cmd* represents internal `schema` modifications.
         stdmode:
             If True, *cmd* represents a standard library bootstrap DDL.
+        refl_schema:
+            used in internal pointer resolution
     """
     raise NotImplementedError(f"cannot handle {cmd!r}")
 
@@ -80,9 +95,10 @@ def _descend(
     classlayout: Dict[Type[so.Object], sr_struct.SchemaTypeLayout],
     schema: s_schema.Schema,
     context: sd.CommandContext,
-    blocks: List[Tuple[str, Dict[str, Any]]],
+    blocks: List[Tuple[bool, str, Dict[str, Any]]],
     internal_schema_mode: bool,
     stdmode: bool,
+    refl_schema: s_schema.Schema,
     prerequisites: bool = False,
 ) -> None:
 
@@ -118,6 +134,7 @@ def _descend(
                     blocks=blocks,
                     internal_schema_mode=internal_schema_mode,
                     stdmode=stdmode,
+                    refl_schema=refl_schema,
                 )
     else:
         for subcmd in commands:
@@ -131,6 +148,7 @@ def _descend(
                 blocks=blocks,
                 internal_schema_mode=internal_schema_mode,
                 stdmode=stdmode,
+                refl_schema=refl_schema,
             )
 
 
@@ -141,9 +159,10 @@ def write_meta_delta_root(
     classlayout: Dict[Type[so.Object], sr_struct.SchemaTypeLayout],
     schema: s_schema.Schema,
     context: sd.CommandContext,
-    blocks: List[Tuple[str, Dict[str, Any]]],
+    blocks: List[Tuple[bool, str, Dict[str, Any]]],
     internal_schema_mode: bool,
     stdmode: bool,
+    refl_schema: s_schema.Schema,
 ) -> None:
     _descend(
         cmd,
@@ -153,6 +172,7 @@ def write_meta_delta_root(
         blocks=blocks,
         internal_schema_mode=internal_schema_mode,
         stdmode=stdmode,
+        refl_schema=refl_schema
     )
 
 
@@ -530,9 +550,10 @@ def write_meta_create_object(
     classlayout: Dict[Type[so.Object], sr_struct.SchemaTypeLayout],
     schema: s_schema.Schema,
     context: sd.CommandContext,
-    blocks: List[Tuple[str, Dict[str, Any]]],
+    blocks: List[Tuple[bool, str, Dict[str, Any]]],
     internal_schema_mode: bool,
     stdmode: bool,
+    refl_schema: s_schema.Schema,
 ) -> None:
     _descend(
         cmd,
@@ -543,6 +564,7 @@ def write_meta_create_object(
         prerequisites=True,
         internal_schema_mode=internal_schema_mode,
         stdmode=stdmode,
+        refl_schema=refl_schema,
     )
 
     mcls = cmd.maybe_get_schema_metaclass()
@@ -568,7 +590,7 @@ def write_meta_create_object(
                 }}
             '''
 
-            blocks.append((insert_query, variables))
+            blocks.append((True, insert_query, variables))
         else:
             refop = refctx.op
             refcls = refop.get_schema_metaclass()
@@ -663,7 +685,7 @@ def write_meta_create_object(
 
             ref_name = context.get_referrer_name(refctx)
             variables['__parent_classname'] = json.dumps(str(ref_name))
-            blocks.append((parent_update_query, variables))
+            blocks.append((True, parent_update_query, variables))
 
     _descend(
         cmd,
@@ -673,6 +695,7 @@ def write_meta_create_object(
         blocks=blocks,
         internal_schema_mode=internal_schema_mode,
         stdmode=stdmode,
+        refl_schema=refl_schema,
     )
 
 
@@ -683,9 +706,10 @@ def write_meta_alter_object(
     classlayout: Dict[Type[so.Object], sr_struct.SchemaTypeLayout],
     schema: s_schema.Schema,
     context: sd.CommandContext,
-    blocks: List[Tuple[str, Dict[str, Any]]],
+    blocks: List[Tuple[bool, str, Dict[str, Any]]],
     internal_schema_mode: bool,
     stdmode: bool,
+    refl_schema: s_schema.Schema,
 ) -> None:
     _descend(
         cmd,
@@ -696,6 +720,7 @@ def write_meta_alter_object(
         prerequisites=True,
         internal_schema_mode=internal_schema_mode,
         stdmode=stdmode,
+        refl_schema=refl_schema,
     )
 
     mcls = cmd.maybe_get_schema_metaclass()
@@ -718,7 +743,7 @@ def write_meta_alter_object(
                 }};
             '''
             variables['__classname'] = json.dumps(str(cmd.classname))
-            blocks.append((query, variables))
+            blocks.append((True, query, variables))
 
         if isinstance(cmd, s_ref.ReferencedObjectCommand):
             refctx = cmd.get_referrer_context(context)
@@ -741,6 +766,7 @@ def write_meta_alter_object(
         blocks=blocks,
         internal_schema_mode=internal_schema_mode,
         stdmode=stdmode,
+        refl_schema=refl_schema
     )
 
 
@@ -749,7 +775,7 @@ def _update_lprops(
     *,
     classlayout: Dict[Type[so.Object], sr_struct.SchemaTypeLayout],
     schema: s_schema.Schema,
-    blocks: List[Tuple[str, Dict[str, Any]]],
+    blocks: List[Tuple[bool, str, Dict[str, Any]]],
     context: sd.CommandContext,
     internal_schema_mode: bool,
     stdmode: bool,
@@ -846,7 +872,7 @@ def _update_lprops(
             }}
         ''')
 
-        blocks.append((parent_update_query, parent_variables))
+        blocks.append((True, parent_update_query, parent_variables))
 
         assignments = []
 
@@ -898,7 +924,7 @@ def _update_lprops(
         ''')
 
         parent_variables.update(append_variables)
-        blocks.append((parent_update_query, parent_variables))
+        blocks.append((True, parent_update_query, parent_variables))
 
 
 @write_meta.register
@@ -908,9 +934,10 @@ def write_meta_delete_object(
     classlayout: Dict[Type[so.Object], sr_struct.SchemaTypeLayout],
     schema: s_schema.Schema,
     context: sd.CommandContext,
-    blocks: List[Tuple[str, Dict[str, Any]]],
+    blocks: List[Tuple[bool, str, Dict[str, Any]]],
     internal_schema_mode: bool,
     stdmode: bool,
+    refl_schema: s_schema.Schema,
 ) -> None:
     _descend(
         cmd,
@@ -921,6 +948,7 @@ def write_meta_delete_object(
         prerequisites=True,
         internal_schema_mode=internal_schema_mode,
         stdmode=stdmode,
+        refl_schema=refl_schema,
     )
 
     _descend(
@@ -931,6 +959,7 @@ def write_meta_delete_object(
         blocks=blocks,
         internal_schema_mode=internal_schema_mode,
         stdmode=stdmode,
+        refl_schema=refl_schema,
     )
 
     mcls = cmd.maybe_get_schema_metaclass()
@@ -976,7 +1005,7 @@ def write_meta_delete_object(
                 json.dumps(str(ref_name))
             )
 
-            blocks.append((parent_update_query, parent_variables))
+            blocks.append((True, parent_update_query, parent_variables))
 
         # We need to delete any links created via reflection_proxy
         layout = classlayout[mcls]
@@ -984,16 +1013,35 @@ def write_meta_delete_object(
             link for link, layout_entry in layout.items()
             if layout_entry.reflection_proxy
         ]
+        table_name = mcls.__name__
 
-        to_delete = ['D'] + [f'D.{link}' for link in proxy_links]
-        operations = [f'(DELETE {x})' for x in to_delete]
-        query = f'''
-            WITH D := (SELECT schema::{mcls.__name__}
-                       FILTER .name__internal = <str>$__classname),
-            SELECT {{{", ".join(operations)}}};
-        '''
-        variables = {'__classname': json.dumps(str(cmd.classname))}
-        blocks.append((query, variables))
+        if not proxy_links:
+            table = schema.get(sn.QualName(module='schema', name=table_name))
+            ptr = _resolve_ptr_from_name(table, 'name__internal', refl_schema, schema)
+            pgql = f"""
+            WITH D as (
+            DELETE FROM
+                edgedbstd."{table.id}" as {table_name}
+            WHERE
+                {table_name}."{ptr.id}" = $1
+            RETURNING
+                to_json(json_build_object('id', {table_name}.ID)) AS deleted_id
+            )
+            SELECT COALESCE(json_agg(deleted_id), '[]')
+            FROM D
+            """
+            print(pgql)
+            blocks.append((False, pgql, {'__classname': str(cmd.classname)}))
+        else:
+            to_delete = ['D'] + [f'D.{link}' for link in proxy_links]
+            operations = [f'(DELETE {x})' for x in to_delete]
+            query = f'''
+                WITH D := (SELECT schema::{mcls.__name__}
+                           FILTER .name__internal = <str>$__classname),
+                SELECT {{{", ".join(operations)}}};
+            '''
+            variables = {'__classname': json.dumps(str(cmd.classname))}
+            blocks.append((True, query, variables))
 
 
 @write_meta.register
@@ -1003,9 +1051,10 @@ def write_meta_rename_object(
     classlayout: Dict[Type[so.Object], sr_struct.SchemaTypeLayout],
     schema: s_schema.Schema,
     context: sd.CommandContext,
-    blocks: List[Tuple[str, Dict[str, Any]]],
+    blocks: List[Tuple[bool, str, Dict[str, Any]]],
     internal_schema_mode: bool,
     stdmode: bool,
+    refl_schema: s_schema.Schema,
 ) -> None:
     # Delegate to the more general function, and then record the rename.
     write_meta_alter_object(
@@ -1016,6 +1065,7 @@ def write_meta_rename_object(
         blocks=blocks,
         internal_schema_mode=internal_schema_mode,
         stdmode=stdmode,
+        refl_schema=refl_schema,
     )
 
     context.early_renames[cmd.classname] = cmd.new_name
@@ -1028,9 +1078,10 @@ def write_meta_nop(
     classlayout: Dict[Type[so.Object], sr_struct.SchemaTypeLayout],
     schema: s_schema.Schema,
     context: sd.CommandContext,
-    blocks: List[Tuple[str, Dict[str, Any]]],
+    blocks: List[Tuple[bool, str, Dict[str, Any]]],
     internal_schema_mode: bool,
     stdmode: bool,
+    refl_schema: s_schema.Schema,
 ) -> None:
     pass
 
@@ -1042,8 +1093,9 @@ def write_meta_query(
     classlayout: Dict[Type[so.Object], sr_struct.SchemaTypeLayout],
     schema: s_schema.Schema,
     context: sd.CommandContext,
-    blocks: List[Tuple[str, Dict[str, Any]]],
+    blocks: List[Tuple[bool, str, Dict[str, Any]]],
     internal_schema_mode: bool,
     stdmode: bool,
+    refl_schema: s_schema.Schema,
 ) -> None:
     pass
