@@ -56,6 +56,7 @@ from edb.schema import pointers as s_pointers
 from edb.schema import pseudo as s_pseudo
 from edb.schema import roles as s_roles
 from edb.schema import sources as s_sources
+from edb.schema import schema as s_schema
 from edb.schema import types as s_types
 from edb.schema import version as s_ver
 from edb.schema import utils as s_utils
@@ -83,9 +84,6 @@ from . import compiler
 from . import codegen
 from . import schemamech
 from . import types
-
-if TYPE_CHECKING:
-    from edb.schema import schema as s_schema
 
 
 def has_table(obj, schema):
@@ -5402,6 +5400,16 @@ class UpdateEndpointDeleteActions(MetaCommand):
                             orig_target.id, None)
                         if current_orig_target is not None:
                             affected_targets.add(current_orig_target)
+
+        # filter builtin schemas as we will never modify them
+        affected_targets = {
+            t for t in affected_targets if
+            t.get_name(schema).get_module_name() not in s_schema.STD_MODULES
+        }
+        affected_sources = {
+            s for s in affected_sources if
+            s.get_name(schema).get_module_name() not in s_schema.STD_MODULES
+        }
 
         for source in affected_sources:
             links = []
