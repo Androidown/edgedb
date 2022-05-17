@@ -3104,7 +3104,7 @@ class CreateObjectType(ObjectTypeMetaCommand,
             object=objtype_table,
             text=str(objtype.get_verbosename(schema)),
         ))
-        self.create_inhview(schema, context, objtype)
+        # self.create_inhview(schema, context, objtype)
         return schema
 
     def _create_finalize(self, schema, context):
