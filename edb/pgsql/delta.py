@@ -3211,6 +3211,10 @@ class DeleteObjectType(ObjectTypeMetaCommand,
             schema, objtype, catenate=False)
 
         orig_schema = schema
+        cmd_del_prop = self.get_subcommands(type=DeleteProperty)
+        if cmd_del_prop:
+            cmd_del_prop[0].is_first = True
+
         schema = super().apply(schema, context)
 
         self.apply_scheduled_inhview_updates(schema, context)
@@ -4493,6 +4497,7 @@ class DeleteLink(LinkMetaCommand, adapts=s_links.DeleteLink):
 
 
 class PropertyMetaCommand(CompositeMetaCommand, PointerMetaCommand):
+    is_first = False
 
     @classmethod
     def _create_table(
@@ -4677,6 +4682,7 @@ class PropertyMetaCommand(CompositeMetaCommand, PointerMetaCommand):
                     context,
                     source,
                     exclude_ptrs=frozenset((prop,)),
+                    alter_ancestors=self.is_first
                 )
 
                 col = dbops.AlterTableDropColumn(
@@ -5402,14 +5408,14 @@ class UpdateEndpointDeleteActions(MetaCommand):
                             affected_targets.add(current_orig_target)
 
         # filter builtin schemas as we will never modify them
-        affected_targets = {
-            t for t in affected_targets if
-            t.get_name(schema).get_module_name() not in s_schema.STD_MODULES
-        }
-        affected_sources = {
-            s for s in affected_sources if
-            s.get_name(schema).get_module_name() not in s_schema.STD_MODULES
-        }
+        # affected_targets = {
+        #     t for t in affected_targets if
+        #     t.get_name(schema).get_module_name() not in s_schema.STD_MODULES
+        # }
+        # affected_sources = {
+        #     s for s in affected_sources if
+        #     s.get_name(schema).get_module_name() not in s_schema.STD_MODULES
+        # }
 
         for source in affected_sources:
             links = []

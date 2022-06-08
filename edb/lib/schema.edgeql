@@ -51,6 +51,10 @@ CREATE ABSTRACT TYPE schema::Object EXTENDING std::BaseObject {
         SET default := false;
     };
     CREATE PROPERTY computed_fields -> array<std::str>;
+    CREATE PROPERTY module_name -> std::str {
+        SET readonly := true;
+        SET default := 'builtin';
+    };
 };
 
 
