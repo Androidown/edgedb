@@ -2883,6 +2883,14 @@ class CreateObject(ObjectCommand[so.Object_T], Generic[so.Object_T]):
             # Record the generated ID.
             self.set_attribute_value('id', self.scls.id)
 
+        classsname = self.classname
+
+        if isinstance(classsname, sn.QualName):
+            modulename = classsname.module
+        else:
+            modulename = 'builtin'
+        self.set_attribute_value('module_name', modulename)
+
         return schema
 
     def canonicalize_attributes(

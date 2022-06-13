@@ -41,6 +41,8 @@ from edb.schema import objtypes as s_objtypes
 from edb.schema import schema as s_schema
 from edb.schema import types as s_types
 
+STD_MODULE_TEXT = ','.join(f"'{str(mod)}'" for mod in s_schema.STD_MODULES)
+
 
 class FieldType(enum.StrEnum):
     """Field type tag for fields requiring special handling."""
@@ -91,6 +93,7 @@ class SchemaReflectionParts(NamedTuple):
     intro_schema_delta: sd.Command
     class_layout: Dict[Type[s_obj.Object], SchemaTypeLayout]
     local_intro_parts: List[str]
+    conditioned_local_intro_parts: List[str]
     global_intro_parts: List[str]
 
 
@@ -746,6 +749,7 @@ def generate_structure(schema: s_schema.Schema) -> SchemaReflectionParts:
                 read_shape.append(read_ptr)
 
     local_parts = []
+    local_conditioned_parts = []
     global_parts = []
     for py_cls, shape_els in read_sets.items():
         if (
@@ -759,24 +763,29 @@ def generate_structure(schema: s_schema.Schema) -> SchemaReflectionParts:
 
         rschema_name = get_schema_name_for_pycls(py_cls)
         shape = ',\n'.join(shape_els)
-        qry = f'''
+        cqry = qry = f'''
             SELECT {rschema_name} {{
                 {shape}
             }}
         '''
         if not issubclass(py_cls, (s_types.Collection, s_obj.GlobalObject)):
             qry += ' FILTER NOT .builtin'
+            cqry = qry + " AND (NOT exists .module_name " \
+                         " OR .module_name in " \
+                         f"{{<std::str>$__module_name, 'builtin', {STD_MODULE_TEXT}}})"
 
         if issubclass(py_cls, s_obj.GlobalObject):
             global_parts.append(qry)
         else:
             local_parts.append(qry)
+            local_conditioned_parts.append(cqry)
 
     delta.canonical = True
     return SchemaReflectionParts(
         intro_schema_delta=delta,
         class_layout=classlayout,
         local_intro_parts=local_parts,
+        conditioned_local_intro_parts=local_conditioned_parts,
         global_intro_parts=global_parts,
     )
 
