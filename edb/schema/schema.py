@@ -27,6 +27,7 @@ import functools
 import itertools
 
 import immutables as immu
+from edb.errors import SchemaError
 
 from edb import errors
 from edb.common import english, util
@@ -61,6 +62,10 @@ STD_MODULES = (
     sn.UnqualName('cfg'),
     sn.UnqualName('cal'),
 )
+
+BUILTIN_MODULES = STD_MODULES + (sn.UnqualName('builtin'), )
+
+STD_MODULES_STR = tuple(str(uname) for uname in STD_MODULES)
 
 # Specifies the order of processing of files and directories in lib/
 STD_SOURCES = (
@@ -545,6 +550,165 @@ class FlatSchema(Schema):
         new._generation = self._generation + 1
 
         return new
+
+    def split_by_module(
+        self
+    ) -> Dict[str, FlatSchema]:
+        get_by_id = self.get_by_id
+
+        common_id = []
+        module_to_ids = collections.defaultdict(list)
+
+        for _id in self._id_to_type:
+            obj = get_by_id(_id)
+            obj_name = obj.get_name(self)
+
+            if isinstance(obj_name, sn.UnqualName):
+                common_id.append(_id)
+            else:
+                module_name = obj_name.get_module_name()
+                if module_name in BUILTIN_MODULES:
+                    common_id.append(_id)
+                else:
+                    module_to_ids[module_name].append(_id)
+
+        splited_schema: Dict[str, FlatSchema] = {}
+
+        get_type_by_id = self._id_to_type.get
+        get_data_by_id = self._id_to_data.get
+
+        for module_name, ids in module_to_ids.items():
+            splited_schema[str(module_name)] = new = FlatSchema.__new__(FlatSchema)
+            target_ids = set(ids + common_id)
+
+            new._id_to_type = immu.Map(
+                (_id, get_type_by_id(_id))
+                for _id in target_ids
+            )
+            new._id_to_data = immu.Map(
+                (_id, get_data_by_id(_id))
+                for _id in target_ids
+            )
+
+            refs_to_final = immu.Map()
+            for _id, refs_to in self._refs_to.items():
+                refs_to_lv1 = immu.Map()
+                for key, nest_refs in refs_to.items():
+                    refs_to_lv2 = immu.Map(
+                        (k, v) for k, v in nest_refs.items()
+                        if k in target_ids
+                    )
+                    if refs_to_lv2:
+                        refs_to_lv1 = refs_to_lv1.set(key, refs_to_lv2)
+
+                if refs_to_lv1:
+                    refs_to_final = refs_to_final.set(_id, refs_to_lv1)
+
+            new._refs_to = refs_to_final
+
+            new._globalname_to_id = immu.Map(
+                (name, _id)
+                for name, _id in self._globalname_to_id.items()
+                if _id in target_ids
+            )
+            new._name_to_id = immu.Map(
+                (name, _id)
+                for name, _id in self._name_to_id.items()
+                if _id in target_ids
+            )
+            new._shortname_to_id = immu.Map(
+                (name, _id)
+                for name, _id in self._shortname_to_id.items()
+                if _id in target_ids
+            )
+            new._generation = self._generation
+
+        return splited_schema
+
+    def merge(
+        self,
+        other: FlatSchema,
+    ) -> FlatSchema:
+        new = FlatSchema.__new__(FlatSchema)
+
+        new._id_to_data = self._id_to_data.update(other._id_to_data)
+        new._id_to_type = self._id_to_type.update(other._id_to_type)
+        new._shortname_to_id = self._shortname_to_id.update(other._shortname_to_id)
+        new._globalname_to_id = self._globalname_to_id.update(other._globalname_to_id)
+        new._name_to_id = self._name_to_id.update(other._name_to_id)
+
+        refs_to = immu.Map()
+
+        common_ref_ids = set(self._refs_to).intersection(other._refs_to)
+        all_ref_ids = set(self._refs_to).union(other._refs_to)
+
+        for _id in all_ref_ids - common_ref_ids:
+            if _id in self._refs_to:
+                refs_to = refs_to.set(_id, self._refs_to.get(_id))
+            else:
+                refs_to = refs_to.set(_id, other._refs_to.get(_id))
+
+        for _id in common_ref_ids:
+            refs_self = self._refs_to.get(_id)
+            refs_other = other._refs_to.get(_id)
+
+            nest_key_visited = set()
+
+            for nest_key, nest_ref in refs_self.items():
+                nest_key_visited.add(nest_key)
+                if nest_key in refs_other:
+                    refs_self = refs_self.set(nest_key, nest_ref.update(refs_other.get(nest_key)))
+
+            for nest_key, nest_ref in refs_other.items():
+                if nest_key in nest_key_visited:
+                    continue
+
+                # nest key here only appears in refs_other
+                refs_self = refs_self.set(nest_key, nest_ref)
+
+            refs_to = refs_to.set(_id, refs_self)
+
+        new._refs_to = refs_to
+
+        new._generation = self._generation + other._generation
+        return new
+
+    def __eq1__(self, other: FlatSchema):
+        if self._id_to_type != other._id_to_type:
+            print('_id_to_type not match')
+            return False
+
+        if self._id_to_data != other._id_to_data:
+            print('_id_to_data not match')
+            return False
+
+        if self._globalname_to_id != other._globalname_to_id:
+            print('_globalname_to_id not match')
+            return False
+
+        if self._shortname_to_id != other._shortname_to_id:
+            print('_shortname_to_id not match')
+            return False
+
+        if self._name_to_id != other._name_to_id:
+            print('_name_to_id not match')
+            return False
+
+        if self._refs_to != other._refs_to:
+            print('ref_to not match')
+            return False
+
+        return True
+
+    def __eq__(self, other: FlatSchema):
+        return (
+            self._refs_to == other._refs_to and
+            self._id_to_type == other._id_to_type and
+            self._id_to_data == other._id_to_data and
+            self._name_to_id == other._name_to_id and
+            self._globalname_to_id == other._globalname_to_id and
+            self._shortname_to_id == other._shortname_to_id
+        )
 
     def _update_obj_name(
         self,
@@ -1925,6 +2089,196 @@ class ChainedSchema(Schema):
         return migration
 
 
+class PartitionedSchema(FlatSchema):
+    def __init__(self, schema_map: Dict[str, FlatSchema]):
+        self._module_to_schema = schema_map
+
+    def _update_and_return(self, module: str, schema: FlatSchema) -> FlatSchema:
+        self._module_to_schema[module] = schema
+        return self
+
+    def _get_schema(self, obj: so.Object = None, module: str = None) -> FlatSchema:
+        if module is None:
+            for _schema in self._module_to_schema.values():
+                try:
+                    module = obj.get_module_name(_schema)
+                except SchemaError:
+                    pass
+
+        if module in STD_MODULES_STR + ('builtin', ):
+            return list(self._module_to_schema.values())[0]
+        schema = self._module_to_schema[module]
+        return schema
+
+    def update_obj(
+        self,
+        obj: so.Object,
+        updates: Mapping[str, Any],
+        module: str = None,
+    ) -> FlatSchema:
+        schema = self._get_schema(obj, module).update_obj(obj, updates)
+        return self._update_and_return(module, schema)
+
+    def maybe_get_obj_data_raw(
+        self,
+        obj: so.Object,
+        module: str = None,
+    ) -> Optional[Tuple[Any, ...]]:
+        schema = self._get_schema(obj, module)
+        return schema.maybe_get_obj_data_raw(obj)
+
+    def get_obj_data_raw(
+        self,
+        obj: so.Object,
+        module: str = None,
+    ) -> Tuple[Any, ...]:
+        schema = self._get_schema(obj, module)
+        return schema.get_obj_data_raw(obj)
+
+    def set_obj_field(
+        self,
+        obj: so.Object,
+        fieldname: str,
+        value: Any,
+        module: str = None,
+    ) -> FlatSchema:
+        schema = self._get_schema(obj, module).set_obj_field(obj, fieldname, value)
+        return self._update_and_return(module, schema)
+
+    def unset_obj_field(
+        self,
+        obj: so.Object,
+        fieldname: str,
+        module: str = None,
+    ) -> FlatSchema:
+        schema = self._get_schema(obj, module).unset_obj_field(obj, fieldname)
+        return self._update_and_return(module, schema)
+
+    def add_raw(
+        self,
+        id: uuid.UUID,
+        sclass: Type[so.Object],
+        data: Tuple[Any, ...],
+    ) -> FlatSchema:
+        module_field = sclass.get_schema_field('module_name')
+        module = data[module_field.index]
+        schema = self._get_schema(None, module)
+        schema = schema.add_raw(id, sclass, data)
+        return self._update_and_return(module, schema)
+
+    def _delete(self, obj: so.Object, module: str = None) -> FlatSchema:
+        schema = self._get_schema(obj, module)._delete(obj)
+        return self._update_and_return(module, schema)
+
+    def delete(self, obj: so.Object, module: str = None) -> FlatSchema:
+        return self._delete(obj, module)
+
+    def discard(self, obj: so.Object, module: str = None) -> FlatSchema:
+        schema = self._get_schema(obj, module)
+        if obj.id in schema._id_to_data:
+            return self._delete(obj, module)
+        else:
+            return self
+
+    def _search_with_getter(
+        self,
+        name: Union[str, sn.Name],
+        *,
+        getter: Callable[[FlatSchema, sn.Name], Any],
+        default: Any,
+        module_aliases: Optional[Mapping[Optional[str], str]],
+    ) -> Any:
+        if isinstance(name, str):
+            name = sn.name_from_string(name)
+        module = name.module if isinstance(name, sn.QualName) else None
+        implicit_builtins = module is None
+
+        if module == '__std__' or implicit_builtins:
+            return default
+
+        schema = self._get_schema(module=module)
+        return schema._search_with_getter(
+            name,
+            getter=getter,
+            default=default,
+            module_aliases=module_aliases
+        )
+
+    @util.simple_lru()
+    def _get_referrers(
+        self,
+        scls: so.Object,
+        *,
+        scls_type: Optional[Type[so.Object_T]] = None,
+        field_name: Optional[str] = None,
+        module: str = None
+    ) -> FrozenSet[so.Object_T]:
+        schema = self._get_schema(scls, module)
+        return schema._get_referrers(scls, scls_type=scls_type, field_name=field_name)
+
+    @util.simple_lru()
+    def get_referrers_ex(
+        self,
+        scls: so.Object,
+        *,
+        scls_type: Optional[Type[so.Object_T]] = None,
+        module: str = None
+    ) -> Dict[
+        Tuple[Type[so.Object_T], str],
+        FrozenSet[so.Object_T],
+    ]:
+        schema = self._get_schema(scls, module)
+        return schema.get_referrers_ex(scls, scls_type=scls_type)
+
+    def get_modules(self) -> Tuple[s_mod.Module, ...]:
+        return sum(
+            (schema.get_modules() for schema in self._module_to_schema.values()),
+            tuple()
+        )
+
+    def has_object(self, object_id: uuid.UUID) -> bool:
+        return any(
+            schema.has_object(object_id)
+            for schema in self._module_to_schema.values()
+        )
+
+    def get_objects(
+        self,
+        *,
+        exclude_stdlib: bool = False,
+        exclude_global: bool = False,
+        exclude_internal: bool = True,
+        included_modules: Optional[Iterable[sn.Name]] = None,
+        excluded_modules: Optional[Iterable[sn.Name]] = None,
+        included_items: Optional[Iterable[sn.Name]] = None,
+        excluded_items: Optional[Iterable[sn.Name]] = None,
+        type: Optional[Type[so.Object_T]] = None,
+        extra_filters: Iterable[Callable[[Schema, so.Object], bool]] = (),
+    ) -> SchemaIterator[so.Object_T]:
+        return SchemaIterator[so.Object_T](
+            self,
+            itertools.chain(
+                schema._id_to_type
+                for schema in self._module_to_schema
+            ),
+            exclude_global=exclude_global,
+            exclude_stdlib=exclude_stdlib,
+            exclude_internal=exclude_internal,
+            included_modules=included_modules,
+            excluded_modules=excluded_modules,
+            included_items=included_items,
+            excluded_items=excluded_items,
+            type=type,
+            extra_filters=extra_filters,
+        )
+
+    def __hash__(self):
+        return hash(tuple(hash(schema) for schema in self._module_to_schema.values()))
+
+    def get_last_migration(self) -> Optional[s_migrations.Migration]:
+        return list(self._module_to_schema.values())[0].get_last_migration()
+
+
 @util.simple_lru()
 def _get_functions(
     schema: FlatSchema,
@@ -1993,3 +2347,11 @@ def _get_last_migration(
         latest = children[0]
 
     return latest
+
+
+def merge_schema(
+    schema_list: Iterable[FlatSchema]
+) -> FlatSchema:
+    return functools.reduce(lambda x, y: x.merge(y), schema_list)
+
+
