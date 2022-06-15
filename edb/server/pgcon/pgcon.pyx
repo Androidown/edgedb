@@ -71,6 +71,7 @@ from edb.server import metrics
 from edb.server.protocol cimport binary as edgecon
 
 from edb.common import debug
+from edb.common.util import LiteralString
 
 from . import errors as pgerror
 
@@ -664,11 +665,14 @@ cdef class PGConnection:
         bind_buf.write_int16(<int16_t><uint16_t>(len(args)))
 
         for arg in args:
-            if isinstance(arg, decimal.Decimal):
-                jarg = str(arg)
+            if isinstance(arg, LiteralString):
+                bind_buf.write_len_prefixed_bytes(arg.to_bytes())
             else:
-                jarg = json.dumps(arg)
-            pgproto.jsonb_encode(DEFAULT_CODEC_CONTEXT, bind_buf, jarg)
+                if isinstance(arg, decimal.Decimal):
+                    jarg = str(arg)
+                else:
+                    jarg = json.dumps(arg)
+                pgproto.jsonb_encode(DEFAULT_CODEC_CONTEXT, bind_buf, jarg)
 
         bind_buf.write_int32(0x00010001)  # binary for the output
         bind_buf.end_message()
@@ -1260,7 +1264,9 @@ cdef class PGConnection:
         try:
             return await self._simple_query(sql, ignore_data, state)
         finally:
-            metrics.backend_query_duration.observe(time.monotonic() - started_at)
+            duration = time.monotonic() - started_at
+            metrics.backend_query_duration.observe(duration)
+            logger.info(f"simple query spent: {duration} seconds.")
             await self.after_command()
 
     async def run_ddl(
@@ -1291,7 +1297,9 @@ cdef class PGConnection:
                     raise RuntimeError(
                         'missing the required data packet after a DDL command')
         finally:
-            metrics.backend_query_duration.observe(time.monotonic() - started_at)
+            duration = time.monotonic() - started_at
+            metrics.backend_query_duration.observe(duration)
+            logger.info(f"Run ddl spent: {duration} seconds.")
             await self.after_command()
 
     async def _dump(self, block, output_queue, fragment_suggested_size):
