@@ -28,3 +28,15 @@ def simple_lru(func=None, maxsize=128):
         return result
 
     return wrapper
+
+
+class LiteralString:
+    def __init__(self, value: str):
+        self.value = value
+
+    def to_bytes(self):
+        return self.value.encode('ascii')
+
+    def __str__(self):
+        return self.value
+

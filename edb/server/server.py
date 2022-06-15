@@ -25,6 +25,7 @@ from typing import *
 import asyncio
 import binascii
 import collections
+import collections.abc
 import ipaddress
 import json
 import logging
@@ -45,6 +46,7 @@ from edb import errors
 from edb.common import devmode
 from edb.common import taskgroup
 from edb.common import windowedsum
+from edb.common.util import LiteralString
 
 from edb.schema import reflection as s_refl
 from edb.schema import roles as s_role
@@ -246,6 +248,8 @@ class Server(ha_base.ClusterProtocol):
         self._session_idle_timeout = None
 
         self._admin_ui = admin_ui
+
+        self._user_schema_cache = dict()
 
     async def _request_stats_logger(self):
         last_seen = -1
@@ -653,6 +657,25 @@ class Server(ha_base.ClusterProtocol):
             schema_class_layout=self._schema_class_layout,
         )
 
+    async def introspect_user_schema_modularly(self, conn, module):
+        json_data = await conn.parse_execute_json(
+            self._cond_local_intro_query, b'__cond_local_intro_query',
+            dbver=0, use_prep_stmt=True, args=(LiteralString(module), ),
+        )
+
+        base_schema = s_schema.ChainedSchema(
+            self._std_schema,
+            s_schema.FlatSchema(),
+            self.get_global_schema(),
+        )
+
+        return s_refl.parse_into(
+            base_schema=base_schema,
+            schema=s_schema.FlatSchema(),
+            data=json_data,
+            schema_class_layout=self._schema_class_layout,
+        )
+
     async def introspect_db(self, dbname):
         """Use this method to (re-)introspect a DB.
 
@@ -686,6 +709,12 @@ class Server(ha_base.ClusterProtocol):
 
         try:
             user_schema = await self.introspect_user_schema(conn)
+            self._user_schema_cache = user_schema.split_by_module()
+
+            # for module in user_schema.get_modules():
+            #     module_name = str(module.get_name(user_schema))
+            #     schema = await self.introspect_user_schema_modularly(conn, module_name)
+            #     self._user_schema_cache[module_name] = schema
 
             reflection_cache_json = await conn.parse_execute_json(
                 b'''
@@ -734,7 +763,7 @@ class Server(ha_base.ClusterProtocol):
             assert self._dbindex is not None
             self._dbindex.register_db(
                 dbname,
-                user_schema=user_schema,
+                user_schema=self._user_schema_cache,
                 db_config=db_config,
                 reflection_cache=reflection_cache,
                 backend_ids=backend_ids,
@@ -810,6 +839,12 @@ class Server(ha_base.ClusterProtocol):
                 WHERE key = 'local_intro_query';
             ''', ignore_data=False)
             self._local_intro_query = result[0][0]
+
+            result = await syscon.simple_query(b'''\
+                SELECT text FROM edgedbinstdata.instdata
+                WHERE key = 'cond_local_intro_query';
+            ''', ignore_data=False)
+            self._cond_local_intro_query = result[0][0]
 
             result = await syscon.simple_query(b'''\
                 SELECT text FROM edgedbinstdata.instdata
