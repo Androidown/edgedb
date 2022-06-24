@@ -23,6 +23,7 @@ import typing
 import weakref
 
 import immutables
+import logging
 
 from edb import errors
 from edb.common import lru, uuidgen
@@ -45,6 +46,8 @@ cdef DEFAULT_STATE = json.dumps([
 cdef int VER_COUNTER = 0
 cdef DICTDEFAULT = (None, None)
 
+cdef object logger = logging.getLogger('edb.server')
+
 
 cdef next_dbver():
     global VER_COUNTER
@@ -62,7 +65,7 @@ cdef class Database:
         DatabaseIndex index,
         str name,
         *,
-        object user_schema,
+        dict user_schema,
         object db_config,
         object reflection_cache,
         object backend_ids
@@ -82,8 +85,9 @@ cdef class Database:
         self.reflection_cache = reflection_cache
         self.backend_ids = backend_ids
         self.extensions = {
-            ext.get_name(user_schema).name: ext
-            for ext in user_schema.get_objects(type=s_ext.Extension)
+            ext.get_name(schema).name: ext
+            for schema in self.user_schema.values()
+            for ext in schema.get_objects(type=s_ext.Extension)
         }
 
     cdef schedule_config_update(self):
@@ -101,11 +105,12 @@ cdef class Database:
 
         self.dbver = next_dbver()
 
-        self.user_schema = new_schema
+        self.user_schema.update(new_schema)
 
         self.extensions = {
-            ext.get_name(new_schema).name: ext
-            for ext in new_schema.get_objects(type=s_ext.Extension)
+            ext.get_name(schema).name: ext
+            for schema in self.user_schema.values()
+            for ext in schema.get_objects(type=s_ext.Extension)
         }
 
         if backend_ids is not None:
@@ -289,7 +294,23 @@ cdef class DatabaseConnectionView:
                 self._in_tx_user_schema_pickled = None
             return self._in_tx_user_schema
         else:
-            return self._db.user_schema
+            user_schema = s_schema.merge_schema(self._db.user_schema.values())
+            # logger.info(f"get user_schema")
+            # for obj in user_schema.get_objects():
+            #     logger.info(f"{obj}: {obj.get_name(user_schema)}")
+            return user_schema
+
+    def get_user_schema_modularly(self, module):
+        if self._in_tx:
+            if self._in_tx_user_schema_pickled:
+                self._in_tx_user_schema = pickle.loads(
+                    self._in_tx_user_schema_pickled)
+                self._in_tx_user_schema_pickled = None
+            return self._in_tx_user_schema
+        else:
+            if module not in self._db.user_schema:
+                raise errors.UnknownModuleError(f'module {module!r} is not in this schema')
+            return self._db.user_schema[module]
 
     def get_global_schema(self):
         if self._in_tx:
@@ -425,7 +446,7 @@ cdef class DatabaseConnectionView:
             self._in_tx_config = self._config
             self._in_tx_db_config = self._db.db_config
             self._in_tx_modaliases = self._modaliases
-            self._in_tx_user_schema = self._db.user_schema
+            self._in_tx_user_schema = s_schema.merge_schema(self._db.user_schema.values())
             self._in_tx_global_schema = self._db._index._global_schema
 
         if self._in_tx and not self._txid:
@@ -452,8 +473,9 @@ cdef class DatabaseConnectionView:
     cdef on_error(self, query_unit):
         self.tx_error()
 
-    cdef on_success(self, query_unit, new_types):
+    cdef on_success(self, query_unit, new_types, module: str = None):
         side_effects = 0
+        kwargs = {}
 
         if query_unit.tx_savepoint_rollback:
             # Need to invalidate the cache in case there were
@@ -465,13 +487,24 @@ cdef class DatabaseConnectionView:
                 self._db._update_backend_ids(new_types)
             if query_unit.user_schema is not None:
                 self._in_tx_dbver = next_dbver()
-                self._db._set_and_signal_new_user_schema(
-                    pickle.loads(query_unit.user_schema),
-                    pickle.loads(query_unit.cached_reflection)
+                if module is None:
+                    self._db._set_and_signal_new_user_schema(
+                        pickle.loads(query_unit.user_schema).split_by_module(),
+                        pickle.loads(query_unit.cached_reflection)
                         if query_unit.cached_reflection is not None
                         else None
-                )
-                side_effects |= SideEffects.SchemaChanges
+                    )
+                    side_effects |= SideEffects.SchemaChanges
+                else:
+                    self._db._set_and_signal_new_user_schema(
+                        {module: pickle.loads(query_unit.user_schema)},
+                        pickle.loads(query_unit.cached_reflection)
+                        if query_unit.cached_reflection is not None
+                        else None
+                    )
+                    side_effects |= SideEffects.ModuleSchemaChanges
+                    kwargs['module'] = module
+
             if query_unit.system_config:
                 side_effects |= SideEffects.InstanceConfigChanges
             if query_unit.database_config:
@@ -503,13 +536,24 @@ cdef class DatabaseConnectionView:
             if self._in_tx_new_types:
                 self._db._update_backend_ids(self._in_tx_new_types)
             if query_unit.user_schema is not None:
-                self._db._set_and_signal_new_user_schema(
-                    pickle.loads(query_unit.user_schema),
-                    pickle.loads(query_unit.cached_reflection)
+                if module is None:
+                    self._db._set_and_signal_new_user_schema(
+                        pickle.loads(query_unit.user_schema).split_by_module(),
+                        pickle.loads(query_unit.cached_reflection)
                         if query_unit.cached_reflection is not None
                         else None
-                )
-                side_effects |= SideEffects.SchemaChanges
+                    )
+                    side_effects |= SideEffects.SchemaChanges
+                else:
+                    self._db._set_and_signal_new_user_schema(
+                        {module: pickle.loads(query_unit.user_schema)},
+                        pickle.loads(query_unit.cached_reflection)
+                        if query_unit.cached_reflection is not None
+                        else None
+                    )
+                    side_effects |= SideEffects.ModuleSchemaChanges
+                    kwargs['module'] = module
+
             if self._in_tx_with_sysconfig:
                 side_effects |= SideEffects.InstanceConfigChanges
             if self._in_tx_with_dbconfig:
@@ -532,7 +576,7 @@ cdef class DatabaseConnectionView:
             # is executed outside of a tx.
             self._reset_tx_state()
 
-        return side_effects
+        return side_effects, kwargs
 
     async def apply_config_ops(self, conn, ops):
         settings = config.get_settings()

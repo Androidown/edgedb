@@ -94,7 +94,9 @@ class CreateMigration(MigrationCommand, sd.CreateObject[Migration]):
         else:
             specified_name = None
 
-        parent_migration = schema.get_last_migration()
+        module_name = context.module or 'builtin'
+
+        parent_migration = schema.get_last_migration(module_name)
 
         parent: Optional[so.ObjectShell[Migration]]
 
@@ -160,6 +162,7 @@ class CreateMigration(MigrationCommand, sd.CreateObject[Migration]):
         cmd.set_attribute_value('script', ddl_text)
         cmd.set_attribute_value('builtin', False)
         cmd.set_attribute_value('internal', False)
+        cmd.set_attribute_value('module_name', module_name)
         if parent is not None:
             cmd.set_attribute_value('parents', [parent])
 

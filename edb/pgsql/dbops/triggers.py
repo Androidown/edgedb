@@ -144,7 +144,8 @@ class CreateTrigger(ddl.CreateObject):
             table_name=qn(*self.trigger.table_name),
             deferred=('DEFERRABLE INITIALLY DEFERRED'
                       if self.trigger.deferred else ''),
-            granularity=self.trigger.granularity, condition=(
+            granularity=self.trigger.granularity,
+            condition=(
                 'WHEN ({})'.format(self.trigger.condition)
                 if self.trigger.condition else ''),
             procedure='{}()'.format(qn(*self.trigger.procedure)))

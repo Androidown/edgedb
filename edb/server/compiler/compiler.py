@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import *
 
 import collections
+import collections.abc
 import dataclasses
 import json
 import hashlib
@@ -116,6 +117,9 @@ class CompileContext:
     internal_schema_mode: bool = False
     standalone_mode: bool = False
     log_ddl_as_migrations: bool = True
+    # if only the user_schema under a specific module is provided,
+    # this var will be the module name. None means all modules are provided.
+    module: Optional[str] = None
 
 
 DEFAULT_MODULE_ALIASES_MAP = immutables.Map(
@@ -325,6 +329,7 @@ class Compiler:
         context.backend_runtime_params = self._backend_runtime_params
         context.allow_dml_in_functions = (
             self.get_config_val(ctx, 'allow_dml_in_functions'))
+        context.module = ctx.module
         return context
 
     def _process_delta(self, ctx: CompileContext, delta):
@@ -799,6 +804,24 @@ class Compiler:
                     ),
                     context=stmt.context,
                 )
+
+            if ctx.module is None:
+                if isinstance(stmt, qlast.NamedDDL):
+                    raw_ddl_module = stmt.name.module
+                    ddl_module = current_tx.get_modaliases().get(raw_ddl_module, raw_ddl_module)
+                    ctx_props = dict(ctx.__dict__, module=ddl_module)
+                    ctx = CompileContext(**ctx_props)
+            else:
+                if isinstance(stmt, qlast.ModuleCommand):
+                    raise errors.QueryError("Module command is not allowed in seperated schema.")
+                elif isinstance(stmt, qlast.NamedDDL):
+                    raw_ddl_module = stmt.name.module
+                    ddl_module = current_tx.get_modaliases().get(raw_ddl_module, raw_ddl_module)
+                    if ddl_module != ctx.module:
+                        raise errors.QueryError(
+                            f"DDL command of {ddl_module!r} module is not allowed in "
+                            f"current ({ctx.module!r}) schema.")
+
             cm = qlast.CreateMigration(
                 body=qlast.NestedQLBlock(
                     commands=[stmt],
@@ -815,6 +838,7 @@ class Compiler:
                 self.get_config_val(ctx, 'allow_dml_in_functions')),
             schema_object_ids=ctx.schema_object_ids,
             compat_ver=ctx.compat_ver,
+            module=ctx.module
         )
 
         if debug.flags.delta_plan_input:
@@ -2078,6 +2102,7 @@ class Compiler:
         protocol_version: Tuple[int, int],
         inline_objectids: bool = True,
         json_parameters: bool = False,
+        module: Optional[str] = None,
     ) -> Tuple[List[dbstate.QueryUnit],
                Optional[dbstate.CompilerConnectionState]]:
 
@@ -2092,6 +2117,9 @@ class Compiler:
 
         if sess_modaliases is None:
             sess_modaliases = DEFAULT_MODULE_ALIASES_MAP
+
+        if module is not None:
+            sess_modaliases = sess_modaliases.set(None, module)
 
         assert isinstance(sess_modaliases, immutables.Map)
         assert isinstance(sess_config, immutables.Map)
@@ -2118,6 +2146,7 @@ class Compiler:
             json_parameters=json_parameters,
             source=source,
             protocol_version=protocol_version,
+            module=module
         )
 
         units = self._compile(ctx=ctx, source=source)
@@ -2145,6 +2174,7 @@ class Compiler:
         stmt_mode: enums.CompileStatementMode,
         protocol_version: Tuple[int, int],
         inline_objectids: bool = True,
+        module: Optional[str] = None,
     ) -> Tuple[List[dbstate.QueryUnit], dbstate.CompilerConnectionState]:
         state.sync_tx(txid)
 
@@ -2159,6 +2189,7 @@ class Compiler:
             stmt_mode=enums.CompileStatementMode(stmt_mode),
             source=source,
             protocol_version=protocol_version,
+            module=module
         )
 
         return self._compile(ctx=ctx, source=source), ctx.state

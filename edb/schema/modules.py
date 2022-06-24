@@ -25,10 +25,13 @@ from edb import errors
 
 from edb.edgeql import ast as qlast
 from edb.edgeql import qltypes
+from edb.common import uuidgen
 
 from . import annos as s_anno
+from . import name as sn
 from . import delta as sd
 from . import schema as s_schema
+from . import version as s_ver
 
 
 class Module(
@@ -67,6 +70,25 @@ class ModuleCommand(
 
 class CreateModule(ModuleCommand, sd.CreateObject[Module]):
     astnode = qlast.CreateModule
+
+    def apply(
+        self,
+        schema: s_schema.Schema,
+        context: sd.CommandContext,
+    ) -> s_schema.Schema:
+        schema = super().apply(schema, context)
+
+        if not context.canonical and not context.stdmode:
+            module_name = self.classname.name
+            sv = sn.QualName(module=module_name, name='__schema_version__')
+            schema_version = s_ver.CreateSchemaVersion(classname=sv)
+            schema_version.set_attribute_value('name', sv)
+            schema_version.set_attribute_value('version', uuidgen.uuid1mc())
+            schema_version.set_attribute_value('internal', True)
+            schema_version.set_attribute_value('module_name', module_name)
+            schema = sd.apply(schema_version, schema=schema)
+            self.add(schema_version)
+        return schema
 
 
 class AlterModule(ModuleCommand, sd.AlterObject[Module]):

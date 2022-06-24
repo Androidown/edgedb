@@ -1955,6 +1955,10 @@ cdef class PGConnection:
                     self.server._on_remote_system_config_change()
                 elif event == 'global-schema-changes':
                     self.server._on_global_schema_change()
+                elif event == 'module-schema-changes':
+                    dbname = event_payload['dbname']
+                    module = event_payload['module']
+                    self.server._on_remote_ddl(dbname, module=module)
                 else:
                     raise AssertionError(f'unexpected system event: {event!r}')
 

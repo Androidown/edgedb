@@ -676,7 +676,7 @@ class Server(ha_base.ClusterProtocol):
             schema_class_layout=self._schema_class_layout,
         )
 
-    async def introspect_db(self, dbname):
+    async def introspect_db(self, dbname, module: str = None):
         """Use this method to (re-)introspect a DB.
 
         If the DB is already registered in self._dbindex, its
@@ -708,13 +708,12 @@ class Server(ha_base.ClusterProtocol):
                 raise
 
         try:
-            user_schema = await self.introspect_user_schema(conn)
-            self._user_schema_cache = user_schema.split_by_module()
-
-            # for module in user_schema.get_modules():
-            #     module_name = str(module.get_name(user_schema))
-            #     schema = await self.introspect_user_schema_modularly(conn, module_name)
-            #     self._user_schema_cache[module_name] = schema
+            if module is not None and self._user_schema_cache:
+                new_user_schema = await self.introspect_user_schema_modularly(conn, module)
+                self._user_schema_cache[module] = new_user_schema
+            else:
+                user_schema = await self.introspect_user_schema(conn)
+                self._user_schema_cache = user_schema.split_by_module()
 
             reflection_cache_json = await conn.parse_execute_json(
                 b'''
@@ -1157,15 +1156,16 @@ class Server(ha_base.ClusterProtocol):
             metrics.background_errors.inc(1.0, 'signal_sysevent')
             raise
 
-    def _on_remote_ddl(self, dbname):
+    def _on_remote_ddl(self, dbname, module: str = None):
         if not self._accept_new_tasks:
             return
 
         # Triggered by a postgres notification event 'schema-changes'
+        # or 'module-schema-changes'
         # on the __edgedb_sysevent__ channel
         async def task():
             try:
-                await self.introspect_db(dbname)
+                await self.introspect_db(dbname, module)
             except Exception:
                 metrics.background_errors.inc(1.0, 'on_remote_ddl')
                 raise

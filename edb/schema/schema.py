@@ -469,7 +469,7 @@ class Schema(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def get_last_migration(self) -> Optional[s_migrations.Migration]:
+    def get_last_migration(self, module: str = None) -> Optional[s_migrations.Migration]:
         raise NotImplementedError
 
 
@@ -571,6 +571,9 @@ class FlatSchema(Schema):
                     common_id.append(_id)
                 else:
                     module_to_ids[module_name].append(_id)
+
+        if not module_to_ids:
+            return {'default': self}
 
         splited_schema: Dict[str, FlatSchema] = {}
 
@@ -1572,8 +1575,8 @@ class FlatSchema(Schema):
                 modules.append(self.get_by_id(objid, type=s_mod.Module))
         return tuple(modules)
 
-    def get_last_migration(self) -> Optional[s_migrations.Migration]:
-        return _get_last_migration(self)
+    def get_last_migration(self, module: str = None) -> Optional[s_migrations.Migration]:
+        return _get_last_migration(self, module)
 
     def __repr__(self) -> str:
         return (
@@ -2082,10 +2085,10 @@ class ChainedSchema(Schema):
             + self._top_schema.get_modules()
         )
 
-    def get_last_migration(self) -> Optional[s_migrations.Migration]:
-        migration = self._top_schema.get_last_migration()
+    def get_last_migration(self, module: str = None) -> Optional[s_migrations.Migration]:
+        migration = self._top_schema.get_last_migration(module)
         if migration is None:
-            migration = self._base_schema.get_last_migration()
+            migration = self._base_schema.get_last_migration(module)
         return migration
 
 
@@ -2275,8 +2278,8 @@ class PartitionedSchema(FlatSchema):
     def __hash__(self):
         return hash(tuple(hash(schema) for schema in self._module_to_schema.values()))
 
-    def get_last_migration(self) -> Optional[s_migrations.Migration]:
-        return list(self._module_to_schema.values())[0].get_last_migration()
+    def get_last_migration(self, module: str = None) -> Optional[s_migrations.Migration]:
+        return list(self._module_to_schema.values())[0].get_last_migration(module)
 
 
 @util.simple_lru()
@@ -2310,9 +2313,11 @@ def _get_operators(
 @util.simple_lru()
 def _get_last_migration(
     schema: FlatSchema,
+    module: str = None
 ) -> Optional[s_migrations.Migration]:
+    module = module or 'builtin'
 
-    migrations = cast(
+    all_migrations = cast(
         List[s_migrations.Migration],
         [
             schema.get_by_id(mid)
@@ -2320,6 +2325,8 @@ def _get_last_migration(
             if t is s_migrations.Migration
         ],
     )
+
+    migrations = [m for m in all_migrations if m.get_module_name(schema) == module]
 
     if not migrations:
         return None

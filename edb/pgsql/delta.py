@@ -310,6 +310,8 @@ class AlterSchemaVersion(
     ) -> s_schema.Schema:
         schema = super().apply(schema, context)
         expected_ver = self.get_orig_attribute_value('version')
+        module_name = context.module or 'builtin'
+
         check = dbops.Query(
             f'''
                 SELECT
@@ -319,6 +321,8 @@ class AlterSchemaVersion(
                                 version::text
                             FROM
                                 edgedb."_SchemaSchemaVersion"
+                            WHERE
+                                module_name = {ql(module_name)}
                             FOR UPDATE),
                             {ql(str(expected_ver))}
                         )),
@@ -326,7 +330,8 @@ class AlterSchemaVersion(
                         msg => (
                             'Cannot serialize DDL: '
                             || (SELECT version::text FROM
-                                edgedb."_SchemaSchemaVersion")
+                                edgedb."_SchemaSchemaVersion"
+                                WHERE module_name = {ql(module_name)})
                         )
                     )
                 INTO _dummy_text
@@ -4985,8 +4990,11 @@ class UpdateEndpointDeleteActions(MetaCommand):
 
         return '(' + '\nUNION ALL\n    '.join(selects) + ') as q'
 
-    def get_trigger_name(self, schema, target,
-                         disposition, deferred=False, inline=False):
+    def get_trigger_name(
+        self, schema, target,
+        disposition, deferred=False, inline=False,
+        module: str = None
+    ):
         if disposition == 'target':
             aspect = 'target-del'
         else:
@@ -5004,11 +5012,17 @@ class UpdateEndpointDeleteActions(MetaCommand):
 
         aspect += '-t'
 
+        if module is not None:
+            aspect += f'-{module}'
+
         return common.get_backend_name(
             schema, target, catenate=False, aspect=aspect)[1]
 
-    def get_trigger_proc_name(self, schema, target,
-                              disposition, deferred=False, inline=False):
+    def get_trigger_proc_name(
+        self, schema, target,
+        disposition, deferred=False, inline=False,
+        module: str = None
+    ):
         if disposition == 'target':
             aspect = 'target-del'
         else:
@@ -5025,6 +5039,9 @@ class UpdateEndpointDeleteActions(MetaCommand):
             aspect += '-otl'
 
         aspect += '-f'
+
+        if module is not None:
+            aspect += f'-{module}'
 
         return common.get_backend_name(
             schema, target, catenate=False, aspect=aspect)
@@ -5407,16 +5424,6 @@ class UpdateEndpointDeleteActions(MetaCommand):
                         if current_orig_target is not None:
                             affected_targets.add(current_orig_target)
 
-        # filter builtin schemas as we will never modify them
-        # affected_targets = {
-        #     t for t in affected_targets if
-        #     t.get_name(schema).get_module_name() not in s_schema.STD_MODULES
-        # }
-        # affected_sources = {
-        #     s for s in affected_sources if
-        #     s.get_name(schema).get_module_name() not in s_schema.STD_MODULES
-        # }
-
         for source in affected_sources:
             links = []
 
@@ -5438,7 +5445,9 @@ class UpdateEndpointDeleteActions(MetaCommand):
 
             if links or modifications:
                 self._update_action_triggers(
-                    schema, source, links, disposition='source')
+                    schema, source, links, disposition='source',
+                    module=context.module
+                )
 
         # All descendants of affected targets also need to have their
         # triggers updated, so track them down.
@@ -5519,50 +5528,76 @@ class UpdateEndpointDeleteActions(MetaCommand):
 
             if links or modifications:
                 self._update_action_triggers(
-                    schema, target, links, disposition='target')
+                    schema, target, links, disposition='target',
+                    module=context.module
+                )
 
             if inline_links or modifications:
                 self._update_action_triggers(
                     schema, target, inline_links,
-                    disposition='target', inline=True)
+                    disposition='target', inline=True,
+                    module=context.module
+                )
 
             if deferred_links or modifications:
                 self._update_action_triggers(
                     schema, target, deferred_links,
-                    disposition='target', deferred=True)
+                    disposition='target', deferred=True,
+                    module=context.module
+                )
 
             if deferred_inline_links or modifications:
                 self._update_action_triggers(
                     schema, target, deferred_inline_links,
                     disposition='target', deferred=True,
-                    inline=True)
+                    inline=True,
+                    module=context.module
+                )
 
         return schema
 
+    def get_trigger_condition(
+        self,
+        schema,
+        objtype,
+        module: str,
+    ):
+        if module is None:
+            return
+        obj = schema.get_by_id(objtype.id)
+        module_name_ptr = obj.getptr(schema, sn.UnqualName('module_name'))
+        return f'OLD."{module_name_ptr.id}" = \'{module}\''
+
     def _update_action_triggers(
-            self,
-            schema,
-            objtype: s_objtypes.ObjectType,
-            links: List[s_links.Link], *,
-            disposition: str,
-            deferred: bool=False,
-            inline: bool=False) -> None:
+        self,
+        schema,
+        objtype: s_objtypes.ObjectType,
+        links: List[s_links.Link], *,
+        disposition: str,
+        deferred: bool = False,
+        inline: bool = False,
+        module: str = None,
+    ) -> None:
 
         table_name = common.get_backend_name(
             schema, objtype, catenate=False)
 
         trigger_name = self.get_trigger_name(
             schema, objtype, disposition=disposition,
-            deferred=deferred, inline=inline)
+            deferred=deferred, inline=inline, module=module)
 
         proc_name = self.get_trigger_proc_name(
             schema, objtype, disposition=disposition,
-            deferred=deferred, inline=inline)
+            deferred=deferred, inline=inline, module=module)
+
+        condition = self.get_trigger_condition(schema, objtype, module)
 
         trigger = dbops.Trigger(
             name=trigger_name, table_name=table_name,
             events=('delete',), procedure=proc_name,
-            is_constraint=True, inherit=True, deferred=deferred)
+            is_constraint=True, inherit=True, deferred=deferred,
+            condition=condition
+        )
 
         if links:
             proc_text = self.get_trigger_proc_text(

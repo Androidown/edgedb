@@ -33,6 +33,7 @@ from edb.schema import objtypes as s_objtypes
 from edb.schema import name as sn
 from edb.schema import objects as s_obj
 from edb.schema import schema as s_schema
+from edb.common.util import simple_lru
 
 from . import common
 
@@ -390,7 +391,7 @@ class _PointerStorageInfo:
                 self.table_type, self.column_name, self.column_type, id(self))
 
 
-@functools.lru_cache(maxsize=5000)
+@simple_lru(maxsize=5000)
 def get_pointer_storage_info(
         pointer, *, schema, source=None, resolve_type=True,
         link_bias=False):

@@ -71,6 +71,7 @@ cdef class CompiledQuery:
     cdef public object first_extra  # Optional[int]
     cdef public int extra_count
     cdef public bytes extra_blob
+    cdef public object module  # Optional[str]
 
 
 @cython.final

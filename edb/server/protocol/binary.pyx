@@ -195,15 +195,19 @@ cdef class QueryRequestInfo:
 @cython.final
 cdef class CompiledQuery:
 
-    def __init__(self, object query_unit,
+    def __init__(
+        self,
+        object query_unit,
         first_extra: Optional[int]=None,
         int extra_count=0,
-        bytes extra_blob=None
+        bytes extra_blob=None,
+        object module=None,
     ):
         self.query_unit = query_unit
         self.first_extra = first_extra
         self.extra_count = extra_count
         self.extra_blob = extra_blob
+        self.module = module
 
 
 @cython.final
@@ -903,6 +907,7 @@ cdef class EdgeConnection:
     async def _compile(
         self,
         query_req: QueryRequestInfo,
+        module: str = None,
     ):
         cdef dbview.DatabaseConnectionView _dbview = self.get_dbview()
         if _dbview.in_tx_error():
@@ -925,11 +930,17 @@ cdef class EdgeConnection:
                     'single',
                     self.protocol_version,
                     query_req.inline_objectids,
+                    module
                 )
             else:
+                if module is None:
+                    user_schema = _dbview.get_user_schema()
+                else:
+                    user_schema = _dbview.get_user_schema_modularly(module)
+
                 units, self.last_state = await compiler_pool.compile(
                     _dbview.dbname,
-                    _dbview.get_user_schema(),
+                    user_schema,
                     _dbview.get_global_schema(),
                     _dbview.reflection_cache,
                     _dbview.get_database_config(),
@@ -945,6 +956,8 @@ cdef class EdgeConnection:
                     'single',
                     self.protocol_version,
                     query_req.inline_objectids,
+                    False,  # json_parameters
+                    module,
                 )
         finally:
             metrics.edgeql_query_compilation_duration.observe(
@@ -956,6 +969,7 @@ cdef class EdgeConnection:
         query: bytes,
         *,
         stmt_mode,
+        module: str = None,
     ):
         cdef dbview.DatabaseConnectionView _dbview = self.get_dbview()
         source = edgeql.Source.from_string(query.decode('utf-8'))
@@ -979,11 +993,18 @@ cdef class EdgeConnection:
                     False,
                     stmt_mode,
                     self.protocol_version,
+                    True,  # inline_objectids
+                    module
                 )
             else:
+                if module is None:
+                    user_schema = _dbview.get_user_schema()
+                else:
+                    user_schema = _dbview.get_user_schema_modularly(module)
+
                 units, self.last_state = await compiler_pool.compile(
                     _dbview.dbname,
-                    _dbview.get_user_schema(),
+                    user_schema,
                     _dbview.get_global_schema(),
                     _dbview.reflection_cache,
                     _dbview.get_database_config(),
@@ -998,6 +1019,9 @@ cdef class EdgeConnection:
                     False,
                     stmt_mode,
                     self.protocol_version,
+                    True, # inline_objectids
+                    False,  # json_parameters
+                    module,
                 )
         finally:
             metrics.edgeql_query_compilation_duration.observe(
@@ -1057,7 +1081,7 @@ cdef class EdgeConnection:
                 f'{self.protocol_version[0]}.{self.protocol_version[1]}'
             )
 
-    async def simple_query(self):
+    async def simple_query(self, modular: bool = False):
         cdef:
             WriteBuffer msg
             WriteBuffer packet
@@ -1075,6 +1099,11 @@ cdef class EdgeConnection:
                     )
 
         eql = self.buffer.read_len_prefixed_bytes()
+        if modular:
+            module = self.buffer.read_len_prefixed_bytes().decode()
+        else:
+            module = None
+
         self.buffer.finish_message()
         if not eql:
             raise errors.BinaryProtocolError('empty query')
@@ -1102,7 +1131,8 @@ cdef class EdgeConnection:
 
         assert stmt_mode in {'all', 'skip_first'}
         query_unit = await self._simple_query(
-            eql, allow_capabilities, stmt_mode)
+            eql, allow_capabilities, stmt_mode, module=module
+        )
 
         packet = WriteBuffer.new()
         packet.write_buffer(self.make_command_complete_msg(query_unit))
@@ -1115,6 +1145,7 @@ cdef class EdgeConnection:
         eql: bytes,
         allow_capabilities: uint64_t,
         stmt_mode: str,
+        module: str = None,
     ):
         cdef:
             bytes state = None, orig_state = None
@@ -1122,7 +1153,7 @@ cdef class EdgeConnection:
             dbview.DatabaseConnectionView _dbview
             pgcon.PGConnection conn
 
-        units = await self._compile_script(eql, stmt_mode=stmt_mode)
+        units = await self._compile_script(eql, stmt_mode=stmt_mode, module=module)
         metrics.edgeql_query_compilations.inc(1.0, 'compiler')
 
         if self._cancelled:
@@ -1210,10 +1241,10 @@ cdef class EdgeConnection:
                         await self.recover_current_tx_info(conn)
                     raise
                 else:
-                    side_effects = _dbview.on_success(
-                        query_unit, new_types)
+                    side_effects, kwargs = _dbview.on_success(
+                        query_unit, new_types, module=module)
                     if side_effects:
-                        self.signal_side_effects(side_effects)
+                        self.signal_side_effects(side_effects, **kwargs)
                     if not _dbview.in_tx():
                         state = _dbview.serialize_state()
                         if state is not orig_state:
@@ -1224,7 +1255,7 @@ cdef class EdgeConnection:
 
         return query_unit
 
-    def signal_side_effects(self, side_effects):
+    def signal_side_effects(self, side_effects, **kwargs):
         if not self.server._accept_new_tasks:
             return
         if side_effects & dbview.SideEffects.SchemaChanges:
@@ -1235,6 +1266,17 @@ cdef class EdgeConnection:
                 ),
                 interruptable=False,
             )
+
+        if side_effects & dbview.SideEffects.ModuleSchemaChanges:
+            self.server.create_task(
+                self.server._signal_sysevent(
+                    'module-schema-changes',
+                    dbname=self.get_dbview().dbname,
+                    module=kwargs.get('module')
+                ),
+                interruptable=False,
+            )
+
         if side_effects & dbview.SideEffects.GlobalSchemaChanges:
             self.server.create_task(
                 self.server._signal_sysevent(
@@ -1269,6 +1311,7 @@ cdef class EdgeConnection:
         self,
         bytes eql,
         QueryRequestInfo query_req,
+        module: str = None,
     ) -> CompiledQuery:
         cdef dbview.DatabaseConnectionView _dbview
         source = query_req.source
@@ -1300,6 +1343,7 @@ cdef class EdgeConnection:
             else:
                 query_unit = await self._compile(
                     query_req,
+                    module=module
                 )
                 query_unit = query_unit[0]
             if query_unit.capabilities & ~query_req.allow_capabilities:
@@ -1328,6 +1372,7 @@ cdef class EdgeConnection:
             first_extra=source.first_extra(),
             extra_count=source.extra_count(),
             extra_blob=source.extra_blob(),
+            module=module
         )
 
     cdef parse_cardinality(self, bytes card):
@@ -1472,7 +1517,7 @@ cdef class EdgeConnection:
 
         return implicit_limit
 
-    async def parse(self):
+    async def parse(self, modular: bool = False):
         cdef:
             bytes eql
             QueryRequestInfo query_req
@@ -1480,7 +1525,13 @@ cdef class EdgeConnection:
         self._last_anon_compiled = None
 
         eql, query_req, stmt_name = self.parse_prepare_query_part(True)
-        compiled_query = await self._parse(eql, query_req)
+
+        if modular:
+            module = self.buffer.read_len_prefixed_bytes().decode()
+        else:
+            module = None
+
+        compiled_query = await self._parse(eql, query_req, module=module)
 
         buf = WriteBuffer.new_message(b'1')  # ParseComplete
 
@@ -1615,7 +1666,7 @@ cdef class EdgeConnection:
                 'change to take effect')
 
     async def _execute(self, compiled: CompiledQuery, bind_args,
-                       bint use_prep_stmt):
+                       bint use_prep_stmt, module: str = None):
         cdef:
             bytes state = None, orig_state = None
             dbview.DatabaseConnectionView _dbview
@@ -1716,9 +1767,9 @@ cdef class EdgeConnection:
                 _dbview.abort_tx()
             raise
         else:
-            side_effects = _dbview.on_success(query_unit, new_types)
+            side_effects, kwargs = _dbview.on_success(query_unit, new_types, module=module)
             if side_effects:
-                self.signal_side_effects(side_effects)
+                self.signal_side_effects(side_effects, **kwargs)
             if not _dbview.in_tx():
                 state = _dbview.serialize_state()
                 if state is not orig_state:
@@ -1772,9 +1823,9 @@ cdef class EdgeConnection:
                 errors.DisabledCapabilityError,
             )
 
-        await self._execute(compiled, bind_args, False)
+        await self._execute(compiled, bind_args, False, module=compiled.module)
 
-    async def optimistic_execute(self):
+    async def optimistic_execute(self, modular: bool = False):
         cdef:
             WriteBuffer bound_args_buf
 
@@ -1792,6 +1843,12 @@ cdef class EdgeConnection:
         in_tid = self.buffer.read_bytes(16)
         out_tid = self.buffer.read_bytes(16)
         bind_args = self.buffer.read_len_prefixed_bytes()
+
+        if modular:
+            module = self.buffer.read_len_prefixed_bytes().decode()
+        else:
+            module = None
+
         self.buffer.finish_message()
 
         query_unit = self.get_dbview().lookup_compiled_query(query_req)
@@ -1799,7 +1856,7 @@ cdef class EdgeConnection:
             if self.debug:
                 self.debug_print('OPTIMISTIC EXECUTE /REPARSE', query)
 
-            compiled = await self._parse(query, query_req)
+            compiled = await self._parse(query, query_req, module=module)
             self._last_anon_compiled = compiled
             query_unit = compiled.query_unit
             if self._cancelled:
@@ -1810,6 +1867,7 @@ cdef class EdgeConnection:
                 first_extra=query_req.source.first_extra(),
                 extra_count=query_req.source.extra_count(),
                 extra_blob=query_req.source.extra_blob(),
+                module=module
             )
             self._last_anon_compiled = compiled
 
@@ -1836,7 +1894,7 @@ cdef class EdgeConnection:
 
         metrics.edgeql_query_compilations.inc(1.0, 'cache')
         await self._execute(
-            compiled, bind_args, bool(query_unit.sql_hash))
+            compiled, bind_args, bool(query_unit.sql_hash), module=module)
 
     async def sync(self):
         self.buffer.consume_message()
@@ -1912,6 +1970,9 @@ cdef class EdgeConnection:
                     if mtype == b'P':
                         await self.parse()
 
+                    elif mtype == b'p':
+                        await self.parse(modular=True)
+
                     elif mtype == b'D':
                         if self.protocol_version >= (0, 14):
                             raise errors.BinaryProtocolError(
@@ -1925,12 +1986,22 @@ cdef class EdgeConnection:
                     elif mtype == b'O':
                         await self.optimistic_execute()
 
+                    elif mtype == b'o':
+                        await self.optimistic_execute(modular=True)
+
                     elif mtype == b'F':
                         await self.fast_query()
+
+                    elif mtype == b'f':
+                        await self.fast_query(modular=True)
 
                     elif mtype == b'Q':
                         flush_sync_on_error = True
                         await self.simple_query()
+
+                    elif mtype == b'q':
+                        flush_sync_on_error = True
+                        await self.simple_query(modular=True)
 
                     elif mtype == b'S':
                         await self.sync()
@@ -2880,7 +2951,7 @@ cdef class EdgeConnection:
 
         return type_map
 
-    async def fast_query(self):
+    async def fast_query(self, modular: bool = False):
         cdef:
             bytes eql
             QueryRequestInfo query_req
@@ -2888,7 +2959,12 @@ cdef class EdgeConnection:
         self._last_anon_compiled = None
 
         eql, query_req, stmt_name = self.parse_prepare_query_part(True)
-        compiled_query = await self._parse(eql, query_req)
+        if modular:
+            module = self.buffer.read_len_prefixed_bytes().decode()
+        else:
+            module = None
+
+        compiled_query = await self._parse(eql, query_req, module=module)
 
         self._last_anon_compiled = compiled_query
 
@@ -2913,7 +2989,7 @@ cdef class EdgeConnection:
             )
 
         self.write(desc_msg)
-        await self._execute(compiled_query, arguments, False)
+        await self._execute(compiled_query, arguments, False, module=module)
 
 
 @cython.final

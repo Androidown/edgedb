@@ -1216,6 +1216,7 @@ class CommandContext:
         ] = None,
         backend_runtime_params: Optional[Any] = None,
         compat_ver: Optional[verutils.Version] = None,
+        module: Optional[str] = None,
     ) -> None:
         self.stack: List[CommandContextToken[Command]] = []
         self._cache: Dict[Hashable, Any] = {}
@@ -1242,6 +1243,7 @@ class CommandContext:
             List[Tuple[Command, AlterObject[so.Object], List[str]]],
         ] = collections.defaultdict(list)
         self.compat_ver = compat_ver
+        self.module = module
 
     @property
     def modaliases(self) -> Mapping[Optional[str], str]:
@@ -2883,13 +2885,14 @@ class CreateObject(ObjectCommand[so.Object_T], Generic[so.Object_T]):
             # Record the generated ID.
             self.set_attribute_value('id', self.scls.id)
 
-        classsname = self.classname
+        if 'module_name' not in props:
+            classsname = self.classname
 
-        if isinstance(classsname, sn.QualName):
-            modulename = classsname.module
-        else:
-            modulename = 'builtin'
-        self.set_attribute_value('module_name', modulename)
+            if isinstance(classsname, sn.QualName):
+                modulename = classsname.module
+            else:
+                modulename = 'builtin'
+            self.set_attribute_value('module_name', modulename)
 
         return schema
 

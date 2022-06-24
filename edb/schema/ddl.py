@@ -577,6 +577,7 @@ def delta_from_ddl(
         Mapping[Tuple[sn.Name, Optional[str]], uuid.UUID]
     ]=None,
     compat_ver: Optional[verutils.Version] = None,
+    module: Optional[str] = None,
 ) -> sd.DeltaRoot:
     _, cmd = _delta_from_ddl(
         ddl_stmt,
@@ -587,6 +588,7 @@ def delta_from_ddl(
         allow_dml_in_functions=allow_dml_in_functions,
         schema_object_ids=schema_object_ids,
         compat_ver=compat_ver,
+        module=module
     )
     return cmd
 
@@ -604,6 +606,7 @@ def _delta_from_ddl(
         Mapping[Tuple[sn.Name, Optional[str]], uuid.UUID]
     ]=None,
     compat_ver: Optional[verutils.Version] = None,
+    module: Optional[str] = None,
 ) -> Tuple[s_schema.Schema, sd.DeltaRoot]:
     delta = sd.DeltaRoot()
     context = sd.CommandContext(
@@ -615,6 +618,7 @@ def _delta_from_ddl(
         allow_dml_in_functions=allow_dml_in_functions,
         schema_object_ids=schema_object_ids,
         compat_ver=compat_ver,
+        module=module
     )
 
     with context(sd.DeltaRootContext(schema=schema, op=delta)):
@@ -632,8 +636,11 @@ def _delta_from_ddl(
                 cmd,
                 (sd.GlobalObjectCommand, sd.ExternalObjectCommand),
             ):
-                ver = schema.get_global(
-                    s_ver.SchemaVersion, '__schema_version__')
+                if module is not None:
+                    schema_ver_name = sn.QualName(module=module, name='__schema_version__')
+                else:
+                    schema_ver_name = '__schema_version__'
+                ver = schema.get_global(s_ver.SchemaVersion, schema_ver_name)
                 ver_cmd = ver.init_delta_command(schema, sd.AlterObject)
                 ver_cmd.set_attribute_value('version', uuidgen.uuid1mc())
                 schema = ver_cmd.apply(schema, context)
