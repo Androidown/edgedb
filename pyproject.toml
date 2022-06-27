@@ -97,3 +97,8 @@ exclude_lines = [
 ]
 show_missing = true
 ignore_errors = true
+
+
+[build-system]
+# Minimum requirements for the build system to execute.
+requires = ["setuptools", "wheel", "python-dateutil"]

@@ -378,8 +378,11 @@ async def _get_remote_pgcluster(
 async def run_server(
     args: srvargs.ServerConfig,
     *,
-    do_setproctitle: bool=False,
+    do_setproctitle: bool = False,
 ) -> None:
+    if args.backend_dsn:
+        buildmeta.set_remote_backend(args.backend_dsn)
+
     from . import server as server_mod
     global server
     server = server_mod

@@ -49,6 +49,8 @@ from edb.common import verutils
 EDGEDB_CATALOG_VERSION = 2022_04_06_00_00
 EDGEDB_MAJOR_VERSION = 2
 
+ENV_EDGEDB_PG_BACKEND_DSN = '_EDGEDB_PG_BACKEND_DSN'
+
 
 class MetadataError(Exception):
     pass
@@ -69,6 +71,29 @@ class VersionMetadata(TypedDict):
     scm_revision: str | None
     source_date: datetime.datetime | None
     target: str | None
+
+
+class CMD:
+    def __init__(self, path: pathlib.Path, is_python: bool = False):
+        self.path = str(path)
+        self.is_python = is_python
+
+    def get_cmd(self):
+        if self.is_python:
+            return [sys.executable, self.path]
+        else:
+            return [self.path]
+
+
+def is_remote_backend() -> bool:
+    remote_backend = os.getenv(ENV_EDGEDB_PG_BACKEND_DSN, None)
+    return remote_backend.lower() is not None
+
+
+def set_remote_backend(dsn: str):
+    if not dsn:
+        return
+    os.environ[ENV_EDGEDB_PG_BACKEND_DSN] = dsn
 
 
 def get_build_metadata_value(prop: str) -> str:
@@ -101,7 +126,21 @@ def _get_devmode_pg_config_path() -> pathlib.Path:
     return pg_config
 
 
-def get_pg_config_path() -> pathlib.Path:
+def _get_pg_conf_script_path() -> pathlib.Path:
+    root = pathlib.Path(__file__).parent.parent.resolve()
+    pg_config = root / 'scripts' / 'pg_conf.py'
+    if not pg_config.is_file():
+        raise MetadataError(
+            f'invalid pg_config path: {pg_config!r}: file does not '
+            f'exist or is not a regular file')
+    return pg_config
+
+
+def get_pg_config_path() -> CMD:
+    if is_remote_backend():
+        pg_config = _get_pg_conf_script_path()
+        return CMD(pg_config, is_python=True)
+
     if devmode.is_in_dev_mode():
         pg_config = _get_devmode_pg_config_path()
     else:
@@ -116,7 +155,7 @@ def get_pg_config_path() -> pathlib.Path:
                     f'invalid pg_config path: {pg_config!r}: file does not '
                     f'exist or is not a regular file')
 
-    return pg_config
+    return CMD(pg_config)
 
 
 _bundled_pg_version: Optional[BackendVersion] = None
@@ -130,10 +169,11 @@ def get_pg_version() -> BackendVersion:
     from asyncpg import serverversion
 
     pg_config = subprocess.run(
-        [get_pg_config_path()],
+        get_pg_config_path().get_cmd(),
         capture_output=True,
         text=True,
         check=True,
+        env=os.environ.copy(),
     )
 
     for line in pg_config.stdout.splitlines():
