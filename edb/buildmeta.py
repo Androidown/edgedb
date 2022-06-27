@@ -168,13 +168,17 @@ def get_pg_version() -> BackendVersion:
 
     from asyncpg import serverversion
 
-    pg_config = subprocess.run(
-        get_pg_config_path().get_cmd(),
-        capture_output=True,
-        text=True,
-        check=True,
-        env=os.environ.copy(),
-    )
+    try:
+        pg_config = subprocess.run(
+            get_pg_config_path().get_cmd(),
+            capture_output=True,
+            text=True,
+            check=True,
+            env=os.environ.copy(),
+        )
+    except subprocess.CalledProcessError as e:
+        raise MetadataError(
+            f"could not resolve pg config: {e.stderr}") from None
 
     for line in pg_config.stdout.splitlines():
         k, eq, v = line.partition('=')

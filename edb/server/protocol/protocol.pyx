@@ -47,7 +47,6 @@ from . import metrics
 from . import server_info
 from . import notebook_ext
 from . import system_api
-from . import ui_ext
 
 
 HTTPStatus = http.HTTPStatus
@@ -486,14 +485,6 @@ cdef class HttpProtocol:
                 await server_info.handle_request(
                     request,
                     response,
-                    self.server,
-                )
-                return
-            if path_parts[0] == 'ui' and self.server.is_admin_ui_enabled():
-                await ui_ext.handle_request(
-                    request,
-                    response,
-                    path_parts[1:],
                     self.server,
                 )
                 return

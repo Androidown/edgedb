@@ -962,12 +962,6 @@ setuptools.setup(
             extra_link_args=EXT_LDFLAGS),
 
         setuptools_extension.Extension(
-            "edb.server.protocol.ui_ext",
-            ["edb/server/protocol/ui_ext.pyx"],
-            extra_compile_args=EXT_CFLAGS,
-            extra_link_args=EXT_LDFLAGS),
-
-        setuptools_extension.Extension(
             "edb.server.protocol.edgeql_ext",
             ["edb/server/protocol/edgeql_ext.pyx"],
             extra_compile_args=EXT_CFLAGS,
