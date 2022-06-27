@@ -2,6 +2,10 @@ import os
 import urllib.parse
 import asyncio
 from typing import Tuple, Dict
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(__file__))
+sys.path.append(ROOT)
 
 from edb.server.ha import base as ha_base
 from edb.server import pgconnparams
