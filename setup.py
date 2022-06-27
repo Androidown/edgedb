@@ -108,6 +108,7 @@ BUILD_DEPS = [
     CYTHON_DEPENDENCY,
     'packaging>=21.0',
     'setuptools-rust~=0.12.1',
+    'python-dateutil~=2.8.2',
     'wheel',  # needed by PyYAML and immutables, refs pypa/pip#5865
 ] + COMMON_DEPS
 

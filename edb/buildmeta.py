@@ -38,6 +38,8 @@ import subprocess
 import sys
 import tempfile
 
+import dateutil.parser as date_parser
+
 from edb.common import debug
 from edb.common import devmode
 from edb.common import verutils
@@ -492,19 +494,21 @@ def get_version_from_scm(root: pathlib.Path) -> str:
     env = dict(os.environ)
     env['TZ'] = 'UTC'
     proc = subprocess.run(
-        ['git', 'show', '-s', '--format=%cd',
-         '--date=format-local:%Y%m%d%H', commitish],
+        ['git', 'show', '-s', '--format=%ci', commitish],
         stdout=subprocess.PIPE,
         universal_newlines=True,
         check=True,
         cwd=root,
         env=env,
     )
-    rev_date = proc.stdout.strip()
+    date_string = proc.stdout.strip()
+    rev_date = date_parser.parse(date_string)
+    tz = datetime.datetime.utcnow().astimezone().tzinfo
+    rev_date_repr = rev_date.astimezone(tz).strftime("%Y%m%d%H")
 
     catver = EDGEDB_CATALOG_VERSION
 
-    full_version = f'{ver}+d{rev_date}.g{commitish[:9]}.cv{catver}'
+    full_version = f'{ver}+d{rev_date_repr}.g{commitish[:9]}.cv{catver}'
 
     build_target = os.environ.get("EDGEDB_BUILD_TARGET")
     if build_target:
