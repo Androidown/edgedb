@@ -166,11 +166,14 @@ def _compile_build_meta(build_lib, version, pg_config, runstate_dir,
         vertuple[4] = tuple(version_suffix.split('.'))
     vertuple = tuple(vertuple)
 
-    pg_config_path = pathlib.Path(pg_config)
-    if not pg_config_path.is_absolute():
-        pg_config_path = f"_ROOT / {str(pg_config_path)!r}"
+    if pg_config:
+        pg_config_path = pathlib.Path(pg_config)
+        if not pg_config_path.is_absolute():
+            pg_config_path = f"_ROOT / {str(pg_config_path)!r}"
+        else:
+            pg_config_path = repr(str(pg_config_path))
     else:
-        pg_config_path = repr(str(pg_config_path))
+        pg_config_path = "None"
 
     if runstate_dir:
         runstate_dir_path = pathlib.Path(runstate_dir)
@@ -181,11 +184,14 @@ def _compile_build_meta(build_lib, version, pg_config, runstate_dir,
     else:
         runstate_dir_path = "None  # default to <data-dir>"
 
-    shared_dir_path = pathlib.Path(shared_dir)
-    if not shared_dir_path.is_absolute():
-        shared_dir_path = f"_ROOT / {str(shared_dir_path)!r}"
+    if shared_dir:
+        shared_dir_path = pathlib.Path(shared_dir)
+        if not shared_dir_path.is_absolute():
+            shared_dir_path = f"_ROOT / {str(shared_dir_path)!r}"
+        else:
+            shared_dir_path = repr(str(shared_dir_path))
     else:
-        shared_dir_path = repr(str(shared_dir_path))
+        shared_dir_path = "None"
 
     content = textwrap.dedent('''\
         #
@@ -512,20 +518,14 @@ class build(distutils_build.build):
         super().run(*args, **kwargs)
         build_lib = pathlib.Path(self.build_lib)
         _compile_parsers(build_lib)
-        if (
-            self.pg_config
-            or self.runstatedir
-            or self.shared_dir
-            or self.version_suffix
-        ):
-            _compile_build_meta(
-                build_lib,
-                self.distribution.metadata.version,
-                self.pg_config,
-                self.runstatedir,
-                self.shared_dir,
-                self.version_suffix,
-            )
+        _compile_build_meta(
+            build_lib,
+            self.distribution.metadata.version,
+            self.pg_config,
+            self.runstatedir,
+            self.shared_dir,
+            self.version_suffix,
+        )
 
 
 class develop(setuptools_develop.develop):
