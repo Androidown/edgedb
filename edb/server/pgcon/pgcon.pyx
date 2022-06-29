@@ -1266,7 +1266,6 @@ cdef class PGConnection:
         finally:
             duration = time.monotonic() - started_at
             metrics.backend_query_duration.observe(duration)
-            logger.info(f"simple query spent: {duration} seconds.")
             await self.after_command()
 
     async def run_ddl(

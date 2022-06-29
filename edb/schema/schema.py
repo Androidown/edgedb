@@ -676,33 +676,6 @@ class FlatSchema(Schema):
         new._generation = self._generation + other._generation
         return new
 
-    def __eq1__(self, other: FlatSchema):
-        if self._id_to_type != other._id_to_type:
-            print('_id_to_type not match')
-            return False
-
-        if self._id_to_data != other._id_to_data:
-            print('_id_to_data not match')
-            return False
-
-        if self._globalname_to_id != other._globalname_to_id:
-            print('_globalname_to_id not match')
-            return False
-
-        if self._shortname_to_id != other._shortname_to_id:
-            print('_shortname_to_id not match')
-            return False
-
-        if self._name_to_id != other._name_to_id:
-            print('_name_to_id not match')
-            return False
-
-        if self._refs_to != other._refs_to:
-            print('ref_to not match')
-            return False
-
-        return True
-
     def __eq__(self, other: FlatSchema):
         return (
             self._refs_to == other._refs_to and

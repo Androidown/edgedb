@@ -87,7 +87,7 @@ class CMD:
 
 def is_remote_backend() -> bool:
     remote_backend = os.getenv(ENV_EDGEDB_PG_BACKEND_DSN, None)
-    return remote_backend.lower() is not None
+    return remote_backend is not None
 
 
 def set_remote_backend(dsn: str):

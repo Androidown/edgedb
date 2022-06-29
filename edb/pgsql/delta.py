@@ -5565,6 +5565,14 @@ class UpdateEndpointDeleteActions(MetaCommand):
         if module is None:
             return
         obj = schema.get_by_id(objtype.id)
+
+        name = obj.get_name(schema)
+        if isinstance(name, sn.QualName):
+            if name not in s_schema.STD_MODULES_STR:
+                return
+        else:
+            return
+
         module_name_ptr = obj.getptr(schema, sn.UnqualName('module_name'))
         return f'OLD."{module_name_ptr.id}" = \'{module}\''
 
