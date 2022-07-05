@@ -2879,11 +2879,6 @@ class CreateObject(ObjectCommand[so.Object_T], Generic[so.Object_T]):
 
         props = self.get_resolved_attributes(schema, context)
         metaclass = self.get_schema_metaclass()
-        schema, self.scls = metaclass.create_in_schema(schema, **props)
-
-        if not props.get('id'):
-            # Record the generated ID.
-            self.set_attribute_value('id', self.scls.id)
 
         if 'module_name' not in props:
             classsname = self.classname
@@ -2893,6 +2888,13 @@ class CreateObject(ObjectCommand[so.Object_T], Generic[so.Object_T]):
             else:
                 modulename = 'builtin'
             self.set_attribute_value('module_name', modulename)
+            props['module_name'] = modulename
+
+        schema, self.scls = metaclass.create_in_schema(schema, **props)
+
+        if not props.get('id'):
+            # Record the generated ID.
+            self.set_attribute_value('id', self.scls.id)
 
         return schema
 
