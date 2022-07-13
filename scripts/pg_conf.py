@@ -44,7 +44,7 @@ def print_conf(conf):
 
 
 async def get_config():
-    dsn = os.getenv('_EDGEDB_PG_BACKEND_DSN')
+    dsn = os.getenv('_EDGEDB_PG_BACKEND_DSN', 'postgresql://postgres:@127.0.0.1:5432?database=postgres')
     parsed = urllib.parse.urlparse(dsn)
 
     if parsed.scheme not in {'postgresql', 'postgres'}:
