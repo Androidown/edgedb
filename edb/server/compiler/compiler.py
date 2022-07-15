@@ -384,7 +384,7 @@ class Compiler:
         current_tx = ctx.state.current_tx()
         schema = current_tx.get_schema(self._std_schema)
 
-        meta_blocks: List[Tuple[bool, str, Dict[str, Any]]] = []
+        meta_blocks: List[Tuple[str, Dict[str, Any]]] = []
 
         # Use a provided context if one was passed in, which lets us
         # used the cached values for resolved properties. (Which is
@@ -404,31 +404,24 @@ class Compiler:
             blocks=meta_blocks,
             internal_schema_mode=ctx.internal_schema_mode,
             stdmode=ctx.bootstrap_mode,
-            refl_schema=self._refl_schema
         )
 
         cache = current_tx.get_cached_reflection()
 
         with cache.mutate() as cache_mm:
-            for is_edgeql, eql, args in meta_blocks:
+            for eql, args in meta_blocks:
                 eql_hash = hashlib.sha1(eql.encode()).hexdigest()
                 fname = ('edgedb', f'__rh_{eql_hash}')
 
                 if eql_hash in cache_mm:
                     argnames = cache_mm[eql_hash]
                 else:
-                    if not is_edgeql:
-                        argnames = tuple(args.keys())
-                        argtype = 'text'
-                        sql = eql
-                    else:
-                        sql, argmap = self._compile_schema_storage_stmt(ctx, eql)
-                        argtype = 'json'
-                        argnames = tuple(arg.name for arg in argmap)
+                    sql, argmap = self._compile_schema_storage_stmt(ctx, eql)
+                    argnames = tuple(arg.name for arg in argmap)
 
                     func = pg_dbops.Function(
                         name=fname,
-                        args=[(argname, argtype) for argname in argnames],
+                        args=[(argname, 'json') for argname in argnames],
                         returns='json',
                         text=sql,
                     )
