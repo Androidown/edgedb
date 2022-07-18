@@ -5568,7 +5568,7 @@ class UpdateEndpointDeleteActions(MetaCommand):
 
         name = obj.get_name(schema)
         if isinstance(name, sn.QualName):
-            if name not in s_schema.STD_MODULES_STR:
+            if name.module not in s_schema.STD_MODULES_STR:
                 return
         else:
             return
