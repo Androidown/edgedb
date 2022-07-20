@@ -3443,14 +3443,21 @@ def process_set_as_traverse_function(
     # pathctx.put_path_value_rvar(scope_stmt, ir_set.path_id, new_rvar, env=ctx.env)
 
     main_query.append_cte(cte)
-    # from edb.common import tracer
-    # tracer.Flag.trace_on()
 
     main_query.from_clause.append(pgast.RelRangeVar(
         relation=pgast.Relation(name=cte_name)
     ))
-    main_query.target_list.append(pgast.ResTarget(
-        val=pgast.ColumnRef(name=['id']),
-    ))
 
+    output_var = pgast.ColumnRef(name=['id'])
+    main_query.target_list.append(pgast.ResTarget(
+        val=output_var,
+        name='id'
+    ))
+    pathctx._put_path_output_var(
+        rel=main_query,
+        path_id=ir_set.path_id,
+        aspect='value',
+        var=output_var,
+        env=ctx.env
+    )
     return new_rvars
