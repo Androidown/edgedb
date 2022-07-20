@@ -743,6 +743,8 @@ def finalize_args(
 
     args: List[irast.CallArg] = []
     typemods = []
+    is_dim_function = _is_dim_function(bound_call.func.get_shortname(ctx.env.schema))
+    bound_type = None
 
     for i, barg in enumerate(bound_call.args):
         param = barg.param
@@ -760,6 +762,27 @@ def finalize_args(
             param_mod = param.get_typemod(ctx.env.schema)
 
         typemods.append(param_mod)
+
+        if is_dim_function:
+            if i == 0:
+                bound_type = barg.valtype
+                card = inference.infer_cardinality(
+                    barg.val,
+                    scope_tree=ctx.path_scope,
+                    ctx=inference.make_ctx(ctx.env)
+                )
+                if ft.Cardinality.is_multi(card):
+                    raise errors.UnsupportedFeatureError(
+                        "Recursive query from multi records is "
+                        "not supported yet.")
+            elif i == 1:
+                const = barg.val.expr
+                link_name = const.value
+                link = bound_type.getptr(ctx.env.schema, sn.UnqualName(link_name))
+                barg.val.expr = irast.StringConstant(
+                    typeref=const.typeref,
+                    value=str(link.id),
+                )
 
         if param_mod is not ft.TypeModifier.SetOfType:
             param_shortname = param.get_parameter_name(ctx.env.schema)
@@ -855,3 +878,11 @@ def finalize_args(
                           is_default=barg.is_default))
 
     return args, typemods
+
+
+def _is_dim_function(
+    func_name: sn.QualName,
+):
+    return func_name in (
+        sn.QualName(module='default', name='base'),
+    )
