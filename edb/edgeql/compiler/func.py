@@ -26,6 +26,7 @@ from typing import *
 from edb import errors
 
 from edb.ir import ast as irast
+from edb.common import util as common_util
 
 from edb.schema import constraints as s_constr
 from edb.schema import functions as s_func
@@ -743,8 +744,53 @@ def finalize_args(
 
     args: List[irast.CallArg] = []
     typemods = []
-    is_dim_function = _is_dim_function(bound_call.func.get_shortname(ctx.env.schema))
-    bound_type = None
+    is_dim_function = common_util.is_dim_function(
+        bound_call.func.get_shortname(ctx.env.schema))
+
+    if is_dim_function:
+        barg = bound_call.args[0]
+        bound_type = barg.valtype
+        card = inference.infer_cardinality(
+            barg.val,
+            scope_tree=ctx.path_scope,
+            ctx=inference.make_ctx(ctx.env)
+        )
+        if ft.Cardinality.is_multi(card):
+            raise errors.UnsupportedFeatureError(
+                "Recursive query from multi records is "
+                "not supported yet.")
+
+        link = bound_type.maybe_get_ptr(ctx.env.schema, sn.UnqualName('parent'))
+        if link is None:
+            raise errors.QueryError(
+                f"{bound_type.get_displayname(ctx.env.schema)} cannot be used in "
+                f"function {bound_call.func.get_shortname(ctx.env.schema)} because "
+                f"it does not have a link named 'parent'. ")
+
+        _, actual_link = link.material_type(ctx.env.schema)
+
+        str_t = cast(s_scalars.ScalarType, ctx.env.schema.get('std::str'))
+        str_tref = typegen.type_to_typeref(str_t, env=ctx.env)
+        bound_call.args.append(polyres.BoundArg(
+            arg_id=1,
+            is_default=True,
+            val=irast.Set(
+                expr=irast.StringConstant(
+                    typeref=str_tref,
+                    value=str(actual_link.id),
+                ),
+                typeref=str_tref,
+                path_id=irast.PathId.from_type(
+                    ctx.env.schema,
+                    t=str_t,
+                    env=ctx.env
+                )
+            ),
+            valtype=str_t,
+            param_type=str_t,
+            param=None,
+            cast_distance=0
+        ))
 
     for i, barg in enumerate(bound_call.args):
         param = barg.param
@@ -762,27 +808,6 @@ def finalize_args(
             param_mod = param.get_typemod(ctx.env.schema)
 
         typemods.append(param_mod)
-
-        if is_dim_function:
-            if i == 0:
-                bound_type = barg.valtype
-                card = inference.infer_cardinality(
-                    barg.val,
-                    scope_tree=ctx.path_scope,
-                    ctx=inference.make_ctx(ctx.env)
-                )
-                if ft.Cardinality.is_multi(card):
-                    raise errors.UnsupportedFeatureError(
-                        "Recursive query from multi records is "
-                        "not supported yet.")
-            elif i == 1:
-                const = barg.val.expr
-                link_name = const.value
-                link = bound_type.getptr(ctx.env.schema, sn.UnqualName(link_name))
-                barg.val.expr = irast.StringConstant(
-                    typeref=const.typeref,
-                    value=str(link.id),
-                )
 
         if param_mod is not ft.TypeModifier.SetOfType:
             param_shortname = param.get_parameter_name(ctx.env.schema)
@@ -878,11 +903,3 @@ def finalize_args(
                           is_default=barg.is_default))
 
     return args, typemods
-
-
-def _is_dim_function(
-    func_name: sn.QualName,
-):
-    return func_name in (
-        sn.QualName(module='default', name='base'),
-    )

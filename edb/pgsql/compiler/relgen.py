@@ -28,7 +28,7 @@ import contextlib
 from edb import errors
 
 from edb.edgeql import qltypes
-
+from edb.common import util as common_util
 from edb.schema import objects as s_obj
 
 from edb.ir import ast as irast
@@ -372,8 +372,9 @@ def _get_set_rvar(
                 # Generic std::max
                 rvars = process_set_as_std_min_max(ir_set, stmt, ctx=ctx)
 
-            elif str(expr.func_shortname) == 'default::base':
-                rvars = process_set_as_traverse_function(ir_set, stmt, ctx=ctx)
+            elif common_util.is_dim_function(expr.func_shortname):
+                rvars = process_set_as_traverse_function(
+                    ir_set, stmt, ctx=ctx, function_name=str(expr.func_shortname))
 
             elif any(
                 pm is qltypes.TypeModifier.SetOfType
@@ -3323,7 +3324,8 @@ def process_set_as_traverse_function(
     ir_set: irast.Set,
     stmt: pgast.SelectStmt,
     *,
-    ctx: context.CompilerContextLevel
+    ctx: context.CompilerContextLevel,
+    function_name: str
 ) -> SetRVars:
     expr = ir_set.expr
     assert isinstance(expr, irast.FunctionCall)
@@ -3396,11 +3398,23 @@ def process_set_as_traverse_function(
             relation=pgast.Relation(name=cte_name)
         )
 
+        cte_parent_name = ctx.env.aliases.get('parent')
+        cte_src_query.target_list.append(pgast.ResTarget(
+            val=pgast.ColumnRef(name=[table.alias.aliasname, link_name]),
+            name=cte_parent_name
+        ))
+
         cte_recur_query = pgast.SelectStmt(
-            target_list=[pgast.ResTarget(
-                val=pgast.ColumnRef(name=[table_child.alias.aliasname, 'id']),
-                name='id'
-            )],
+            target_list=[
+                pgast.ResTarget(
+                    val=pgast.ColumnRef(name=[table_child.alias.aliasname, 'id']),
+                    name='id'
+                ),
+                pgast.ResTarget(
+                    val=pgast.ColumnRef(name=[table_child.alias.aliasname, link_name]),
+                    name=cte_parent_name
+                ),
+            ],
             from_clause=[table_child, cte_self_ref],
             where_clause=pgast.Expr(
                 nullable=False,
@@ -3424,23 +3438,7 @@ def process_set_as_traverse_function(
     )
 
     new_rvars = new_stmt_set_rvar(ir_set, stmt, ctx=ctx)
-    # main_query = cast(pgast.SelectStmt, new_rvar.query)
     main_query = ctx.rel
-
-    scope_stmt = relctx.maybe_get_scope_stmt(ir_set.path_id, ctx=ctx)
-
-    # rel_rvar = relctx.new_root_rvar(ir_set, ctx=ctx)
-    rel_rvar = pgast.RelRangeVar(
-        relation=pgast.Relation(name=cte_name),
-        typeref=ir_set.typeref,
-        # alias=pgast.Alias(aliasname=cte_name)
-    )
-
-    pathctx.put_path_value_var(stmt, ir_set.path_id, rel_rvar, env=ctx.env)
-
-    # if scope_stmt is None:
-    #     scope_stmt = stmt
-    # pathctx.put_path_value_rvar(scope_stmt, ir_set.path_id, new_rvar, env=ctx.env)
 
     main_query.append_cte(cte)
 
@@ -3453,7 +3451,60 @@ def process_set_as_traverse_function(
         val=output_var,
         name='id'
     ))
-    pathctx._put_path_output_var(
+
+    if function_name in ('cal::base', 'cal::ibase'):
+        main_query.where_clause = pgast.Expr(
+            nullable=False,
+            name='NOT IN',
+            lexpr=pgast.ColumnRef(name=[cte_name, 'id']),
+            rexpr=pgast.SelectStmt(
+                target_list=[
+                    pgast.ResTarget(val=pgast.ColumnRef(name=[cte_parent_name])),
+                ],
+                from_clause=[pgast.RelRangeVar(relation=pgast.Relation(name=cte_name))],
+                where_clause=pgast.NullTest(arg=pgast.ColumnRef(name=[cte_parent_name]), negated=True),
+            )
+        )
+        if function_name == 'cal::ibase':
+            main_query.where_clause = astutils.extend_binop(
+                main_query.where_clause,
+                pgast.Expr(
+                    nullable=False,
+                    name='IN',
+                    lexpr=pgast.ColumnRef(name=[cte_name, 'id']),
+                    rexpr=rvar_query
+                ),
+                op='OR'
+            )
+    elif function_name == 'cal::descendant':
+        main_query.where_clause = pgast.Expr(
+            nullable=False,
+            name='NOT IN',
+            lexpr=pgast.ColumnRef(name=[cte_name, 'id']),
+            rexpr=rvar_query
+        )
+    elif function_name in ('cal::children', 'cal::ichildren'):
+        # todo nulltest
+        main_query.where_clause = pgast.Expr(
+            nullable=False,
+            name='IN',
+            lexpr=pgast.ColumnRef(name=[cte_name, cte_parent_name]),
+            rexpr=rvar_query
+        )
+
+        if function_name == 'cal::ichildren':
+            main_query.where_clause = astutils.extend_binop(
+                main_query.where_clause,
+                pgast.Expr(
+                    nullable=False,
+                    name='IN',
+                    lexpr=pgast.ColumnRef(name=[cte_name, 'id']),
+                    rexpr=rvar_query
+                ),
+                op='OR'
+            )
+
+    pathctx._put_path_output_var(  # noqa
         rel=main_query,
         path_id=ir_set.path_id,
         aspect='value',

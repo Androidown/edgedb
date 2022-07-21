@@ -609,22 +609,41 @@ class FlatSchema(Schema):
 
             new._refs_to = refs_to_final
 
-            new._globalname_to_id = immu.Map(
-                (name, _id)
-                for name, _id in self._globalname_to_id.items()
-                if _id in target_ids
-            )
             new._name_to_id = immu.Map(
                 (name, _id)
                 for name, _id in self._name_to_id.items()
                 if _id in target_ids
             )
-            new._shortname_to_id = immu.Map(
-                (name, _id)
-                for name, _id in self._shortname_to_id.items()
-                if _id in target_ids
-            )
             new._generation = self._generation
+
+            new._globalname_to_id = immu.Map()
+            new._shortname_to_id = immu.Map()
+
+        def _update_single(schema, key_, value_, is_global_):
+            if is_global_:
+                schema._globalname_to_id = schema._globalname_to_id.set(key_, value_)
+            else:
+                schema._shortname_to_id = schema._shortname_to_id.set(key_, value_)
+
+        def _update_for_all(key_, value_, is_global_):
+            for _, schema in splited_schema.items():
+                _update_single(schema, key_, value_, is_global_=is_global_)
+
+        # -----------------------------------------------------------------------------
+        # replace shortname_to_id
+        for is_global, immmap in zip((True, False), (self._globalname_to_id, self._shortname_to_id)):
+            for ((type_, name), _id) in immmap.items():
+                if isinstance(name, sn.QualName):
+                    mod_name = name.get_module_name()
+                    if mod_name not in BUILTIN_MODULES:
+                        _update_single(
+                            splited_schema[mod_name.name],
+                            (type_, name), _id, is_global
+                        )
+                    else:
+                        _update_for_all((type_, name), _id, is_global)
+                else:
+                    _update_for_all((type_, name), _id, is_global)
 
         return splited_schema
 
@@ -2063,196 +2082,6 @@ class ChainedSchema(Schema):
         if migration is None:
             migration = self._base_schema.get_last_migration(module)
         return migration
-
-
-class PartitionedSchema(FlatSchema):
-    def __init__(self, schema_map: Dict[str, FlatSchema]):
-        self._module_to_schema = schema_map
-
-    def _update_and_return(self, module: str, schema: FlatSchema) -> FlatSchema:
-        self._module_to_schema[module] = schema
-        return self
-
-    def _get_schema(self, obj: so.Object = None, module: str = None) -> FlatSchema:
-        if module is None:
-            for _schema in self._module_to_schema.values():
-                try:
-                    module = obj.get_module_name(_schema)
-                except SchemaError:
-                    pass
-
-        if module in STD_MODULES_STR + ('builtin', ):
-            return list(self._module_to_schema.values())[0]
-        schema = self._module_to_schema[module]
-        return schema
-
-    def update_obj(
-        self,
-        obj: so.Object,
-        updates: Mapping[str, Any],
-        module: str = None,
-    ) -> FlatSchema:
-        schema = self._get_schema(obj, module).update_obj(obj, updates)
-        return self._update_and_return(module, schema)
-
-    def maybe_get_obj_data_raw(
-        self,
-        obj: so.Object,
-        module: str = None,
-    ) -> Optional[Tuple[Any, ...]]:
-        schema = self._get_schema(obj, module)
-        return schema.maybe_get_obj_data_raw(obj)
-
-    def get_obj_data_raw(
-        self,
-        obj: so.Object,
-        module: str = None,
-    ) -> Tuple[Any, ...]:
-        schema = self._get_schema(obj, module)
-        return schema.get_obj_data_raw(obj)
-
-    def set_obj_field(
-        self,
-        obj: so.Object,
-        fieldname: str,
-        value: Any,
-        module: str = None,
-    ) -> FlatSchema:
-        schema = self._get_schema(obj, module).set_obj_field(obj, fieldname, value)
-        return self._update_and_return(module, schema)
-
-    def unset_obj_field(
-        self,
-        obj: so.Object,
-        fieldname: str,
-        module: str = None,
-    ) -> FlatSchema:
-        schema = self._get_schema(obj, module).unset_obj_field(obj, fieldname)
-        return self._update_and_return(module, schema)
-
-    def add_raw(
-        self,
-        id: uuid.UUID,
-        sclass: Type[so.Object],
-        data: Tuple[Any, ...],
-    ) -> FlatSchema:
-        module_field = sclass.get_schema_field('module_name')
-        module = data[module_field.index]
-        schema = self._get_schema(None, module)
-        schema = schema.add_raw(id, sclass, data)
-        return self._update_and_return(module, schema)
-
-    def _delete(self, obj: so.Object, module: str = None) -> FlatSchema:
-        schema = self._get_schema(obj, module)._delete(obj)
-        return self._update_and_return(module, schema)
-
-    def delete(self, obj: so.Object, module: str = None) -> FlatSchema:
-        return self._delete(obj, module)
-
-    def discard(self, obj: so.Object, module: str = None) -> FlatSchema:
-        schema = self._get_schema(obj, module)
-        if obj.id in schema._id_to_data:
-            return self._delete(obj, module)
-        else:
-            return self
-
-    def _search_with_getter(
-        self,
-        name: Union[str, sn.Name],
-        *,
-        getter: Callable[[FlatSchema, sn.Name], Any],
-        default: Any,
-        module_aliases: Optional[Mapping[Optional[str], str]],
-    ) -> Any:
-        if isinstance(name, str):
-            name = sn.name_from_string(name)
-        module = name.module if isinstance(name, sn.QualName) else None
-        implicit_builtins = module is None
-
-        if module == '__std__' or implicit_builtins:
-            return default
-
-        schema = self._get_schema(module=module)
-        return schema._search_with_getter(
-            name,
-            getter=getter,
-            default=default,
-            module_aliases=module_aliases
-        )
-
-    @util.simple_lru()
-    def _get_referrers(
-        self,
-        scls: so.Object,
-        *,
-        scls_type: Optional[Type[so.Object_T]] = None,
-        field_name: Optional[str] = None,
-        module: str = None
-    ) -> FrozenSet[so.Object_T]:
-        schema = self._get_schema(scls, module)
-        return schema._get_referrers(scls, scls_type=scls_type, field_name=field_name)
-
-    @util.simple_lru()
-    def get_referrers_ex(
-        self,
-        scls: so.Object,
-        *,
-        scls_type: Optional[Type[so.Object_T]] = None,
-        module: str = None
-    ) -> Dict[
-        Tuple[Type[so.Object_T], str],
-        FrozenSet[so.Object_T],
-    ]:
-        schema = self._get_schema(scls, module)
-        return schema.get_referrers_ex(scls, scls_type=scls_type)
-
-    def get_modules(self) -> Tuple[s_mod.Module, ...]:
-        return sum(
-            (schema.get_modules() for schema in self._module_to_schema.values()),
-            tuple()
-        )
-
-    def has_object(self, object_id: uuid.UUID) -> bool:
-        return any(
-            schema.has_object(object_id)
-            for schema in self._module_to_schema.values()
-        )
-
-    def get_objects(
-        self,
-        *,
-        exclude_stdlib: bool = False,
-        exclude_global: bool = False,
-        exclude_internal: bool = True,
-        included_modules: Optional[Iterable[sn.Name]] = None,
-        excluded_modules: Optional[Iterable[sn.Name]] = None,
-        included_items: Optional[Iterable[sn.Name]] = None,
-        excluded_items: Optional[Iterable[sn.Name]] = None,
-        type: Optional[Type[so.Object_T]] = None,
-        extra_filters: Iterable[Callable[[Schema, so.Object], bool]] = (),
-    ) -> SchemaIterator[so.Object_T]:
-        return SchemaIterator[so.Object_T](
-            self,
-            itertools.chain(
-                schema._id_to_type
-                for schema in self._module_to_schema
-            ),
-            exclude_global=exclude_global,
-            exclude_stdlib=exclude_stdlib,
-            exclude_internal=exclude_internal,
-            included_modules=included_modules,
-            excluded_modules=excluded_modules,
-            included_items=included_items,
-            excluded_items=excluded_items,
-            type=type,
-            extra_filters=extra_filters,
-        )
-
-    def __hash__(self):
-        return hash(tuple(hash(schema) for schema in self._module_to_schema.values()))
-
-    def get_last_migration(self, module: str = None) -> Optional[s_migrations.Migration]:
-        return list(self._module_to_schema.values())[0].get_last_migration(module)
 
 
 @util.simple_lru()

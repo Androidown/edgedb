@@ -40,3 +40,15 @@ class LiteralString:
     def __str__(self):
         return self.value
 
+
+def is_dim_function(
+    func_name,
+):
+    return str(func_name) in (
+        'cal::base',
+        'cal::ibase',
+        'cal::children',
+        'cal::ichildren',
+        'cal::descendant',
+        'cal::idescendant',
+    )
