@@ -3329,7 +3329,11 @@ def _get_cte_source_table(
     if parent_link.rptr.ptrref.out_cardinality.is_single():
         # store in source
         src_table = relctx.new_root_rvar(source, ctx=ctx)
-        parent_colref = astutils.get_column(src_table, str(parent_link.rptr.ptrref.id))
+        ptrref = parent_link.rptr.ptrref
+        if ptrref.material_ptr is not None:
+            ptrref = ptrref.material_ptr
+
+        parent_colref = astutils.get_column(src_table, str(ptrref.id))
         id_colref = astutils.get_column(src_table, 'id')
     else:
         main_table = relctx.new_root_rvar(source, ctx=ctx)
