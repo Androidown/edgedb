@@ -3320,6 +3320,40 @@ def process_set_as_array_expr(
     return new_stmt_set_rvar(ir_set, stmt, ctx=ctx)
 
 
+def _get_cte_source_table(
+    source: irast.Set,
+    parent_link: irast.Set,
+    *,
+    ctx: context.CompilerContextLevel
+) -> Tuple[pgast.BaseRangeVar, pgast.ColumnRef, pgast.ColumnRef]:
+    if parent_link.rptr.ptrref.out_cardinality.is_single():
+        # store in source
+        src_table = relctx.new_root_rvar(source, ctx=ctx)
+        parent_colref = astutils.get_column(src_table, str(parent_link.rptr.ptrref.id))
+        id_colref = astutils.get_column(src_table, 'id')
+    else:
+        main_table = relctx.new_root_rvar(source, ctx=ctx)
+        link_table = relctx.new_pointer_rvar(parent_link.rptr, src_rvar=main_table, ctx=ctx)
+        src_table_name = ctx.env.aliases.get('cte-src-joined')
+        join = pgast.JoinExpr(
+            type='LEFT',
+            larg=main_table,
+            rarg=link_table,
+            quals=astutils.join_condition(
+                lref=astutils.get_column(main_table, colspec='id'),
+                rref=astutils.get_column(link_table, colspec='source'),
+            ),
+            parenthesis=True
+        )
+        src_table = pgast.RangeSubselect(
+            subquery=join,
+            alias=pgast.Alias(aliasname=src_table_name)
+        )
+        parent_colref = pgast.ColumnRef(name=[src_table_name, 'target'])
+        id_colref = pgast.ColumnRef(name=[src_table_name, 'id'])
+    return src_table, parent_colref, id_colref
+
+
 def process_set_as_traverse_function(
     ir_set: irast.Set,
     stmt: pgast.SelectStmt,
@@ -3334,11 +3368,15 @@ def process_set_as_traverse_function(
     cte_name = ctx.env.aliases.get('cte')
 
     with contextlib.ExitStack() as cstack:
-        # ctx = cstack.enter_context(ctx.subrel())
         ctx1 = cstack.enter_context(ctx.subrel())
         cte_src_query = ctx1.rel
-        table = relctx.new_root_rvar(rel_src, ctx=ctx1)
-        ctx1.rel.from_clause.append(table)
+        src_table, parent_col, id_col = _get_cte_source_table(
+            source=expr.args[0].expr,
+            parent_link=expr.args[1].expr,
+            ctx=ctx1
+        )
+
+        cte_src_query.from_clause.append(src_table)
 
         ctx2 = cstack.enter_context(ctx1.subrel())
         rvar = get_set_rvar(rel_src, ctx=ctx2)
@@ -3351,7 +3389,7 @@ def process_set_as_traverse_function(
             val=pgast.Expr(
                 nullable=False,
                 name='=',
-                lexpr=pgast.ColumnRef(name=[table.alias.aliasname, 'id']),
+                lexpr=id_col,
                 rexpr=pgast.ColumnRef(name=[
                     rvar.alias.aliasname,
                     rvar_query.target_list[0].name
@@ -3383,16 +3421,8 @@ def process_set_as_traverse_function(
                 sub_query_target.name
             ])
         )
-        cte_src_query.target_list.append(pgast.ResTarget(
-            val=pgast.ColumnRef(name=[table.alias.aliasname, 'id']),
-            name='id'
-        ))
+        cte_src_query.target_list.append(pgast.ResTarget(val=id_col, name='id'))
 
-        ctx3 = cstack.enter_context(ctx2.subrel())
-
-        recur_link = dispatch.compile(expr.args[1].expr, ctx=ctx1)
-        link_name = recur_link.arg.val  # noqa
-        table_child = relctx.new_root_rvar(rel_src, ctx=ctx3)
         cte_self_ref = pgast.RelRangeVar(
             alias=pgast.Alias(aliasname=ctx.env.aliases.get('cte-ref')),
             relation=pgast.Relation(name=cte_name)
@@ -3400,26 +3430,27 @@ def process_set_as_traverse_function(
 
         cte_parent_name = ctx.env.aliases.get('parent')
         cte_src_query.target_list.append(pgast.ResTarget(
-            val=pgast.ColumnRef(name=[table.alias.aliasname, link_name]),
+            val=parent_col,
             name=cte_parent_name
         ))
 
+        ctx3 = cstack.enter_context(ctx2.subrel())
+        table_child, child_parent_col, child_id_col = _get_cte_source_table(
+            source=expr.args[0].expr,
+            parent_link=expr.args[1].expr,
+            ctx=ctx3
+        )
+
         cte_recur_query = pgast.SelectStmt(
             target_list=[
-                pgast.ResTarget(
-                    val=pgast.ColumnRef(name=[table_child.alias.aliasname, 'id']),
-                    name='id'
-                ),
-                pgast.ResTarget(
-                    val=pgast.ColumnRef(name=[table_child.alias.aliasname, link_name]),
-                    name=cte_parent_name
-                ),
+                pgast.ResTarget(val=child_id_col, name='id'),
+                pgast.ResTarget(val=child_parent_col, name=cte_parent_name),
             ],
             from_clause=[table_child, cte_self_ref],
             where_clause=pgast.Expr(
                 nullable=False,
                 name='=',
-                lexpr=pgast.ColumnRef(name=[table_child.alias.aliasname, link_name]),
+                lexpr=child_parent_col,
                 rexpr=pgast.ColumnRef(name=[cte_self_ref.alias.aliasname, 'id'])
             )
         )

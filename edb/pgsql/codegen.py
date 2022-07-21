@@ -539,6 +539,8 @@ class SQLSourceGenerator(codegen.SourceGenerator):
         self.write(')')
 
     def visit_JoinExpr(self, node):
+        if node.parenthesis:
+            self.write('(')
         self.visit(node.larg)
         if node.rarg is not None:
             self.new_lines = 1
@@ -566,6 +568,8 @@ class SQLSourceGenerator(codegen.SourceGenerator):
                 self.visit(node.quals)
                 if not nested_join:
                     self.indentation -= 1
+        if node.parenthesis:
+            self.write(')')
 
     def visit_Expr(self, node):
         self.write('(')

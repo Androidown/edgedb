@@ -26,6 +26,7 @@ from typing import *
 from edb import errors
 
 from edb.ir import ast as irast
+from edb.ir import typeutils as irtyputils
 from edb.common import util as common_util
 
 from edb.schema import constraints as s_constr
@@ -36,6 +37,7 @@ from edb.schema import objtypes as s_objtypes
 from edb.schema import operators as s_oper
 from edb.schema import scalars as s_scalars
 from edb.schema import types as s_types
+from edb.schema import pointers as s_pointers
 
 from edb.edgeql import ast as qlast
 from edb.edgeql import qltypes as ft
@@ -769,25 +771,27 @@ def finalize_args(
 
         _, actual_link = link.material_type(ctx.env.schema)
 
-        str_t = cast(s_scalars.ScalarType, ctx.env.schema.get('std::str'))
-        str_tref = typegen.type_to_typeref(str_t, env=ctx.env)
+        ptrref = irtyputils.ptrref_from_ptrcls(schema=ctx.env.schema, ptrcls=link)
+        path_id = barg.val.path_id.extend(ptrref=ptrref)
+        ptr_set = setgen.new_set(
+            stype=bound_type,  # self-reference
+            ctx=ctx,
+            path_id=path_id,
+        )
+        ptr_set.rptr = irast.Pointer(
+            source=barg.val,
+            target=ptr_set,
+            direction=s_pointers.PointerDirection.Outbound,
+            ptrref=ptrref,
+            is_definition=True,
+        )
+
         bound_call.args.append(polyres.BoundArg(
             arg_id=1,
             is_default=True,
-            val=irast.Set(
-                expr=irast.StringConstant(
-                    typeref=str_tref,
-                    value=str(actual_link.id),
-                ),
-                typeref=str_tref,
-                path_id=irast.PathId.from_type(
-                    ctx.env.schema,
-                    t=str_t,
-                    env=ctx.env
-                )
-            ),
-            valtype=str_t,
-            param_type=str_t,
+            val=ptr_set,
+            valtype=bound_type,
+            param_type=bound_type,
             param=None,
             cast_distance=0
         ))

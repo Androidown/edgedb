@@ -808,6 +808,8 @@ class JoinExpr(BaseRangeVar):
     using_clause: typing.Optional[typing.List[BaseExpr]] = None
     # Qualifiers on join, if any
     quals: typing.Optional[BaseExpr] = None
+    # force a parenthesis
+    parenthesis: bool = False
 
     def copy(self):
         result = self.__class__()
