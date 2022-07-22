@@ -120,7 +120,7 @@ cdef class DatabaseConnectionView:
 
     cdef tx_error(self)
 
-    cdef start(self, query_unit)
+    cdef start(self, query_unit, str module=?)
     cdef on_error(self, query_unit)
     cdef on_success(self, query_unit, new_types, str module=?)
 

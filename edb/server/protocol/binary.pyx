@@ -933,10 +933,7 @@ cdef class EdgeConnection:
                     module
                 )
             else:
-                if module is None:
-                    user_schema = _dbview.get_user_schema()
-                else:
-                    user_schema = _dbview.get_user_schema_modularly(module)
+                user_schema = _dbview.get_user_schema(module)
 
                 units, self.last_state = await compiler_pool.compile(
                     _dbview.dbname,
@@ -997,10 +994,7 @@ cdef class EdgeConnection:
                     module
                 )
             else:
-                if module is None:
-                    user_schema = _dbview.get_user_schema()
-                else:
-                    user_schema = _dbview.get_user_schema_modularly(module)
+                user_schema = _dbview.get_user_schema(module)
 
                 units, self.last_state = await compiler_pool.compile(
                     _dbview.dbname,
@@ -1181,7 +1175,7 @@ cdef class EdgeConnection:
                     raise ConnectionAbortedError
 
                 new_types = None
-                _dbview.start(query_unit)
+                _dbview.start(query_unit, module)
                 try:
                     if query_unit.create_db_template:
                         await self.server._on_before_create_db_from_template(
@@ -1709,7 +1703,7 @@ cdef class EdgeConnection:
                 # the current status in conn is in sync with dbview, skip the
                 # state restoring
                 state = None
-            _dbview.start(query_unit)
+            _dbview.start(query_unit, module)
             if query_unit.create_db_template:
                 await self.server._on_before_create_db_from_template(
                     query_unit.create_db_template, _dbview.dbname

@@ -192,8 +192,8 @@ cdef class DatabaseConnectionView:
         self._in_tx_with_sysconfig = False
         self._in_tx_with_dbconfig = False
         self._in_tx_with_set = False
-        self._in_tx_user_schema = None
-        self._in_tx_user_schema_pickled = None
+        self._in_tx_user_schema = {}
+        self._in_tx_user_schema_pickled = {}
         self._in_tx_global_schema = None
         self._in_tx_global_schema_pickled = None
         self._in_tx_new_types = {}
@@ -289,31 +289,22 @@ cdef class DatabaseConnectionView:
         else:
             return self._modaliases
 
-    def get_user_schema(self):
+    def get_user_schema(self, module=None):
         if self._in_tx:
-            if self._in_tx_user_schema_pickled:
-                self._in_tx_user_schema = pickle.loads(
-                    self._in_tx_user_schema_pickled)
-                self._in_tx_user_schema_pickled = None
-            return self._in_tx_user_schema
+            pickled_schema = self._in_tx_user_schema_pickled.setdefault(module, None)
+            if pickled_schema is not None:
+                self._in_tx_user_schema[module] = pickle.loads(pickled_schema)
+                self._in_tx_user_schema_pickled[module] = None
+            return self._in_tx_user_schema[module]
         else:
-            user_schema = s_schema.merge_schema(self._db.user_schema.values())
-            # logger.info(f"get user_schema")
-            # for obj in user_schema.get_objects():
-            #     logger.info(f"{obj}: {obj.get_name(user_schema)}")
-            return user_schema
+            if module is None:
+                return s_schema.merge_schema(self._db.user_schema.values())
+            return self._maybe_get_user_schema(module)
 
-    def get_user_schema_modularly(self, module):
-        if self._in_tx:
-            if self._in_tx_user_schema_pickled:
-                self._in_tx_user_schema = pickle.loads(
-                    self._in_tx_user_schema_pickled)
-                self._in_tx_user_schema_pickled = None
-            return self._in_tx_user_schema
-        else:
-            if module not in self._db.user_schema:
-                raise errors.UnknownModuleError(f'module {module!r} is not in this schema')
-            return self._db.user_schema[module]
+    def _maybe_get_user_schema(self, module):
+        if module not in self._db.user_schema:
+            raise errors.UnknownModuleError(f'module {module!r} is not in this schema')
+        return self._db.user_schema[module]
 
     def get_global_schema(self):
         if self._in_tx:
@@ -439,7 +430,7 @@ cdef class DatabaseConnectionView:
         if self._in_tx:
             self._tx_error = True
 
-    cdef start(self, query_unit):
+    cdef start(self, query_unit, module: str=None):
         if self._tx_error:
             self.raise_in_tx_error()
 
@@ -449,7 +440,10 @@ cdef class DatabaseConnectionView:
             self._in_tx_config = self._config
             self._in_tx_db_config = self._db.db_config
             self._in_tx_modaliases = self._modaliases
-            self._in_tx_user_schema = s_schema.merge_schema(self._db.user_schema.values())
+            if module is None:
+                self._in_tx_user_schema[module] = s_schema.merge_schema(self._db.user_schema.values())
+            else:
+                self._in_tx_user_schema[module] = self._maybe_get_user_schema(module)
             self._in_tx_global_schema = self._db._index._global_schema
 
         if self._in_tx and not self._txid:
@@ -467,8 +461,8 @@ cdef class DatabaseConnectionView:
             if query_unit.has_role_ddl:
                 self._in_tx_with_role_ddl = True
             if query_unit.user_schema is not None:
-                self._in_tx_user_schema_pickled = query_unit.user_schema
-                self._in_tx_user_schema = None
+                self._in_tx_user_schema_pickled[module] = query_unit.user_schema
+                self._in_tx_user_schema[module] = None
             if query_unit.global_schema is not None:
                 self._in_tx_global_schema_pickled = query_unit.global_schema
                 self._in_tx_global_schema = None
