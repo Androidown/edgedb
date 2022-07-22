@@ -47,7 +47,6 @@ from edb.schema import schema as s_schema
 from . import amsg
 from . import queue
 from . import state
-from . import worker as compiler_worker
 
 PROCESS_INITIAL_RESPONSE_TIMEOUT: float = 60.0
 KILL_TIMEOUT: float = 10.0
@@ -806,6 +805,8 @@ class SoloPool(BasePool):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+        from . import worker
+        self.cworker = worker
 
     @functools.lru_cache(maxsize=None)
     def _get_init_args(self):
@@ -839,7 +840,7 @@ class SoloPool(BasePool):
         return pickle.dumps(init_args, -1)
 
     def worker_connected(self, pid, version):
-        compiler_worker.__init_worker__(self._get_init_args())
+        self.cworker.__init_worker__(self._get_init_args())
         self._worker.connected = True
         metrics.compiler_process_spawns.inc()
         metrics.current_compiler_processes.inc()
@@ -891,7 +892,7 @@ class SoloPool(BasePool):
             database_config,
             system_config,
         )
-        units, state_ = compiler_worker.compile(*preargs, *compile_args)
+        units, state_ = self.cworker.compile(*preargs, *compile_args)
         if sync_state is not None:
             sync_state()
         self._worker._last_pickled_state = state_
@@ -921,11 +922,6 @@ class SoloPool(BasePool):
         # stored in edgecon; we never modify it, so `is` is sufficient and
         # is faster than `==`.
         _worker = self._worker
-        if self._worker._last_pickled_state is pickled_state:
-            for attr in self._worker.__dict__:
-                if not attr.startswith('__') and attr.startswith('_'):
-                    setattr(self._worker, attr, None)
-
         if _worker._last_pickled_state is pickled_state:
             # Since we know that this particular worker already has the
             # state, we don't want to waste resources transferring the
@@ -933,7 +929,7 @@ class SoloPool(BasePool):
             # that the compiler process will recognize.
             pickled_state = state.REUSE_LAST_STATE_MARKER
 
-        units, new_pickled_state = compiler_worker.compile_in_tx(pickled_state, txid, *compile_args)
+        units, new_pickled_state = self.cworker.compile_in_tx(pickled_state, txid, *compile_args)
         self._worker._last_pickled_state = new_pickled_state
         return units, new_pickled_state
 
@@ -956,14 +952,14 @@ class SoloPool(BasePool):
             database_config,
             system_config,
         )
-        return compiler_worker.compile_notebook(*preargs, *compile_args, sync_state=sync_state)
+        return self.cworker.compile_notebook(*preargs, *compile_args, sync_state=sync_state)
 
     async def try_compile_rollback(
         self,
         *compile_args,
         **compile_kwargs,
     ):
-        return compiler_worker.try_compile_rollback(*compile_args, **compile_kwargs)
+        return self.cworker.try_compile_rollback(*compile_args, **compile_kwargs)
 
     async def compile_graphql(
         self,
@@ -984,21 +980,21 @@ class SoloPool(BasePool):
             database_config,
             system_config,
         )
-        return compiler_worker.compile_graphql(*preargs, *compile_args, sync_state=sync_state)
+        return self.cworker.compile_graphql(*preargs, *compile_args, sync_state=sync_state)
 
     async def describe_database_dump(
         self,
         *args,
         **kwargs
     ):
-        return compiler_worker.COMPILER.describe_database_dump(*args, **kwargs)
+        return self.cworker.COMPILER.describe_database_dump(*args, **kwargs)
 
     async def describe_database_restore(
         self,
         *args,
         **kwargs
     ):
-        return compiler_worker.COMPILER.describe_database_restore(*args, **kwargs)
+        return self.cworker.COMPILER.describe_database_restore(*args, **kwargs)
 
 
 @srvargs.CompilerPoolMode.OnDemand.assign_implementation
