@@ -97,6 +97,7 @@ class BackendCapabilitySets(NamedTuple):
 class CompilerPoolMode(enum.StrEnum):
     Fixed = "fixed"
     OnDemand = "on_demand"
+    Solo = "solo"
 
     def __init__(self, name):
         self.pool_class = None
