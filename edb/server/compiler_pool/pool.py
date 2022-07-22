@@ -952,7 +952,7 @@ class SoloPool(BasePool):
             database_config,
             system_config,
         )
-        return self.cworker.compile_notebook(*preargs, *compile_args, sync_state=sync_state)
+        return self.cworker.compile_notebook(*preargs, *compile_args)
 
     async def try_compile_rollback(
         self,
@@ -980,7 +980,7 @@ class SoloPool(BasePool):
             database_config,
             system_config,
         )
-        return self.cworker.compile_graphql(*preargs, *compile_args, sync_state=sync_state)
+        return self.cworker.compile_graphql(*preargs, *compile_args)
 
     async def describe_database_dump(
         self,
