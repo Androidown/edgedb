@@ -151,6 +151,9 @@ cdef class Database:
     def get_query_cache_size(self):
         return len(self._eql_to_compiled)
 
+    def get_user_schema(self):
+        return s_schema.merge_schema(self.user_schema.values())
+
 
 cdef class DatabaseConnectionView:
 

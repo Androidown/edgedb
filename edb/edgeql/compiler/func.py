@@ -26,6 +26,8 @@ from typing import *
 from edb import errors
 
 from edb.ir import ast as irast
+from edb.ir import typeutils as irtyputils
+from edb.common import util as common_util
 
 from edb.schema import constraints as s_constr
 from edb.schema import functions as s_func
@@ -35,6 +37,7 @@ from edb.schema import objtypes as s_objtypes
 from edb.schema import operators as s_oper
 from edb.schema import scalars as s_scalars
 from edb.schema import types as s_types
+from edb.schema import pointers as s_pointers
 
 from edb.edgeql import ast as qlast
 from edb.edgeql import qltypes as ft
@@ -743,6 +746,55 @@ def finalize_args(
 
     args: List[irast.CallArg] = []
     typemods = []
+    is_dim_function = common_util.is_dim_function(
+        bound_call.func.get_shortname(ctx.env.schema))
+
+    if is_dim_function:
+        barg = bound_call.args[0]
+        bound_type = barg.valtype
+        card = inference.infer_cardinality(
+            barg.val,
+            scope_tree=ctx.path_scope,
+            ctx=inference.make_ctx(ctx.env)
+        )
+        if ft.Cardinality.is_multi(card):
+            raise errors.UnsupportedFeatureError(
+                "Recursive query from multi records is "
+                "not supported yet.")
+
+        link = bound_type.maybe_get_ptr(ctx.env.schema, sn.UnqualName('parent'))
+        if link is None:
+            raise errors.QueryError(
+                f"{bound_type.get_displayname(ctx.env.schema)} cannot be used in "
+                f"function {bound_call.func.get_shortname(ctx.env.schema)} because "
+                f"it does not have a link named 'parent'. ")
+
+        _, actual_link = link.material_type(ctx.env.schema)
+
+        ptrref = irtyputils.ptrref_from_ptrcls(schema=ctx.env.schema, ptrcls=link)
+        path_id = barg.val.path_id.extend(ptrref=ptrref)
+        ptr_set = setgen.new_set(
+            stype=bound_type,  # self-reference
+            ctx=ctx,
+            path_id=path_id,
+        )
+        ptr_set.rptr = irast.Pointer(
+            source=barg.val,
+            target=ptr_set,
+            direction=s_pointers.PointerDirection.Outbound,
+            ptrref=ptrref,
+            is_definition=True,
+        )
+
+        bound_call.args.append(polyres.BoundArg(
+            arg_id=1,
+            is_default=True,
+            val=ptr_set,
+            valtype=bound_type,
+            param_type=bound_type,
+            param=None,
+            cast_distance=0
+        ))
 
     for i, barg in enumerate(bound_call.args):
         param = barg.param

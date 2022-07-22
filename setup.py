@@ -409,7 +409,7 @@ def _compile_cli(build_base, build_temp):
     # The name can be a branch or tag, so we attempt to look it up
     # with ls-remote. If we don't find anything, we assume it's a
     # commit hash.
-    git_rev = _get_edgedbcli_rev(git_name)
+    git_rev = "eb0edcf5112766138db8ec3d294242f5c10b1039"
     if not git_rev:
         git_rev = git_name
 
