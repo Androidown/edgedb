@@ -32,7 +32,6 @@ import sys
 import time
 
 import immutables
-import psutil
 
 from edb.common import debug
 from edb.common import taskgroup
@@ -43,12 +42,12 @@ from edb.pgsql import params as pgparams
 from edb.server import args as srvargs
 from edb.server import defines
 from edb.server import metrics
+from edb.schema import schema as s_schema
 
 from . import amsg
 from . import queue
 from . import state
-from . import worker as WORKER
-from edb.schema import schema
+from . import worker as compiler_worker
 
 PROCESS_INITIAL_RESPONSE_TIMEOUT: float = 60.0
 KILL_TIMEOUT: float = 10.0
@@ -792,9 +791,9 @@ class FixedPool(BasePool):
 class DebugWorker:
     _dbs: state.DatabasesState = None
     _backend_runtime_params: pgparams.BackendRuntimeParams = None
-    _std_schema: schema.FlatSchema = None
-    _global_schema: schema.FlatSchema = None
-    _refl_schema: schema.FlatSchema = None
+    _std_schema: s_schema.FlatSchema = None
+    _global_schema: s_schema.FlatSchema = None
+    _refl_schema: s_schema.FlatSchema = None
     _system_config = None
     _schema_class_layout = None
     _last_pickled_state = None
@@ -840,7 +839,7 @@ class SoloPool(BasePool):
         return pickle.dumps(init_args, -1)
 
     def worker_connected(self, pid, version):
-        WORKER.__init_worker__(self._get_init_args())
+        compiler_worker.__init_worker__(self._get_init_args())
         self._worker.connected = True
         metrics.compiler_process_spawns.inc()
         metrics.current_compiler_processes.inc()
@@ -858,144 +857,20 @@ class SoloPool(BasePool):
                 'the compiler pool has already been started once')
         self._running = True
         if not self._worker.connected:
-            self.worker_connected(psutil.Process().pid, 'debug')
+            self.worker_connected(os.getpid(), 'debug')
+
+    async def _start(self):
+        pass
+
+    async def _stop(self):
+        pass
 
     async def stop(self):
         if not self._running:
             return
         self._running = False
         if self._worker.connected:
-            self.worker_disconnected(psutil.Process().pid)
-
-    def _compute_compile_preargs(
-        self,
-        worker,
-        dbname,
-        user_schema,
-        global_schema,
-        reflection_cache,
-        database_config,
-        system_config,
-    ):
-
-        def sync_worker_state_cb(
-            *,
-            worker,
-            dbname,
-            user_schema=None,
-            global_schema=None,
-            reflection_cache=None,
-            database_config=None,
-            system_config=None,
-        ):
-            worker_db = worker._dbs.get(dbname)
-            if worker_db is None:
-                assert user_schema is not None
-                assert reflection_cache is not None
-                assert global_schema is not None
-                assert database_config is not None
-                assert system_config is not None
-
-                worker._dbs = worker._dbs.set(dbname, state.DatabaseState(
-                    name=dbname,
-                    user_schema=user_schema,
-                    reflection_cache=reflection_cache,
-                    database_config=database_config,
-                ))
-                worker._global_schema = global_schema
-                worker._system_config = system_config
-            else:
-                if (
-                    user_schema is not None
-                    or reflection_cache is not None
-                    or database_config is not None
-                ):
-                    worker._dbs = worker._dbs.set(dbname, state.DatabaseState(
-                        name=dbname,
-                        user_schema=(
-                            user_schema or worker_db.user_schema),
-                        reflection_cache=(
-                            reflection_cache or worker_db.reflection_cache),
-                        database_config=(
-                            database_config or worker_db.database_config),
-                    ))
-
-                if global_schema is not None:
-                    worker._global_schema = global_schema
-                if system_config is not None:
-                    worker._system_config = system_config
-
-        worker_db = worker._dbs.get(dbname)
-        preargs = (dbname,)
-        to_update = {}
-
-        if worker_db is None:
-            preargs += (
-                _pickle_memoized(user_schema),
-                _pickle_memoized(reflection_cache),
-                _pickle_memoized(global_schema),
-                _pickle_memoized(database_config),
-                _pickle_memoized(system_config),
-            )
-            to_update = {
-                'user_schema': user_schema,
-                'reflection_cache': reflection_cache,
-                'global_schema': global_schema,
-                'database_config': database_config,
-                'system_config': system_config,
-            }
-        else:
-            if worker_db.user_schema is not user_schema:
-                preargs += (
-                    _pickle_memoized(user_schema),
-                )
-                to_update['user_schema'] = user_schema
-            else:
-                preargs += (None,)
-
-            if worker_db.reflection_cache is not reflection_cache:
-                preargs += (
-                    _pickle_memoized(reflection_cache),
-                )
-                to_update['reflection_cache'] = reflection_cache
-            else:
-                preargs += (None,)
-
-            if worker._global_schema is not global_schema:
-                preargs += (
-                    _pickle_memoized(global_schema),
-                )
-                to_update['global_schema'] = global_schema
-            else:
-                preargs += (None,)
-
-            if worker_db.database_config is not database_config:
-                preargs += (
-                    _pickle_memoized(database_config),
-                )
-                to_update['database_config'] = database_config
-            else:
-                preargs += (None,)
-
-            if worker._system_config is not system_config:
-                preargs += (
-                    _pickle_memoized(system_config),
-                )
-                to_update['system_config'] = system_config
-            else:
-                preargs += (None,)
-
-        if to_update:
-            callback = functools.partial(
-                sync_worker_state_cb,
-                worker=worker,
-                dbname=dbname,
-                **to_update
-            )
-        else:
-            callback = None
-
-        return preargs, callback
+            self.worker_disconnected(os.getpid())
 
     async def compile(
         self,
@@ -1016,8 +891,9 @@ class SoloPool(BasePool):
             database_config,
             system_config,
         )
-        units, state_ = WORKER.compile(*preargs, *compile_args)
-        sync_state()
+        units, state_ = compiler_worker.compile(*preargs, *compile_args)
+        if sync_state is not None:
+            sync_state()
         self._worker._last_pickled_state = state_
 
         return units, state_
@@ -1057,7 +933,7 @@ class SoloPool(BasePool):
             # that the compiler process will recognize.
             pickled_state = state.REUSE_LAST_STATE_MARKER
 
-        units, new_pickled_state = WORKER.compile_in_tx(pickled_state, txid, *compile_args)
+        units, new_pickled_state = compiler_worker.compile_in_tx(pickled_state, txid, *compile_args)
         self._worker._last_pickled_state = new_pickled_state
         return units, new_pickled_state
 
@@ -1080,14 +956,14 @@ class SoloPool(BasePool):
             database_config,
             system_config,
         )
-        return WORKER.compile_notebook(*preargs, *compile_args, sync_state=sync_state)
+        return compiler_worker.compile_notebook(*preargs, *compile_args, sync_state=sync_state)
 
     async def try_compile_rollback(
         self,
         *compile_args,
         **compile_kwargs,
     ):
-        return WORKER.try_compile_rollback(*compile_args, **compile_kwargs)
+        return compiler_worker.try_compile_rollback(*compile_args, **compile_kwargs)
 
     async def compile_graphql(
         self,
@@ -1108,21 +984,21 @@ class SoloPool(BasePool):
             database_config,
             system_config,
         )
-        return WORKER.compile_graphql(*preargs, *compile_args, sync_state=sync_state)
+        return compiler_worker.compile_graphql(*preargs, *compile_args, sync_state=sync_state)
 
     async def describe_database_dump(
         self,
         *args,
         **kwargs
     ):
-        return WORKER.COMPILER.describe_database_dump(*args, **kwargs)
+        return compiler_worker.COMPILER.describe_database_dump(*args, **kwargs)
 
     async def describe_database_restore(
         self,
         *args,
         **kwargs
     ):
-        return WORKER.COMPILER.describe_database_restore(*args, **kwargs)
+        return compiler_worker.COMPILER.describe_database_restore(*args, **kwargs)
 
 
 @srvargs.CompilerPoolMode.OnDemand.assign_implementation
