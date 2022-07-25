@@ -249,8 +249,6 @@ class Server(ha_base.ClusterProtocol):
 
         self._admin_ui = admin_ui
 
-        self._user_schema_cache = dict()
-
     async def _request_stats_logger(self):
         last_seen = -1
         while True:
@@ -708,12 +706,10 @@ class Server(ha_base.ClusterProtocol):
                 raise
 
         try:
-            if module is not None and self._user_schema_cache:
-                new_user_schema = await self.introspect_user_schema_modularly(conn, module)
-                self._user_schema_cache[module] = new_user_schema
+            if module is not None:
+                user_schema = await self.introspect_user_schema_modularly(conn, module)
             else:
-                user_schema = await self.introspect_user_schema(conn)
-                self._user_schema_cache = user_schema.split_by_module()
+                user_schema = (await self.introspect_user_schema(conn)).split_by_module()
 
             reflection_cache_json = await conn.parse_execute_json(
                 b'''
@@ -762,7 +758,7 @@ class Server(ha_base.ClusterProtocol):
             assert self._dbindex is not None
             self._dbindex.register_db(
                 dbname,
-                user_schema=self._user_schema_cache,
+                user_schema=user_schema,
                 db_config=db_config,
                 reflection_cache=reflection_cache,
                 backend_ids=backend_ids,
