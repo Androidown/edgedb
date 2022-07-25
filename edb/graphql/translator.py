@@ -86,7 +86,7 @@ INT_FLOAT_ERROR = re.compile(
 
 class GraphQLTranslatorContext:
     def __init__(self, *, gqlcore: gt.GQLCoreSchema,
-                 variables, query, document_ast, operation_name):
+                 variables, query, document_ast, operation_name, module=None):
         self.variables = variables
         self.fragments = {}
         self.validated_fragments = {}
@@ -99,6 +99,7 @@ class GraphQLTranslatorContext:
         self.query = query
         self.document_ast = document_ast
         self.operation_name = operation_name
+        self.module = module
 
         # only used inside ObjectFieldNode
         self.base_expr = None
@@ -212,8 +213,8 @@ class GraphQLTranslator:
                 self.is_list_type(node.type))
         )
 
-    def get_field_type(self, base, name, *, args=None):
-        return base.get_field_type(name)
+    def get_field_type(self, base, name, *, args=None, module=None):
+        return base.get_field_type(name, module)
 
     def get_optname(self, node):
         if node.name:
@@ -476,7 +477,7 @@ class GraphQLTranslator:
 
         prevt = path[-1].type
         target = self.get_field_type(
-            prevt, node.name.value)
+            prevt, node.name.value, module=self._context.module)
         path.append(Step(name=node.name.value, type=target, eql_alias=None))
 
         if not top and fail:
@@ -1795,6 +1796,7 @@ def translate_ast(
     operation_name: Optional[str]=None,
     variables: Optional[Mapping[str, Any]]=None,
     substitutions: Optional[Dict[str, Tuple[str, int, int]]],
+    module: Optional[str]=None,
 ) -> TranspiledOperation:
 
     if variables is None:
@@ -1819,7 +1821,7 @@ def translate_ast(
     context = GraphQLTranslatorContext(
         gqlcore=gqlcore, query=None,
         variables=variables, document_ast=document_ast,
-        operation_name=operation_name)
+        operation_name=operation_name, module=module)
 
     edge_forest_map = GraphQLTranslator(context=context).visit(document_ast)
 

@@ -423,7 +423,7 @@ cdef class HttpProtocol:
             if extname == 'edgeql':
                 extname = 'edgeql_http'
 
-            if db is not None and extname in db.extensions:
+            if db is not None:
                 if extname == 'graphql':
                     await graphql_ext.handle_request(
                         request, response, db, args, self.server

@@ -77,6 +77,7 @@ async def handle_request(
     operation_name = None
     variables = None
     query = None
+    module = None
 
     try:
         if request.method == b'POST':
@@ -88,6 +89,7 @@ async def handle_request(
                 query = body.get('query')
                 operation_name = body.get('operationName')
                 variables = body.get('variables')
+                module = body.get('module')
             elif request.content_type == 'application/graphql':
                 query = request.body.decode('utf-8')
             else:
@@ -115,6 +117,10 @@ async def handle_request(
                         raise TypeError(
                             '"variables" must be a JSON object')
 
+                module = qs.get('module')
+                if module is not None:
+                    module = module[0]
+
         else:
             raise TypeError('expected a GET or a POST request')
 
@@ -140,7 +146,7 @@ async def handle_request(
     response.status = http.HTTPStatus.OK
     response.content_type = b'application/json'
     try:
-        result = await execute(db, server, query, operation_name, variables)
+        result = await execute(db, server, query, operation_name, variables, module)
     except Exception as ex:
         if debug.flags.server:
             markup.dump(ex)
@@ -173,6 +179,7 @@ async def compile(
     substitutions: Optional[Dict[str, Tuple[str, int, int]]],
     operation_name: Optional[str],
     variables: Dict[str, Any],
+    module: Optional[str]
 ):
     compiler_pool = server.get_compiler_pool()
     return await compiler_pool.compile_graphql(
@@ -187,10 +194,11 @@ async def compile(
         substitutions,
         operation_name,
         variables,
+        module
     )
 
 
-async def execute(db, server, query, operation_name, variables):
+async def execute(db, server, query, operation_name, variables, module):
     dbver = db.dbver
     query_cache = server._http_query_cache
 
@@ -236,14 +244,14 @@ async def execute(db, server, query, operation_name, variables):
             print(f'key_vars: {key_var_names}')
             print(f'variables: {vars}')
 
-    cache_key = ('graphql', prepared_query, key_vars, operation_name, dbver)
+    cache_key = ('graphql', prepared_query, key_vars, operation_name, dbver, module)
     use_prep_stmt = False
 
     entry: CacheEntry = query_cache.get(cache_key, None)
 
     if isinstance(entry, CacheRedirect):
         key_vars2 = tuple(vars[k] for k in entry.key_vars)
-        cache_key2 = (prepared_query, key_vars2, operation_name, dbver)
+        cache_key2 = (prepared_query, key_vars2, operation_name, dbver, module)
         entry = query_cache.get(cache_key2, None)
 
     if entry is None:
@@ -256,6 +264,7 @@ async def execute(db, server, query, operation_name, variables):
                 rewritten.substitutions(),
                 operation_name,
                 vars,
+                module
             )
         else:
             op = await compile(
@@ -266,6 +275,7 @@ async def execute(db, server, query, operation_name, variables):
                 None,
                 operation_name,
                 vars,
+                module
             )
 
         key_var_set = set(key_var_names)
@@ -276,7 +286,7 @@ async def execute(db, server, query, operation_name, variables):
             query_cache[cache_key] = redir
             key_vars2 = tuple(vars[k] for k in key_var_names)
             cache_key2 = (
-                'graphql', prepared_query, key_vars2, operation_name, dbver
+                'graphql', prepared_query, key_vars2, operation_name, dbver, module
             )
             query_cache[cache_key2] = op
         else:

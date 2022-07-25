@@ -74,6 +74,7 @@ def compile_graphql(
     substitutions: Optional[Dict[str, Tuple[str, int, int]]],
     operation_name: str=None,
     variables: Optional[Mapping[str, object]]=None,
+    module: str = None
 ) -> CompiledOperation:
     if tokens is None:
         ast = graphql.parse_text(gql)
@@ -87,7 +88,9 @@ def compile_graphql(
         ast,
         variables=variables,
         substitutions=substitutions,
-        operation_name=operation_name)
+        operation_name=operation_name,
+        module=module
+    )
 
     ir = qlcompiler.compile_ast_to_ir(
         op.edgeql_ast,
@@ -101,6 +104,9 @@ def compile_graphql(
             allow_top_level_shape_dml=True,
         ),
     )
+
+    if len(ir.dml_exprs) > 0:
+        raise errors.QueryError("DML Statement(s) Found. Only Query Statements are allowed.")
 
     if ir.cardinality.is_multi():
         raise errors.ResultCardinalityMismatchError(
