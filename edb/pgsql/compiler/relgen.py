@@ -3382,7 +3382,7 @@ def process_set_as_traverse_function(
 
         cte_src_query.from_clause.append(src_table)
 
-        ctx2 = cstack.enter_context(ctx1.subrel())
+        ctx2 = cstack.enter_context(ctx1.newrel())
         rvar = get_set_rvar(rel_src, ctx=ctx2)
 
         sub_query = ctx2.rel
