@@ -3358,6 +3358,85 @@ def _get_cte_source_table(
     return src_table, parent_colref, id_colref
 
 
+def _process_set_as_root_traverse_function(
+    ir_set: irast.Set,
+    stmt: pgast.SelectStmt,
+    *,
+    ctx: context.CompilerContextLevel,
+    function_name: str
+) -> SetRVars:
+    expr = ir_set.expr
+    assert isinstance(expr, irast.FunctionCall)
+
+    with ctx.subrel() as subctx:
+        src_table, parent_col, id_col = _get_cte_source_table(
+            source=expr.args[0].expr,
+            parent_link=expr.args[1].expr,
+            ctx=subctx
+        )
+        stmt.from_clause.append(src_table)
+
+    if function_name in ('cal::base', 'cal::ibase'):
+        sub_src_table, sub_parent_col, sub_id_col = _get_cte_source_table(
+            source=expr.args[0].expr,
+            parent_link=expr.args[1].expr,
+            ctx=subctx
+        )
+        subquery_alias = ctx.env.aliases.get('base-filter')
+        base_filter = pgast.SubLink(
+            type=pgast.SubLinkType.ANY,
+            expr=pgast.SelectStmt(
+                target_list=[sub_parent_col],
+                from_clause=[sub_src_table]
+            ),
+        )
+        is_base_alias = ctx.env.aliases.get('is-base')
+
+        stmt.from_clause.append(pgast.RangeSubselect(
+            subquery=pgast.SelectStmt(
+                target_list=[pgast.ResTarget(
+                    val=pgast.NullTest(
+                        arg=pgast.Expr(
+                            nullable=True,
+                            name='=',
+                            lexpr=id_col,
+                            rexpr=base_filter
+                        ),
+                        negated=True
+                    ),
+                    name=is_base_alias
+                )]
+            ),
+            alias=pgast.Alias(aliasname=subquery_alias),
+            lateral=True
+        ))
+        stmt.where_clause = astutils.extend_binop(
+            stmt.where_clause,
+            astutils.new_unop('NOT', pgast.ColumnRef(name=[subquery_alias, is_base_alias]))
+        )
+    elif function_name in ('cal::children', 'cal::ichildren'):
+        stmt.where_clause = astutils.extend_binop(
+            stmt.where_clause,
+            pgast.NullTest(arg=parent_col, negated=False),
+        )
+    elif function_name in ('cal::descendant', 'cal::idescendant'):
+        pass
+
+    new_rvars = new_stmt_set_rvar(ir_set, stmt, ctx=ctx)
+    stmt.target_list.append(pgast.ResTarget(
+        val=id_col,
+        name='id'
+    ))
+    pathctx._put_path_output_var(  # noqa
+        rel=stmt,
+        path_id=ir_set.path_id,
+        aspect='value',
+        var=id_col,
+        env=ctx.env
+    )
+    return new_rvars
+
+
 def process_set_as_traverse_function(
     ir_set: irast.Set,
     stmt: pgast.SelectStmt,
@@ -3369,6 +3448,13 @@ def process_set_as_traverse_function(
     assert isinstance(expr, irast.FunctionCall)
 
     rel_src = irutils.unwrap_set(expr.args[0].expr)
+    if irutils.is_empty_enhanced(rel_src):
+        return _process_set_as_root_traverse_function(
+            ir_set, stmt,
+            ctx=ctx,
+            function_name=function_name
+        )
+
     cte_name = ctx.env.aliases.get('cte')
 
     with contextlib.ExitStack() as cstack:
