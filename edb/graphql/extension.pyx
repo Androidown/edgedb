@@ -146,7 +146,7 @@ async def handle_request(
     response.status = http.HTTPStatus.OK
     response.content_type = b'application/json'
     try:
-        result = await execute(db, server, query, operation_name, variables, module)
+        result = await execute(db, server, query, operation_name, variables, module or None)
     except Exception as ex:
         if debug.flags.server:
             markup.dump(ex)
