@@ -120,3 +120,15 @@ class DeleteModule(ModuleCommand, sd.DeleteObject[Module]):
             raise errors.SchemaError(
                 f'cannot drop {vn} because it is not empty'
             )
+
+    @classmethod
+    def _cmd_tree_from_ast(
+        cls,
+        schema: s_schema.Schema,
+        astnode: qlast.DropModule,
+        context: sd.CommandContext,
+    ) -> sd.Command:
+        cmd = super()._cmd_tree_from_ast(schema, astnode, context)
+        classname = sn.QualName(astnode.name.name, "__schema_version__")
+        cmd.add_caused(s_ver.DeleteSchemaVersion(classname=classname))
+        return cmd

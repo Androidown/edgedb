@@ -55,6 +55,13 @@ class AlterSchemaVersion(
     pass
 
 
+class DeleteSchemaVersion(
+    SchemaVersionCommand,
+    sd.DeleteObject[SchemaVersion],
+):
+    pass
+
+
 class GlobalSchemaVersion(so.InternalObject, so.GlobalObject):
 
     version = so.SchemaField(uuid.UUID)

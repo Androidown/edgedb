@@ -341,6 +341,13 @@ class AlterSchemaVersion(
         return schema
 
 
+class DeleteSchemaVersion(
+    SchemaVersionCommand,
+    adapts=s_ver.DeleteSchemaVersion,
+):
+    pass
+
+
 class GlobalSchemaVersionCommand(MetaCommand):
     pass
 
