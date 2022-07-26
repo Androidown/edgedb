@@ -329,7 +329,7 @@ class GQLCoreSchema:
 
     _type_map: Dict[Tuple[str, bool], GQLBaseType]
 
-    def __init__(self, edb_schema: s_schema.Schema) -> None:
+    def __init__(self, edb_schema: s_schema.Schema, module: str = None) -> None:
         '''Create a graphql schema based on edgedb schema.'''
 
         self.edb_schema = edb_schema
@@ -338,6 +338,7 @@ class GQLCoreSchema:
             m.get_name(self.edb_schema)
             for m in self.edb_schema.get_objects(type=s_mod.Module)
         } - HIDDEN_MODULES))
+        self.customized_module = module or None
 
         self._gql_interfaces = {}
         self._gql_objtypes_from_alias = {}
@@ -395,7 +396,7 @@ class GQLCoreSchema:
 
     def get_gql_name(self, name: s_name.QualName) -> str:
         module, shortname = name.module, name.name
-        if module in {'default', 'std'}:
+        if module in {'default', 'std', self.customized_module}:
             if shortname.startswith('__'):
                 # Use '_edb' prefix to mark derived and otherwise
                 # internal types. We opt out of '__edb' because we

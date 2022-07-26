@@ -1802,21 +1802,21 @@ def translate_ast(
     if variables is None:
         variables = {}
 
-    # validation_errors = convert_errors(
-    #     graphql.validate(gqlcore.graphql_schema, document_ast),
-    #     substitutions=substitutions)
-    # if validation_errors:
-    #     err = validation_errors[0]
-    #     if isinstance(err, graphql.GraphQLError):
-    #
-    #         # possibly add additional information and/or hints to the
-    #         # error message
-    #         msg = augment_error_message(gqlcore, err.message)
-    #
-    #         err_loc = (err.locations[0].line, err.locations[0].column)
-    #         raise g_errors.GraphQLCoreError(msg, loc=err_loc)
-    #     else:
-    #         raise err
+    validation_errors = convert_errors(
+        graphql.validate(gqlcore.graphql_schema, document_ast),
+        substitutions=substitutions)
+    if validation_errors:
+        err = validation_errors[0]
+        if isinstance(err, graphql.GraphQLError):
+
+            # possibly add additional information and/or hints to the
+            # error message
+            msg = augment_error_message(gqlcore, err.message)
+
+            err_loc = (err.locations[0].line, err.locations[0].column)
+            raise g_errors.GraphQLCoreError(msg, loc=err_loc)
+        else:
+            raise err
 
     context = GraphQLTranslatorContext(
         gqlcore=gqlcore, query=None,

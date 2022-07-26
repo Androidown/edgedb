@@ -63,12 +63,15 @@ async def handle_request(
     list args,
     object server,
 ):
+    query_only = False
+
     if args == ['explore'] and request.method == b'GET':
         response.body = explore.EXPLORE_HTML
         response.content_type = b'text/html'
         return
-
-    if args != []:
+    if args == ['query']:
+        query_only = True
+    elif args != []:
         response.body = b'Unknown path'
         response.status = http.HTTPStatus.NOT_FOUND
         response.close_connection = True
@@ -146,7 +149,7 @@ async def handle_request(
     response.status = http.HTTPStatus.OK
     response.content_type = b'application/json'
     try:
-        result = await execute(db, server, query, operation_name, variables, module or None)
+        result = await execute(db, server, query, operation_name, variables, query_only, module or None)
     except Exception as ex:
         if debug.flags.server:
             markup.dump(ex)
@@ -179,6 +182,7 @@ async def compile(
     substitutions: Optional[Dict[str, Tuple[str, int, int]]],
     operation_name: Optional[str],
     variables: Dict[str, Any],
+    query_only: bool,
     module: Optional[str]
 ):
     compiler_pool = server.get_compiler_pool()
@@ -194,11 +198,12 @@ async def compile(
         substitutions,
         operation_name,
         variables,
+        query_only,
         module
     )
 
 
-async def execute(db, server, query, operation_name, variables, module):
+async def execute(db, server, query, operation_name, variables, query_only, module):
     dbver = db.dbver
     query_cache = server._http_query_cache
 
@@ -244,14 +249,14 @@ async def execute(db, server, query, operation_name, variables, module):
             print(f'key_vars: {key_var_names}')
             print(f'variables: {vars}')
 
-    cache_key = ('graphql', prepared_query, key_vars, operation_name, dbver, module)
+    cache_key = ('graphql', prepared_query, key_vars, operation_name, dbver, query_only, module)
     use_prep_stmt = False
 
     entry: CacheEntry = query_cache.get(cache_key, None)
 
     if isinstance(entry, CacheRedirect):
         key_vars2 = tuple(vars[k] for k in entry.key_vars)
-        cache_key2 = (prepared_query, key_vars2, operation_name, dbver, module)
+        cache_key2 = (prepared_query, key_vars2, operation_name, dbver, query_only, module)
         entry = query_cache.get(cache_key2, None)
 
     if entry is None:
@@ -264,6 +269,7 @@ async def execute(db, server, query, operation_name, variables, module):
                 rewritten.substitutions(),
                 operation_name,
                 vars,
+                query_only,
                 module
             )
         else:
@@ -275,6 +281,7 @@ async def execute(db, server, query, operation_name, variables, module):
                 None,
                 operation_name,
                 vars,
+                query_only,
                 module
             )
 
@@ -286,7 +293,7 @@ async def execute(db, server, query, operation_name, variables, module):
             query_cache[cache_key] = redir
             key_vars2 = tuple(vars[k] for k in key_var_names)
             cache_key2 = (
-                'graphql', prepared_query, key_vars2, operation_name, dbver, module
+                'graphql', prepared_query, key_vars2, operation_name, dbver, query_only, module
             )
             query_cache[cache_key2] = op
         else:
