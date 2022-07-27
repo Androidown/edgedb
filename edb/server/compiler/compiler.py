@@ -120,6 +120,7 @@ class CompileContext:
     # if only the user_schema under a specific module is provided,
     # this var will be the module name. None means all modules are provided.
     module: Optional[str] = None
+    module_is_implicit: Optional[bool] = False
 
 
 DEFAULT_MODULE_ALIASES_MAP = immutables.Map(
@@ -371,6 +372,21 @@ class Compiler:
         self._compile_schema_storage_in_delta(
             ctx, pgdelta, subblock, context=context)
 
+        ddl_lock = 0xEDB0010C
+        if ctx.module_is_implicit:
+            unlock_func = 'pg_advisory_unlock'
+        else:
+            unlock_func = 'pg_advisory_unlock_shared'
+
+        block.add_command(f"""
+            EXCEPTION
+                WHEN lock_not_available THEN
+                    NULL;
+                    RAISE;
+                WHEN OTHERS THEN
+                    SELECT {unlock_func}({ddl_lock}) INTO _dummy_text;
+                    RAISE;
+            """)
         return block, new_types
 
     def _compile_schema_storage_in_delta(
@@ -799,11 +815,14 @@ class Compiler:
                 )
 
             if ctx.module is None:
+                ctx_props = dict(**ctx.__dict__)
+                ctx_props['module_is_implicit'] = True
+
                 if isinstance(stmt, qlast.NamedDDL):
                     raw_ddl_module = stmt.name.module
                     ddl_module = current_tx.get_modaliases().get(raw_ddl_module, raw_ddl_module)
-                    ctx_props = dict(ctx.__dict__, module=ddl_module)
-                    ctx = CompileContext(**ctx_props)
+                    ctx_props['module'] = ddl_module
+                ctx = CompileContext(**ctx_props)
             else:
                 if isinstance(stmt, qlast.ModuleCommand):
                     raise errors.QueryError("Module command is not allowed in seperated schema.")
@@ -831,7 +850,8 @@ class Compiler:
                 self.get_config_val(ctx, 'allow_dml_in_functions')),
             schema_object_ids=ctx.schema_object_ids,
             compat_ver=ctx.compat_ver,
-            module=ctx.module
+            module=ctx.module,
+            module_is_implicit=ctx.module_is_implicit
         )
 
         if debug.flags.delta_plan_input:

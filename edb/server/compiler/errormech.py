@@ -79,6 +79,7 @@ directly_mappable = {
     pgerrors.ERROR_INTERVAL_FIELD_OVERFLOW: errors.NumericOutOfRangeError,
     pgerrors.ERROR_READ_ONLY_SQL_TRANSACTION: errors.TransactionError,
     pgerrors.ERROR_SERIALIZATION_FAILURE: errors.TransactionSerializationError,
+    pgerrors.ERROR_LOCK_NOT_AVAILABLE: errors.TransactionSerializationError,
     pgerrors.ERROR_DEADLOCK_DETECTED: errors.TransactionDeadlockError,
     pgerrors.ERROR_INVALID_CATALOG_NAME: errors.UnknownDatabaseError,
     pgerrors.ERROR_OBJECT_IN_USE: errors.ExecutionError,

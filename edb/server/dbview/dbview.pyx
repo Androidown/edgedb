@@ -93,19 +93,23 @@ cdef class Database:
     cdef schedule_config_update(self):
         self._index._server._on_local_database_config_change(self.name)
 
-    cdef _set_and_signal_new_user_schema(
+    cpdef _set_and_signal_new_user_schema(
         self,
         new_schema,
         reflection_cache=None,
         backend_ids=None,
         db_config=None,
+        incremental=True,
     ):
         if new_schema is None:
             raise AssertionError('new_schema is not supposed to be None')
 
         self.dbver = next_dbver()
 
-        self.user_schema.update(new_schema)
+        if incremental:
+            self.user_schema.update(new_schema)
+        else:
+            self.user_schema = new_schema
 
         self.extensions = {
             ext.get_name(schema).name: ext
@@ -489,7 +493,8 @@ cdef class DatabaseConnectionView:
                         pickle.loads(query_unit.user_schema).split_by_module(),
                         pickle.loads(query_unit.cached_reflection)
                         if query_unit.cached_reflection is not None
-                        else None
+                        else None,
+                        incremental=False
                     )
                     side_effects |= SideEffects.SchemaChanges
                 else:
@@ -497,7 +502,8 @@ cdef class DatabaseConnectionView:
                         {module: pickle.loads(query_unit.user_schema)},
                         pickle.loads(query_unit.cached_reflection)
                         if query_unit.cached_reflection is not None
-                        else None
+                        else None,
+                        incremental=True
                     )
                     side_effects |= SideEffects.ModuleSchemaChanges
                     kwargs['module'] = module
@@ -538,7 +544,8 @@ cdef class DatabaseConnectionView:
                         pickle.loads(query_unit.user_schema).split_by_module(),
                         pickle.loads(query_unit.cached_reflection)
                         if query_unit.cached_reflection is not None
-                        else None
+                        else None,
+                        incremental=False
                     )
                     side_effects |= SideEffects.SchemaChanges
                 else:
@@ -546,7 +553,8 @@ cdef class DatabaseConnectionView:
                         {module: pickle.loads(query_unit.user_schema)},
                         pickle.loads(query_unit.cached_reflection)
                         if query_unit.cached_reflection is not None
-                        else None
+                        else None,
+                        incremental=True
                     )
                     side_effects |= SideEffects.ModuleSchemaChanges
                     kwargs['module'] = module

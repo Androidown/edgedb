@@ -61,12 +61,13 @@ cdef class Database:
     cdef _new_view(self, query_cache)
     cdef _remove_view(self, view)
     cdef _update_backend_ids(self, new_types)
-    cdef _set_and_signal_new_user_schema(
+    cpdef _set_and_signal_new_user_schema(
         self,
         new_schema,
         reflection_cache=?,
         backend_ids=?,
         db_config=?,
+        incremental=?,
     )
 
 cdef class DatabaseConnectionView:

@@ -64,6 +64,9 @@ ERROR_OBJECT_IN_USE = '55006'
 ERROR_QUERY_CANCELLED = '57014'
 ERROR_CANNOT_CONNECT_NOW = '57P03'
 
+# Class 55 — Object Not In Prerequisite State
+ERROR_LOCK_NOT_AVAILABLE = '55P03'
+
 
 class BackendError(Exception):
 

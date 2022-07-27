@@ -312,6 +312,28 @@ class AlterSchemaVersion(
         expected_ver = self.get_orig_attribute_value('version')
         module_name = context.module or 'builtin'
 
+        ddl_lock = 0xEDB0010C
+        if context.module_is_implicit:
+            lock_func = 'pg_try_advisory_lock'
+        else:
+            lock_func = 'pg_try_advisory_lock_shared'
+
+        concurrency_check = dbops.Query(
+            f'''
+                SELECT
+                    edgedb.raise_on_null(
+                        (SELECT NULLIF(
+                            (SELECT {lock_func}({ddl_lock})),
+                            FALSE
+                        )),
+                        'lock_not_available',
+                        msg => ('Concurrent DDL detected.')
+                    )
+                INTO _dummy_text
+            '''
+        )
+        self.pgops.add(concurrency_check)
+
         check = dbops.Query(
             f'''
                 SELECT

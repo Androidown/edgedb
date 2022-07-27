@@ -578,6 +578,7 @@ def delta_from_ddl(
     ]=None,
     compat_ver: Optional[verutils.Version] = None,
     module: Optional[str] = None,
+    module_is_implicit: Optional[bool] = False,
 ) -> sd.DeltaRoot:
     _, cmd = _delta_from_ddl(
         ddl_stmt,
@@ -588,7 +589,8 @@ def delta_from_ddl(
         allow_dml_in_functions=allow_dml_in_functions,
         schema_object_ids=schema_object_ids,
         compat_ver=compat_ver,
-        module=module
+        module=module,
+        module_is_implicit=module_is_implicit,
     )
     return cmd
 
@@ -607,6 +609,7 @@ def _delta_from_ddl(
     ]=None,
     compat_ver: Optional[verutils.Version] = None,
     module: Optional[str] = None,
+    module_is_implicit: Optional[bool] = False,
 ) -> Tuple[s_schema.Schema, sd.DeltaRoot]:
     delta = sd.DeltaRoot()
     context = sd.CommandContext(
@@ -618,7 +621,8 @@ def _delta_from_ddl(
         allow_dml_in_functions=allow_dml_in_functions,
         schema_object_ids=schema_object_ids,
         compat_ver=compat_ver,
-        module=module
+        module=module,
+        module_is_implicit=module_is_implicit,
     )
 
     with context(sd.DeltaRootContext(schema=schema, op=delta)):
