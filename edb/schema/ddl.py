@@ -595,6 +595,23 @@ def delta_from_ddl(
     return cmd
 
 
+def _log_schema_version_change(
+    ddl_stmt: qlast.DDL,
+    version_name,
+    version_id
+):
+    from loguru import logger
+    from contextlib import redirect_stdout
+    from io import StringIO
+
+    dumpio = StringIO()
+
+    with redirect_stdout(dumpio):
+        ddl_stmt.dump_edgeql()
+
+    logger.info(f"{version_name} change to {version_id}. excute ddl: {dumpio.getvalue()}")
+
+
 def _delta_from_ddl(
     ddl_stmt: qlast.DDLCommand,
     *,
@@ -646,9 +663,11 @@ def _delta_from_ddl(
                     schema_ver_name = '__schema_version__'
                 ver = schema.get_global(s_ver.SchemaVersion, schema_ver_name)
                 ver_cmd = ver.init_delta_command(schema, sd.AlterObject)
-                ver_cmd.set_attribute_value('version', uuidgen.uuid1mc())
+                version_id = uuidgen.uuid1mc()
+                ver_cmd.set_attribute_value('version', version_id)
                 schema = ver_cmd.apply(schema, context)
                 delta.add(ver_cmd)
+                _log_schema_version_change(ddl_stmt, schema_ver_name, version_id)
             elif not isinstance(cmd, sd.ExternalObjectCommand):
                 gver = schema.get_global(
                     s_ver.GlobalSchemaVersion, '__global_schema_version__')
