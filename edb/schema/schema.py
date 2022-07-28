@@ -65,7 +65,7 @@ STD_MODULES = (
 
 BUILTIN_MODULES = STD_MODULES + (sn.UnqualName('builtin'), )
 
-STD_MODULES_STR = tuple(str(uname) for uname in STD_MODULES)
+STD_MODULES_STR = {'sys', 'schema', 'cal', 'math'}
 
 # Specifies the order of processing of files and directories in lib/
 STD_SOURCES = (

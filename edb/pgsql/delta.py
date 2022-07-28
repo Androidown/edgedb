@@ -3138,7 +3138,7 @@ class CreateObjectType(ObjectTypeMetaCommand,
             object=objtype_table,
             text=str(objtype.get_verbosename(schema)),
         ))
-        # self.create_inhview(schema, context, objtype)
+        self.create_inhview(schema, context, objtype)
         return schema
 
     def _create_finalize(self, schema, context):
@@ -3245,10 +3245,6 @@ class DeleteObjectType(ObjectTypeMetaCommand,
             schema, objtype, catenate=False)
 
         orig_schema = schema
-        cmd_del_prop = self.get_subcommands(type=DeleteProperty)
-        if cmd_del_prop:
-            cmd_del_prop[0].is_first = True
-
         schema = super().apply(schema, context)
 
         self.apply_scheduled_inhview_updates(schema, context)
@@ -4531,8 +4527,6 @@ class DeleteLink(LinkMetaCommand, adapts=s_links.DeleteLink):
 
 
 class PropertyMetaCommand(CompositeMetaCommand, PointerMetaCommand):
-    is_first = False
-
     @classmethod
     def _create_table(
             cls, prop, schema, context, conditional=False, create_bases=True,
@@ -4716,7 +4710,6 @@ class PropertyMetaCommand(CompositeMetaCommand, PointerMetaCommand):
                     context,
                     source,
                     exclude_ptrs=frozenset((prop,)),
-                    alter_ancestors=self.is_first
                 )
 
                 col = dbops.AlterTableDropColumn(

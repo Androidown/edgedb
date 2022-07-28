@@ -378,15 +378,16 @@ class Compiler:
         else:
             unlock_func = 'pg_advisory_unlock_shared'
 
-        block.add_command(f"""
-            EXCEPTION
-                WHEN lock_not_available THEN
-                    NULL;
-                    RAISE;
-                WHEN OTHERS THEN
-                    SELECT {unlock_func}({ddl_lock}) INTO _dummy_text;
-                    RAISE;
-            """)
+        if not db_cmd:
+            block.add_command(f"""
+                EXCEPTION
+                    WHEN lock_not_available THEN
+                        NULL;
+                        RAISE;
+                    WHEN OTHERS THEN
+                        SELECT {unlock_func}({ddl_lock}) INTO _dummy_text;
+                        RAISE;
+                """)
         return block, new_types
 
     def _compile_schema_storage_in_delta(
@@ -819,9 +820,10 @@ class Compiler:
                 ctx_props['module_is_implicit'] = True
 
                 if isinstance(stmt, qlast.NamedDDL):
-                    raw_ddl_module = stmt.name.module
-                    ddl_module = current_tx.get_modaliases().get(raw_ddl_module, raw_ddl_module)
-                    ctx_props['module'] = ddl_module
+                    if (stmt_name := stmt.name) is not None:
+                        raw_ddl_module = stmt_name.module
+                        ddl_module = current_tx.get_modaliases().get(raw_ddl_module, raw_ddl_module)
+                        ctx_props['module'] = ddl_module
                 ctx = CompileContext(**ctx_props)
             else:
                 if isinstance(stmt, qlast.ModuleCommand):

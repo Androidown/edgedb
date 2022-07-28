@@ -427,7 +427,9 @@ def compile_path(expr: qlast.Path, *, ctx: context.ContextLevel) -> irast.Set:
                     direction=direction,
                     upcoming_intersections=upcoming_intersections,
                     ignore_computable=True,
-                    source_context=step.context, ctx=ctx)
+                    source_context=step.context,
+                    recursive=False,
+                    ctx=ctx)
 
                 assert path_tip.rptr is not None
                 ptrcls = typegen.ptrcls_from_ptrref(
@@ -592,6 +594,7 @@ def ptr_step_set(
         direction: PtrDir = PtrDir.Outbound,
         source_context: Optional[parsing.ParserContext],
         ignore_computable: bool=False,
+        recursive: bool = True,
         ctx: context.ContextLevel) -> irast.Set:
     ptrcls = resolve_ptr(
         source,
@@ -600,6 +603,7 @@ def ptr_step_set(
         track_ref=expr,
         direction=direction,
         source_context=source_context,
+        recursive=recursive,
         ctx=ctx)
 
     return extend_path(
@@ -618,6 +622,7 @@ def resolve_ptr(
     ),
     source_context: Optional[parsing.ParserContext] = None,
     track_ref: Optional[Union[qlast.Base, Literal[False]]],
+    recursive: bool = True,
     ctx: context.ContextLevel,
 ) -> s_pointers.Pointer:
 
@@ -696,6 +701,7 @@ def resolve_ptr(
                 components=concrete_ptrs,
                 opaque=opaque,
                 modname=ctx.derived_target_module,
+                recursive=recursive
             )
 
     if ptr is not None:

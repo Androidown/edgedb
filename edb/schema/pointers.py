@@ -2673,6 +2673,7 @@ def get_or_create_union_pointer(
     *,
     opaque: bool = False,
     modname: Optional[str] = None,
+    recursive: bool = True,
 ) -> Tuple[s_schema.Schema, Pointer]:
     from . import sources as s_sources
 
@@ -2748,7 +2749,7 @@ def get_or_create_union_pointer(
         },
     )
 
-    if isinstance(result, s_sources.Source):
+    if isinstance(result, s_sources.Source) and recursive:
         # cast below, because in this case the list of Pointer
         # is also a list of Source (links.Link)
         schema = s_sources.populate_pointer_set_for_source_union(
