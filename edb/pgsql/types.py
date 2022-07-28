@@ -512,6 +512,10 @@ def _get_ptrref_storage_info(
             table_type = 'link'
 
         elif not link_bias and not allow_missing:
+            if ptrref.union_components:
+                # ptrref is a combination of multi and single links
+                return None
+
             raise RuntimeError(
                 f'cannot determine backend storage parameters for the '
                 f'{ptrref.name} pointer: unexpected characteristics')
