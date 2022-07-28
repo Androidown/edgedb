@@ -29,6 +29,7 @@ import time
 import traceback
 
 import immutables
+from loguru import logger
 
 from edb import graphql
 
@@ -58,6 +59,8 @@ LAST_STATE: Optional[compiler.dbstate.CompilerConnectionState] = None
 STD_SCHEMA: s_schema.FlatSchema
 GLOBAL_SCHEMA: s_schema.FlatSchema
 INSTANCE_CONFIG: immutables.Map[str, config.SettingValue]
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+LOG_FILE = os.path.join(PROJECT_ROOT, 'edb_compiler.log')
 
 # "created continuously" means the interval between two consecutive spawns
 # is less than NUM_SPAWNS_RESET_INTERVAL seconds.
@@ -97,6 +100,22 @@ def __init_worker__(
 
     COMPILER.initialize(
         std_schema, refl_schema, schema_class_layout,
+    )
+
+    # -----------------------------------------------------------------------------
+    # setup loguru logger
+    logger.remove()
+    logger.configure(
+        handlers=[{
+            "level": 'INFO',
+            "sink": LOG_FILE,
+            "format": "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+                      "<yellow>{process}</yellow> | "
+                      "<level>{level: <8}</level> | "
+                      "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan>"
+                      " - "
+                      "<level>{message}</level>",
+        }],
     )
 
 
