@@ -47,6 +47,7 @@ from . import metrics
 from . import server_info
 from . import notebook_ext
 from . import system_api
+from . import schema_info
 
 
 HTTPStatus = http.HTTPStatus
@@ -436,6 +437,11 @@ cdef class HttpProtocol:
                     return
                 elif extname == 'edgeql_http':
                     await edgeql_ext.handle_request(
+                        request, response, db, args, self.server
+                    )
+                    return
+                elif extname == 'schema_info':
+                    await schema_info.handle_request(
                         request, response, db, args, self.server
                     )
                     return
