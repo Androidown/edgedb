@@ -29,6 +29,8 @@ from edb import errors
 from edb.common import lru, uuidgen
 from edb.schema import extensions as s_ext
 from edb.schema import schema as s_schema
+from edb.schema import version as s_ver
+from edb.schema import name as sn
 from edb.server import defines, config
 from edb.server.compiler import dbstate
 from edb.pgsql import dbops
@@ -93,6 +95,15 @@ cdef class Database:
     cdef schedule_config_update(self):
         self._index._server._on_local_database_config_change(self.name)
 
+    def _log_schema_version(self, schema: dict):
+        for module, user_schema in schema.items():
+            if module is not None:
+                schema_ver_name = sn.QualName(module=module, name='__schema_version__')
+            else:
+                schema_ver_name = '__schema_version__'
+            ver = user_schema.get_global(s_ver.SchemaVersion, schema_ver_name)
+            logger.info(f"{schema_ver_name} is now: {ver.get_version(user_schema)}")
+
     cpdef _set_and_signal_new_user_schema(
         self,
         new_schema,
@@ -105,6 +116,8 @@ cdef class Database:
             raise AssertionError('new_schema is not supposed to be None')
 
         self.dbver = next_dbver()
+
+        self._log_schema_version(new_schema)
 
         if incremental:
             self.user_schema.update(new_schema)
