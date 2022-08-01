@@ -109,7 +109,7 @@ def compile_graphql(
     )
 
     if query_only and len(ir.dml_exprs) > 0:
-        raise errors.QueryError("DML Statement(s) Found. Only Query Statements are allowed.")
+        raise errors.QueryError("仅可执行查询操作")
 
     if ir.cardinality.is_multi():
         raise errors.ResultCardinalityMismatchError(

@@ -396,7 +396,7 @@ class GQLCoreSchema:
 
     def get_gql_name(self, name: s_name.QualName) -> str:
         module, shortname = name.module, name.name
-        if module in {'default', 'std', self.customized_module}:
+        if module in {'default', 'std'} and not (module == 'default' and self.customized_module is not None):
             if shortname.startswith('__'):
                 # Use '_edb' prefix to mark derived and otherwise
                 # internal types. We opt out of '__edb' because we
@@ -406,6 +406,8 @@ class GQLCoreSchema:
                 return '_edb' + shortname
             else:
                 return shortname
+        elif self.customized_module is not None and module == self.customized_module:
+            return shortname
         else:
             assert module != '', f'get_gl_name {name=}'
             return f'{module}__{shortname}'
