@@ -1075,7 +1075,7 @@ cdef class EdgeConnection:
                 f'{self.protocol_version[0]}.{self.protocol_version[1]}'
             )
 
-    async def simple_query(self, modular: bool = False):
+    async def simple_query(self, modular: bool = False, read_only: bool = False):
         cdef:
             WriteBuffer msg
             WriteBuffer packet
@@ -1127,6 +1127,10 @@ cdef class EdgeConnection:
         query_unit = await self._simple_query(
             eql, allow_capabilities, stmt_mode, module=module
         )
+        if bool(query_unit.capabilities & enums.Capability.MODIFICATIONS) and read_only:
+            raise errors.BinaryProtocolError(
+                'read-only query cannot be modified'
+            )
 
         packet = WriteBuffer.new()
         packet.write_buffer(self.make_command_complete_msg(query_unit))
@@ -1511,7 +1515,7 @@ cdef class EdgeConnection:
 
         return implicit_limit
 
-    async def parse(self, modular: bool = False):
+    async def parse(self, modular: bool = False, read_only: bool = False):
         cdef:
             bytes eql
             QueryRequestInfo query_req
@@ -1526,6 +1530,10 @@ cdef class EdgeConnection:
             module = None
 
         compiled_query = await self._parse(eql, query_req, module=module)
+        if bool(compiled_query.query_unit.capabilities & enums.Capability.MODIFICATIONS) and read_only:
+            raise errors.BinaryProtocolError(
+                'read-only query cannot be modified'
+            )
 
         buf = WriteBuffer.new_message(b'1')  # ParseComplete
 
@@ -1963,6 +1971,12 @@ cdef class EdgeConnection:
                 try:
                     if mtype == b'P':
                         await self.parse()
+
+                    elif mtype == b'R':
+                        await self.parse(read_only=True)
+
+                    elif mtype == b'A':
+                        await self.simple_query(read_only=True)
 
                     elif mtype == b'p':
                         await self.parse(modular=True)
