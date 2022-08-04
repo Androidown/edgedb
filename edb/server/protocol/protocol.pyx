@@ -25,6 +25,7 @@ import collections
 import http
 import ssl
 import urllib.parse
+import json
 
 import httptools
 
@@ -34,6 +35,7 @@ from edb.common import markup
 
 from edb.graphql import extension as graphql_ext
 
+from edb.edgeql.parser.grammar.keywords import unreserved_keywords, future_reserved_keywords, reserved_keywords
 from edb.server import args as srvargs
 from edb.server.protocol cimport binary
 from edb.server.protocol import binary
@@ -494,7 +496,25 @@ cdef class HttpProtocol:
                     self.server,
                 )
                 return
-
+            if (path_parts == ['keywords'] and
+                request.method == b'GET'
+            ):
+                response.status = http.HTTPStatus.OK
+                all_keywords = unreserved_keywords | future_reserved_keywords | reserved_keywords
+                response.body = str(list(all_keywords)).encode()
+                response.close_connection = True
+                return
+            if (path_parts == ['categorized_keywords'] and
+                request.method == b'GET'
+            ):
+                response.status = http.HTTPStatus.OK
+                response.content_type = b'application/json'
+                response.body = json.dumps({'unreserved': list(unreserved_keywords),
+                                            'future_reserved': list(future_reserved_keywords),
+                                            'reserved': list(reserved_keywords)
+                                            }, default=str).encode()
+                response.close_connection = True
+                return
 
         response.body = b'Unknown path'
         response.status = http.HTTPStatus.NOT_FOUND
