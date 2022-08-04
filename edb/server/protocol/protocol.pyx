@@ -500,11 +500,12 @@ cdef class HttpProtocol:
                 request.method == b'GET'
             ):
                 response.status = http.HTTPStatus.OK
+                response.content_type = b'application/json'
                 all_keywords = unreserved_keywords | future_reserved_keywords | reserved_keywords
-                response.body = str(list(all_keywords)).encode()
+                response.body = json.dumps(list(all_keywords), default=str).encode()
                 response.close_connection = True
                 return
-            if (path_parts == ['categorized_keywords'] and
+            if (path_parts == ['categorized-keywords'] and
                 request.method == b'GET'
             ):
                 response.status = http.HTTPStatus.OK
