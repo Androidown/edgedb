@@ -1128,9 +1128,7 @@ cdef class EdgeConnection:
             eql, allow_capabilities, stmt_mode, module=module
         )
         if bool(query_unit.capabilities & enums.Capability.MODIFICATIONS) and read_only:
-            raise errors.BinaryProtocolError(
-                'read-only query cannot be modified'
-            )
+            raise errors.QueryError('Mutation is prohibited in read-only protocol.')
 
         packet = WriteBuffer.new()
         packet.write_buffer(self.make_command_complete_msg(query_unit))
@@ -1531,9 +1529,7 @@ cdef class EdgeConnection:
 
         compiled_query = await self._parse(eql, query_req, module=module)
         if bool(compiled_query.query_unit.capabilities & enums.Capability.MODIFICATIONS) and read_only:
-            raise errors.BinaryProtocolError(
-                'read-only query cannot be modified'
-            )
+            raise errors.QueryError('Mutation is prohibited in read-only protocol.')
 
         buf = WriteBuffer.new_message(b'1')  # ParseComplete
 
