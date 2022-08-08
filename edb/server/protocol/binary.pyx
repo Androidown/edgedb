@@ -1127,7 +1127,7 @@ cdef class EdgeConnection:
         query_unit = await self._simple_query(
             eql, allow_capabilities, stmt_mode, module=module
         )
-        if bool(query_unit.capabilities & enums.Capability.MODIFICATIONS) and read_only:
+        if read_only and bool(query_unit.capabilities & enums.Capability.MODIFICATIONS):
             raise errors.QueryError('Mutation is prohibited in read-only protocol.')
 
         packet = WriteBuffer.new()
@@ -1528,7 +1528,7 @@ cdef class EdgeConnection:
             module = None
 
         compiled_query = await self._parse(eql, query_req, module=module)
-        if bool(compiled_query.query_unit.capabilities & enums.Capability.MODIFICATIONS) and read_only:
+        if read_only and bool(compiled_query.query_unit.capabilities & enums.Capability.MODIFICATIONS):
             raise errors.QueryError('Mutation is prohibited in read-only protocol.')
 
         buf = WriteBuffer.new_message(b'1')  # ParseComplete
@@ -1823,7 +1823,7 @@ cdef class EdgeConnection:
 
         await self._execute(compiled, bind_args, False, module=compiled.module)
 
-    async def optimistic_execute(self, modular: bool = False):
+    async def optimistic_execute(self, modular: bool = False, read_only: bool = False):
         cdef:
             WriteBuffer bound_args_buf
 
@@ -1868,6 +1868,9 @@ cdef class EdgeConnection:
                 module=module
             )
             self._last_anon_compiled = compiled
+
+        if read_only and bool(query_unit.capabilities & enums.Capability.MODIFICATIONS):
+            raise errors.QueryError('Mutation is prohibited in read-only protocol.')
 
         if query_unit.capabilities & ~query_req.allow_capabilities:
             raise query_unit.capabilities.make_error(
@@ -1968,14 +1971,14 @@ cdef class EdgeConnection:
                     if mtype == b'P':
                         await self.parse()
 
-                    elif mtype == b'R':
-                        await self.parse(read_only=True)
-
-                    elif mtype == b'A':
-                        await self.simple_query(read_only=True)
-
                     elif mtype == b'p':
                         await self.parse(modular=True)
+
+                    elif mtype == b'G':
+                        await self.parse(read_only=True)
+
+                    elif mtype == b'g':
+                        await self.parse(modular=True, read_only=True)
 
                     elif mtype == b'D':
                         if self.protocol_version >= (0, 14):
@@ -1993,11 +1996,23 @@ cdef class EdgeConnection:
                     elif mtype == b'o':
                         await self.optimistic_execute(modular=True)
 
+                    elif mtype == b'J':
+                        await self.optimistic_execute(read_only=True)
+
+                    elif mtype == b'j':
+                        await self.optimistic_execute(modular=True, read_only=True)
+
                     elif mtype == b'F':
                         await self.fast_query()
 
                     elif mtype == b'f':
                         await self.fast_query(modular=True)
+
+                    elif mtype == b'I':
+                        await self.fast_query(read_only=True)
+
+                    elif mtype == b'i':
+                        await self.fast_query(modular=True, read_only=True)
 
                     elif mtype == b'Q':
                         flush_sync_on_error = True
@@ -2006,6 +2021,14 @@ cdef class EdgeConnection:
                     elif mtype == b'q':
                         flush_sync_on_error = True
                         await self.simple_query(modular=True)
+
+                    elif mtype == b'H':
+                        flush_sync_on_error = True
+                        await self.simple_query(read_only=True)
+
+                    elif mtype == b'h':
+                        flush_sync_on_error = True
+                        await self.simple_query(modular=True, read_only=True)
 
                     elif mtype == b'S':
                         await self.sync()
@@ -2955,7 +2978,7 @@ cdef class EdgeConnection:
 
         return type_map
 
-    async def fast_query(self, modular: bool = False):
+    async def fast_query(self, modular: bool = False, read_only: bool = False):
         cdef:
             bytes eql
             QueryRequestInfo query_req
@@ -2985,6 +3008,9 @@ cdef class EdgeConnection:
                 'arguments are not yet supporteed')
 
         self.buffer.finish_message()
+
+        if read_only and bool(compiled_query.query_unit.capabilities & enums.Capability.MODIFICATIONS):
+            raise errors.QueryError('Mutation is prohibited in read-only protocol.')
 
         if compiled_query.query_unit.capabilities & ~query_req.allow_capabilities:
             raise compiled_query.query_unit.capabilities.make_error(
