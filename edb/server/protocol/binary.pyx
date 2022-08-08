@@ -2008,10 +2008,10 @@ cdef class EdgeConnection:
                     elif mtype == b'f':
                         await self.fast_query(modular=True)
 
-                    elif mtype == b'I':
+                    elif mtype == b'B':
                         await self.fast_query(read_only=True)
 
-                    elif mtype == b'i':
+                    elif mtype == b'b':
                         await self.fast_query(modular=True, read_only=True)
 
                     elif mtype == b'Q':
@@ -2022,11 +2022,11 @@ cdef class EdgeConnection:
                         flush_sync_on_error = True
                         await self.simple_query(modular=True)
 
-                    elif mtype == b'H':
+                    elif mtype == b'A':
                         flush_sync_on_error = True
                         await self.simple_query(read_only=True)
 
-                    elif mtype == b'h':
+                    elif mtype == b'a':
                         flush_sync_on_error = True
                         await self.simple_query(modular=True, read_only=True)
 
