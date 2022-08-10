@@ -77,7 +77,8 @@ def compile_graphql(
     operation_name: str=None,
     variables: Optional[Mapping[str, object]]=None,
     query_only: bool = False,
-    module: str = None
+    module: str = None,
+    limit: int = 0
 ) -> CompiledOperation:
     if tokens is None:
         ast = graphql.parse_text(gql)
@@ -105,6 +106,7 @@ def compile_graphql(
         options=qlcompiler.CompilerOptions(
             json_parameters=True,
             allow_top_level_shape_dml=True,
+            implicit_limit=limit
         ),
     )
 

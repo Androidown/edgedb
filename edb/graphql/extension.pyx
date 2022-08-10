@@ -81,6 +81,7 @@ async def handle_request(
     variables = None
     query = None
     module = None
+    limit = 0
 
     try:
         if request.method == b'POST':
@@ -93,6 +94,7 @@ async def handle_request(
                 operation_name = body.get('operationName')
                 variables = body.get('variables')
                 module = body.get('module')
+                limit = body.get('limit', 0)
             elif request.content_type == 'application/graphql':
                 query = request.body.decode('utf-8')
             else:
@@ -124,6 +126,10 @@ async def handle_request(
                 if module is not None:
                     module = module[0]
 
+                limit = qs.get('limit')
+                if limit is not None:
+                    limit = limit[0]
+
         else:
             raise TypeError('expected a GET or a POST request')
 
@@ -149,7 +155,7 @@ async def handle_request(
     response.status = http.HTTPStatus.OK
     response.content_type = b'application/json'
     try:
-        result = await execute(db, server, query, operation_name, variables, query_only, module or None)
+        result = await execute(db, server, query, operation_name, variables, query_only, module or None, limit)
     except Exception as ex:
         if debug.flags.server:
             markup.dump(ex)
@@ -183,7 +189,8 @@ async def compile(
     operation_name: Optional[str],
     variables: Dict[str, Any],
     query_only: bool,
-    module: Optional[str]
+    module: Optional[str],
+    limit: int,
 ):
     compiler_pool = server.get_compiler_pool()
     return await compiler_pool.compile_graphql(
@@ -199,11 +206,12 @@ async def compile(
         operation_name,
         variables,
         query_only,
-        module
+        module,
+        limit
     )
 
 
-async def execute(db, server, query, operation_name, variables, query_only, module):
+async def execute(db, server, query, operation_name, variables, query_only, module, limit):
     dbver = db.dbver
     query_cache = server._http_query_cache
 
@@ -249,14 +257,14 @@ async def execute(db, server, query, operation_name, variables, query_only, modu
             print(f'key_vars: {key_var_names}')
             print(f'variables: {vars}')
 
-    cache_key = ('graphql', prepared_query, key_vars, operation_name, dbver, query_only, module)
+    cache_key = ('graphql', prepared_query, key_vars, operation_name, dbver, query_only, module, limit)
     use_prep_stmt = False
 
     entry: CacheEntry = query_cache.get(cache_key, None)
 
     if isinstance(entry, CacheRedirect):
         key_vars2 = tuple(vars[k] for k in entry.key_vars)
-        cache_key2 = (prepared_query, key_vars2, operation_name, dbver, query_only, module)
+        cache_key2 = (prepared_query, key_vars2, operation_name, dbver, query_only, module, limit)
         entry = query_cache.get(cache_key2, None)
 
     if entry is None:
@@ -270,7 +278,8 @@ async def execute(db, server, query, operation_name, variables, query_only, modu
                 operation_name,
                 vars,
                 query_only,
-                module
+                module,
+                limit
             )
         else:
             op = await compile(
@@ -282,7 +291,8 @@ async def execute(db, server, query, operation_name, variables, query_only, modu
                 operation_name,
                 vars,
                 query_only,
-                module
+                module,
+                limit
             )
 
         key_var_set = set(key_var_names)
@@ -293,7 +303,7 @@ async def execute(db, server, query, operation_name, variables, query_only, modu
             query_cache[cache_key] = redir
             key_vars2 = tuple(vars[k] for k in key_var_names)
             cache_key2 = (
-                'graphql', prepared_query, key_vars2, operation_name, dbver, query_only, module
+                'graphql', prepared_query, key_vars2, operation_name, dbver, query_only, module, limit
             )
             query_cache[cache_key2] = op
         else:
