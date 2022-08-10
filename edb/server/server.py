@@ -666,13 +666,14 @@ class Server(ha_base.ClusterProtocol):
             s_schema.FlatSchema(),
             self.get_global_schema(),
         )
-
-        return s_refl.parse_into(
+        schema = s_refl.parse_into(
             base_schema=base_schema,
             schema=s_schema.FlatSchema(),
             data=json_data,
             schema_class_layout=self._schema_class_layout,
         )
+
+        return {module: schema}
 
     async def introspect_db(self, dbname, module: str = None):
         """Use this method to (re-)introspect a DB.
