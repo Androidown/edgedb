@@ -517,6 +517,14 @@ cdef class HttpProtocol:
                 response.close_connection = True
                 return
 
+            if path_parts[0] == 'introspect':
+                db = path_parts[1]
+                await self.server.introspect_db(db)
+                response.body = b'Done'
+                response.status = http.HTTPStatus.OK
+                response.close_connection = True
+                return
+
         response.body = b'Unknown path'
         response.status = http.HTTPStatus.NOT_FOUND
         response.close_connection = True
