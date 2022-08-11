@@ -708,7 +708,10 @@ class Server(ha_base.ClusterProtocol):
 
         try:
             if module is not None:
-                user_schema = await self.introspect_user_schema_modularly(conn, module)
+                try:
+                    user_schema = await self.introspect_user_schema_modularly(conn, module)
+                except Exception:
+                    user_schema = (await self.introspect_user_schema(conn)).split_by_module()
             else:
                 user_schema = (await self.introspect_user_schema(conn)).split_by_module()
 
