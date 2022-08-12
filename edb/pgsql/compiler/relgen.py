@@ -3427,6 +3427,7 @@ def _process_set_as_root_traverse_function(
         val=id_col,
         name='id'
     ))
+    stmt.distinct_clause = [id_col]
     pathctx._put_path_output_var(  # noqa
         rel=stmt,
         path_id=ir_set.path_id,
@@ -3624,7 +3625,7 @@ def process_set_as_traverse_function(
                 ),
                 op='OR'
             )
-
+    main_query.distinct_clause = [pgast.Star()]
     pathctx._put_path_output_var(  # noqa
         rel=main_query,
         path_id=ir_set.path_id,
