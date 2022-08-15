@@ -43,6 +43,13 @@ from edb.schema import schema as s_schema
 from . import keywords as pg_keywords
 
 
+RE_LINK_TRIGGER = re.compile(r'(source|target)-del-(def|imm)-(inl|otl)-(f|t)')
+ASPECT_SUFFIX_MAP = {
+    'table': '',
+    'inhview': 't'
+}
+
+
 def quote_e_literal(string):
     def escape_sq(s):
         split = re.split(r"(\n|\\\\|\\')", s)
@@ -198,7 +205,7 @@ def update_aspect(name, aspect):
     """Update the aspect on a non catenated name.
 
     It also needs to be from an object that uses ids for names"""
-    suffix = get_aspect_suffix(aspect)
+    suffix = ASPECT_SUFFIX_MAP.get(aspect)
     stripped = name[1].rsplit("_", 1)[0]
     if suffix:
         return (name[0], f'{stripped}_{suffix}')
@@ -231,14 +238,13 @@ def get_aspect_suffix(aspect):
 def get_objtype_backend_name(id, module_name, *, catenate=True, aspect=None):
     if aspect is None:
         aspect = 'table'
-    if aspect not in {'table', 'inhview'} and not re.match(
-            r'(source|target)-del-(def|imm)-(inl|otl)-(f|t)', aspect):
+    if aspect not in {'table', 'inhview'} and not RE_LINK_TRIGGER.match(aspect):
         raise ValueError(
             f'unexpected aspect for object type backend name: {aspect!r}')
 
     name = s_name.QualName(module=module_name, name=str(id))
 
-    suffix = get_aspect_suffix(aspect)
+    suffix = ASPECT_SUFFIX_MAP.get(aspect)
     return convert_name(name, suffix=suffix, catenate=catenate)
 
 
@@ -252,7 +258,7 @@ def get_pointer_backend_name(id, module_name, *, catenate=False, aspect=None):
 
     name = s_name.QualName(module=module_name, name=str(id))
 
-    suffix = get_aspect_suffix(aspect)
+    suffix = ASPECT_SUFFIX_MAP.get(aspect)
     return convert_name(name, suffix=suffix, catenate=catenate)
 
 
