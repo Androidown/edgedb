@@ -872,7 +872,7 @@ def finalize_args(
                 and ctx.expr_exposed
                 and ctx.implicit_limit
                 and isinstance(arg.expr, irast.SelectStmt)
-                and arg.expr.limit is None
+                and (arg.expr.limit is None or ctx.force_implicit_limit)
                 and not ctx.inhibit_implicit_limit
             ):
                 arg.expr.limit = dispatch.compile(

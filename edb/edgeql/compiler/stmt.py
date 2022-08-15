@@ -116,7 +116,7 @@ def compile_SelectQuery(
         if (
             (ctx.expr_exposed or sctx.stmt is ctx.toplevel_stmt)
             and ctx.implicit_limit
-            and expr.limit is None
+            and (expr.limit is None or ctx.force_implicit_limit)
             and not ctx.inhibit_implicit_limit
         ):
             expr.limit = qlast.IntegerConstant(value=str(ctx.implicit_limit))
@@ -1190,7 +1190,7 @@ def compile_result_clause(
             rexpr = astutils.ensure_ql_select(result)
             if (
                 sctx.implicit_limit
-                and rexpr.limit is None
+                and (rexpr.limit is None or sctx.force_implicit_limit)
                 and not sctx.inhibit_implicit_limit
             ):
                 # Inline alias is special: it's both "exposed",

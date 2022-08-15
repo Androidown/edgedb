@@ -106,8 +106,8 @@ class CompilerOptions(GlobalCompilerOptions):
     #: If > 0, Inject implicit LIMIT to every SELECT query.
     implicit_limit: int = 0
 
-    #: If > 0, Inject explicit LIMIT to whole SELECT query.
-    explicit_limit: int = 0
+    #: Whether implicit LIMIT is force
+    force_implicit_limit: bool = False
 
     #: Include id property in every shape implicitly.
     implicit_id_in_shapes: bool = False
