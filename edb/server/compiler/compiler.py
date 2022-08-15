@@ -105,6 +105,7 @@ class CompileContext:
     json_parameters: bool = False
     schema_reflection_mode: bool = False
     implicit_limit: int = 0
+    force_implicit_limit: bool = False
     inline_typeids: bool = False
     inline_typenames: bool = False
     inline_objectids: bool = True
@@ -611,6 +612,7 @@ class Compiler:
                 constant_folding=not disable_constant_folding,
                 json_parameters=ctx.json_parameters,
                 implicit_limit=ctx.implicit_limit,
+                force_implicit_limit=ctx.force_implicit_limit,
                 allow_writing_protected_pointers=ctx.schema_reflection_mode,
                 bootstrap_mode=ctx.bootstrap_mode,
                 apply_query_rewrites=(

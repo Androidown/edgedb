@@ -74,8 +74,8 @@ def compile_graphql(
     tokens: Optional[
         List[Tuple[gql_lexer.TokenKind, int, int, int, int, str]]],
     substitutions: Optional[Dict[str, Tuple[str, int, int]]],
-    operation_name: str=None,
-    variables: Optional[Mapping[str, object]]=None,
+    operation_name: str = None,
+    variables: Optional[Mapping[str, object]] = None,
     query_only: bool = False,
     module: str = None,
     limit: int = 0
@@ -106,7 +106,8 @@ def compile_graphql(
         options=qlcompiler.CompilerOptions(
             json_parameters=True,
             allow_top_level_shape_dml=True,
-            implicit_limit=limit
+            implicit_limit=limit,
+            force_implicit_limit=True
         ),
     )
 
