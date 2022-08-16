@@ -695,16 +695,6 @@ class FlatSchema(Schema):
         new._generation = self._generation + other._generation
         return new
 
-    def __eq__(self, other: FlatSchema):
-        return (
-            self._refs_to == other._refs_to and
-            self._id_to_type == other._id_to_type and
-            self._id_to_data == other._id_to_data and
-            self._name_to_id == other._name_to_id and
-            self._globalname_to_id == other._globalname_to_id and
-            self._shortname_to_id == other._shortname_to_id
-        )
-
     def _update_obj_name(
         self,
         obj_id: uuid.UUID,
@@ -1269,7 +1259,7 @@ class FlatSchema(Schema):
                 type=s_oper.Operator,
             )
 
-    @util.simple_lru()
+    @util.simple_lru(weakref_pos=0)
     def _get_casts(
         self,
         stype: s_types.Type,
@@ -1325,7 +1315,7 @@ class FlatSchema(Schema):
         return self._get_referrers(
             scls, scls_type=scls_type, field_name=field_name)
 
-    @util.simple_lru()
+    @util.simple_lru(weakref_pos=0)
     def _get_referrers(
         self,
         scls: so.Object,
@@ -1363,7 +1353,7 @@ class FlatSchema(Schema):
 
             return frozenset(referrers)  # type: ignore
 
-    @util.simple_lru()
+    @util.simple_lru(weakref_pos=0)
     def get_referrers_ex(
         self,
         scls: so.Object,
@@ -1568,14 +1558,11 @@ class FlatSchema(Schema):
         return tuple(modules)
 
     def get_last_migration(self, module: str = None) -> Optional[s_migrations.Migration]:
-        return _get_last_migration(self, module)
+        return _get_last_migration(self)
 
     def __repr__(self) -> str:
         return (
             f'<{type(self).__name__} gen:{self._generation} at {id(self):#x}>')
-
-    def __hash__(self):
-        return hash((self._generation, super().__hash__()))
 
 
 class SchemaIterator(Generic[so.Object_T]):
@@ -2078,13 +2065,13 @@ class ChainedSchema(Schema):
         )
 
     def get_last_migration(self, module: str = None) -> Optional[s_migrations.Migration]:
-        migration = self._top_schema.get_last_migration(module)
+        migration = self._top_schema.get_last_migration()
         if migration is None:
-            migration = self._base_schema.get_last_migration(module)
+            migration = self._base_schema.get_last_migration()
         return migration
 
 
-@util.simple_lru()
+@util.simple_lru(weakref_key='schema', weakref_pos=0)
 def _get_functions(
     schema: FlatSchema,
     name: sn.Name,
@@ -2098,7 +2085,7 @@ def _get_functions(
     )
 
 
-@util.simple_lru()
+@util.simple_lru(weakref_key='schema', weakref_pos=0)
 def _get_operators(
     schema: FlatSchema,
     name: sn.Name,
@@ -2112,14 +2099,12 @@ def _get_operators(
         )
 
 
-@util.simple_lru()
+@util.simple_lru(weakref_pos=0)
 def _get_last_migration(
     schema: FlatSchema,
-    module: str = None
 ) -> Optional[s_migrations.Migration]:
-    module = module or 'builtin'
 
-    all_migrations = cast(
+    migrations = cast(
         List[s_migrations.Migration],
         [
             schema.get_by_id(mid)
@@ -2127,8 +2112,6 @@ def _get_last_migration(
             if t is s_migrations.Migration
         ],
     )
-
-    migrations = [m for m in all_migrations if m.get_module_name(schema) == module]
 
     if not migrations:
         return None

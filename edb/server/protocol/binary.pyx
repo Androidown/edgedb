@@ -195,19 +195,15 @@ cdef class QueryRequestInfo:
 @cython.final
 cdef class CompiledQuery:
 
-    def __init__(
-        self,
-        object query_unit,
+    def __init__(self, object query_unit,
         first_extra: Optional[int]=None,
         int extra_count=0,
-        bytes extra_blob=None,
-        object module=None,
+        bytes extra_blob=None
     ):
         self.query_unit = query_unit
         self.first_extra = first_extra
         self.extra_count = extra_count
         self.extra_blob = extra_blob
-        self.module = module
 
 
 @cython.final
@@ -933,11 +929,9 @@ cdef class EdgeConnection:
                     module
                 )
             else:
-                user_schema = _dbview.get_user_schema(module)
-
                 units, self.last_state = await compiler_pool.compile(
                     _dbview.dbname,
-                    user_schema,
+                    _dbview.get_user_schema(),
                     _dbview.get_global_schema(),
                     _dbview.reflection_cache,
                     _dbview.get_database_config(),
@@ -994,11 +988,9 @@ cdef class EdgeConnection:
                     module
                 )
             else:
-                user_schema = _dbview.get_user_schema(module)
-
                 units, self.last_state = await compiler_pool.compile(
                     _dbview.dbname,
-                    user_schema,
+                    _dbview.get_user_schema(),
                     _dbview.get_global_schema(),
                     _dbview.reflection_cache,
                     _dbview.get_database_config(),
@@ -1177,7 +1169,7 @@ cdef class EdgeConnection:
                     raise ConnectionAbortedError
 
                 new_types = None
-                _dbview.start(query_unit, module)
+                _dbview.start(query_unit)
                 try:
                     if query_unit.create_db_template:
                         await self.server._on_before_create_db_from_template(
@@ -1237,10 +1229,10 @@ cdef class EdgeConnection:
                         await self.recover_current_tx_info(conn)
                     raise
                 else:
-                    side_effects, kwargs = _dbview.on_success(
-                        query_unit, new_types, module=module)
+                    side_effects = _dbview.on_success(
+                        query_unit, new_types)
                     if side_effects:
-                        self.signal_side_effects(side_effects, **kwargs)
+                        self.signal_side_effects(side_effects)
                     if not _dbview.in_tx():
                         state = _dbview.serialize_state()
                         if state is not orig_state:
@@ -1251,7 +1243,7 @@ cdef class EdgeConnection:
 
         return query_unit
 
-    def signal_side_effects(self, side_effects, **kwargs):
+    def signal_side_effects(self, side_effects):
         if not self.server._accept_new_tasks:
             return
         if side_effects & dbview.SideEffects.SchemaChanges:
@@ -1262,17 +1254,6 @@ cdef class EdgeConnection:
                 ),
                 interruptable=False,
             )
-
-        if side_effects & dbview.SideEffects.ModuleSchemaChanges:
-            self.server.create_task(
-                self.server._signal_sysevent(
-                    'module-schema-changes',
-                    dbname=self.get_dbview().dbname,
-                    module=kwargs.get('module')
-                ),
-                interruptable=False,
-            )
-
         if side_effects & dbview.SideEffects.GlobalSchemaChanges:
             self.server.create_task(
                 self.server._signal_sysevent(
@@ -1368,7 +1349,6 @@ cdef class EdgeConnection:
             first_extra=source.first_extra(),
             extra_count=source.extra_count(),
             extra_blob=source.extra_blob(),
-            module=module
         )
 
     cdef parse_cardinality(self, bytes card):
@@ -1707,7 +1687,7 @@ cdef class EdgeConnection:
                 # the current status in conn is in sync with dbview, skip the
                 # state restoring
                 state = None
-            _dbview.start(query_unit, module)
+            _dbview.start(query_unit)
             if query_unit.create_db_template:
                 await self.server._on_before_create_db_from_template(
                     query_unit.create_db_template, _dbview.dbname
@@ -1765,9 +1745,9 @@ cdef class EdgeConnection:
                 _dbview.abort_tx()
             raise
         else:
-            side_effects, kwargs = _dbview.on_success(query_unit, new_types, module=module)
+            side_effects = _dbview.on_success(query_unit, new_types)
             if side_effects:
-                self.signal_side_effects(side_effects, **kwargs)
+                self.signal_side_effects(side_effects)
             if not _dbview.in_tx():
                 state = _dbview.serialize_state()
                 if state is not orig_state:
@@ -1821,7 +1801,7 @@ cdef class EdgeConnection:
                 errors.DisabledCapabilityError,
             )
 
-        await self._execute(compiled, bind_args, False, module=compiled.module)
+        await self._execute(compiled, bind_args, False)
 
     async def optimistic_execute(self, modular: bool = False, read_only: bool = False):
         cdef:
@@ -1865,7 +1845,6 @@ cdef class EdgeConnection:
                 first_extra=query_req.source.first_extra(),
                 extra_count=query_req.source.extra_count(),
                 extra_blob=query_req.source.extra_blob(),
-                module=module
             )
             self._last_anon_compiled = compiled
 

@@ -218,7 +218,7 @@ class SchemaConstraintTableConstraint(ConstraintCommon, dbops.TableConstraint):
                 new_expr=exprdata['new'],
                 table=common.qname(
                     schemaname,
-                    tablename + "_" + common.get_aspect_suffix("inhview")),
+                    tablename + "_t"),
                 schemaname=schemaname,
                 tablename=tablename,
                 constr=raw_constr_name,

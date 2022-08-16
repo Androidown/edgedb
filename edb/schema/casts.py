@@ -71,7 +71,7 @@ def _is_reachable(
         )
 
 
-@util.simple_lru()
+@util.simple_lru(weakref_key='schema', weakref_pos=0)
 def get_implicit_cast_distance(
     schema: s_schema.Schema,
     source: s_types.Type,
@@ -92,7 +92,7 @@ def is_implicitly_castable(
     return get_implicit_cast_distance(schema, source, target) >= 0
 
 
-@util.simple_lru()
+@util.simple_lru(weakref_key='schema', weakref_pos=0)
 def find_common_castable_type(
     schema: s_schema.Schema,
     source: s_types.Type,
@@ -126,7 +126,7 @@ def find_common_castable_type(
                 return target
 
 
-@util.simple_lru()
+@util.simple_lru(weakref_key='schema', weakref_pos=0)
 def is_assignment_castable(
     schema: s_schema.Schema,
     source: s_types.Type,
@@ -148,7 +148,7 @@ def is_assignment_castable(
     return False
 
 
-@util.simple_lru()
+@util.simple_lru(weakref_key='schema', weakref_pos=0)
 def is_castable(
     schema: s_schema.Schema,
     source: s_types.Type,

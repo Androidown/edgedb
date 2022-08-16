@@ -662,18 +662,12 @@ def _delta_from_ddl(
                 cmd,
                 (sd.GlobalObjectCommand, sd.ExternalObjectCommand),
             ):
-                if module is not None:
-                    schema_ver_name = sn.QualName(module=module, name='__schema_version__')
-                else:
-                    schema_ver_name = '__schema_version__'
-                ver = schema.get_global(s_ver.SchemaVersion, schema_ver_name)
+                ver = schema.get_global(
+                    s_ver.SchemaVersion, '__schema_version__')
                 ver_cmd = ver.init_delta_command(schema, sd.AlterObject)
-                version_id = uuidgen.uuid1mc()
-                ori_version_id = ver_cmd.get_orig_attribute_value('version')
-                ver_cmd.set_attribute_value('version', version_id)
+                ver_cmd.set_attribute_value('version', uuidgen.uuid1mc())
                 schema = ver_cmd.apply(schema, context)
                 delta.add(ver_cmd)
-                _log_schema_version_change(ddl_stmt, schema_ver_name, version_id, ori_version_id)
             elif not isinstance(cmd, sd.ExternalObjectCommand):
                 gver = schema.get_global(
                     s_ver.GlobalSchemaVersion, '__global_schema_version__')

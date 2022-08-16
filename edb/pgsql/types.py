@@ -391,7 +391,7 @@ class _PointerStorageInfo:
                 self.table_type, self.column_name, self.column_type, id(self))
 
 
-@simple_lru(maxsize=5000)
+@simple_lru(maxsize=5000, weakref_key='schema')
 def get_pointer_storage_info(
         pointer, *, schema, source=None, resolve_type=True,
         link_bias=False):

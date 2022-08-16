@@ -67,7 +67,7 @@ cdef class Database:
         DatabaseIndex index,
         str name,
         *,
-        dict user_schema,
+        object user_schema,
         object db_config,
         object reflection_cache,
         object backend_ids
@@ -87,47 +87,30 @@ cdef class Database:
         self.reflection_cache = reflection_cache
         self.backend_ids = backend_ids
         self.extensions = {
-            ext.get_name(schema).name: ext
-            for schema in self.user_schema.values()
-            for ext in schema.get_objects(type=s_ext.Extension)
+            ext.get_name(user_schema).name: ext
+            for ext in user_schema.get_objects(type=s_ext.Extension)
         }
 
     cdef schedule_config_update(self):
         self._index._server._on_local_database_config_change(self.name)
 
-    def _log_schema_version(self, schema: dict):
-        for module, user_schema in schema.items():
-            if module is not None:
-                schema_ver_name = sn.QualName(module=module, name='__schema_version__')
-            else:
-                schema_ver_name = '__schema_version__'
-            ver = user_schema.get_global(s_ver.SchemaVersion, schema_ver_name)
-            logger.info(f"{schema_ver_name} is now: {ver.get_version(user_schema)}")
-
-    cpdef _set_and_signal_new_user_schema(
+    cdef _set_and_signal_new_user_schema(
         self,
         new_schema,
         reflection_cache=None,
         backend_ids=None,
         db_config=None,
-        incremental=True,
     ):
         if new_schema is None:
             raise AssertionError('new_schema is not supposed to be None')
 
         self.dbver = next_dbver()
 
-        self._log_schema_version(new_schema)
-
-        if incremental:
-            self.user_schema.update(new_schema)
-        else:
-            self.user_schema = new_schema
+        self.user_schema = new_schema
 
         self.extensions = {
-            ext.get_name(schema).name: ext
-            for schema in self.user_schema.values()
-            for ext in schema.get_objects(type=s_ext.Extension)
+            ext.get_name(new_schema).name: ext
+            for ext in new_schema.get_objects(type=s_ext.Extension)
         }
 
         if backend_ids is not None:
@@ -168,9 +151,6 @@ cdef class Database:
     def get_query_cache_size(self):
         return len(self._eql_to_compiled)
 
-    def get_user_schema(self):
-        return s_schema.merge_schema(self.user_schema.values())
-
 
 cdef class DatabaseConnectionView:
 
@@ -209,8 +189,8 @@ cdef class DatabaseConnectionView:
         self._in_tx_with_sysconfig = False
         self._in_tx_with_dbconfig = False
         self._in_tx_with_set = False
-        self._in_tx_user_schema = {}
-        self._in_tx_user_schema_pickled = {}
+        self._in_tx_user_schema = None
+        self._in_tx_user_schema_pickled = None
         self._in_tx_global_schema = None
         self._in_tx_global_schema_pickled = None
         self._in_tx_new_types = {}
@@ -306,22 +286,15 @@ cdef class DatabaseConnectionView:
         else:
             return self._modaliases
 
-    def get_user_schema(self, module=None):
+    def get_user_schema(self):
         if self._in_tx:
-            pickled_schema = self._in_tx_user_schema_pickled.setdefault(module, None)
-            if pickled_schema is not None:
-                self._in_tx_user_schema[module] = pickle.loads(pickled_schema)
-                self._in_tx_user_schema_pickled[module] = None
-            return self._in_tx_user_schema[module]
+            if self._in_tx_user_schema_pickled:
+                self._in_tx_user_schema = pickle.loads(
+                    self._in_tx_user_schema_pickled)
+                self._in_tx_user_schema_pickled = None
+            return self._in_tx_user_schema
         else:
-            if module is None:
-                return s_schema.merge_schema(self._db.user_schema.values())
-            return self._maybe_get_user_schema(module)
-
-    def _maybe_get_user_schema(self, module):
-        if module not in self._db.user_schema:
-            raise errors.UnknownModuleError(f'module {module!r} is not in this schema')
-        return self._db.user_schema[module]
+            return self._db.user_schema
 
     def get_global_schema(self):
         if self._in_tx:
@@ -447,7 +420,7 @@ cdef class DatabaseConnectionView:
         if self._in_tx:
             self._tx_error = True
 
-    cdef start(self, query_unit, module: str=None):
+    cdef start(self, query_unit):
         if self._tx_error:
             self.raise_in_tx_error()
 
@@ -457,10 +430,7 @@ cdef class DatabaseConnectionView:
             self._in_tx_config = self._config
             self._in_tx_db_config = self._db.db_config
             self._in_tx_modaliases = self._modaliases
-            if module is None:
-                self._in_tx_user_schema[module] = s_schema.merge_schema(self._db.user_schema.values())
-            else:
-                self._in_tx_user_schema[module] = self._maybe_get_user_schema(module)
+            self._in_tx_user_schema = self._db.user_schema
             self._in_tx_global_schema = self._db._index._global_schema
 
         if self._in_tx and not self._txid:
@@ -478,8 +448,8 @@ cdef class DatabaseConnectionView:
             if query_unit.has_role_ddl:
                 self._in_tx_with_role_ddl = True
             if query_unit.user_schema is not None:
-                self._in_tx_user_schema_pickled[module] = query_unit.user_schema
-                self._in_tx_user_schema[module] = None
+                self._in_tx_user_schema_pickled = query_unit.user_schema
+                self._in_tx_user_schema = None
             if query_unit.global_schema is not None:
                 self._in_tx_global_schema_pickled = query_unit.global_schema
                 self._in_tx_global_schema = None
@@ -487,9 +457,8 @@ cdef class DatabaseConnectionView:
     cdef on_error(self, query_unit):
         self.tx_error()
 
-    cdef on_success(self, query_unit, new_types, module: str = None):
+    cdef on_success(self, query_unit, new_types):
         side_effects = 0
-        kwargs = {}
 
         if query_unit.tx_savepoint_rollback:
             # Need to invalidate the cache in case there were
@@ -501,26 +470,13 @@ cdef class DatabaseConnectionView:
                 self._db._update_backend_ids(new_types)
             if query_unit.user_schema is not None:
                 self._in_tx_dbver = next_dbver()
-                if module is None:
-                    self._db._set_and_signal_new_user_schema(
-                        pickle.loads(query_unit.user_schema).split_by_module(),
-                        pickle.loads(query_unit.cached_reflection)
+                self._db._set_and_signal_new_user_schema(
+                    pickle.loads(query_unit.user_schema),
+                    pickle.loads(query_unit.cached_reflection)
                         if query_unit.cached_reflection is not None
-                        else None,
-                        incremental=False
-                    )
-                    side_effects |= SideEffects.SchemaChanges
-                else:
-                    self._db._set_and_signal_new_user_schema(
-                        {module: pickle.loads(query_unit.user_schema)},
-                        pickle.loads(query_unit.cached_reflection)
-                        if query_unit.cached_reflection is not None
-                        else None,
-                        incremental=True
-                    )
-                    side_effects |= SideEffects.ModuleSchemaChanges
-                    kwargs['module'] = module
-
+                        else None
+                )
+                side_effects |= SideEffects.SchemaChanges
             if query_unit.system_config:
                 side_effects |= SideEffects.InstanceConfigChanges
             if query_unit.database_config:
@@ -552,26 +508,13 @@ cdef class DatabaseConnectionView:
             if self._in_tx_new_types:
                 self._db._update_backend_ids(self._in_tx_new_types)
             if query_unit.user_schema is not None:
-                if module is None:
-                    self._db._set_and_signal_new_user_schema(
-                        pickle.loads(query_unit.user_schema).split_by_module(),
-                        pickle.loads(query_unit.cached_reflection)
+                self._db._set_and_signal_new_user_schema(
+                    pickle.loads(query_unit.user_schema),
+                    pickle.loads(query_unit.cached_reflection)
                         if query_unit.cached_reflection is not None
-                        else None,
-                        incremental=False
-                    )
-                    side_effects |= SideEffects.SchemaChanges
-                else:
-                    self._db._set_and_signal_new_user_schema(
-                        {module: pickle.loads(query_unit.user_schema)},
-                        pickle.loads(query_unit.cached_reflection)
-                        if query_unit.cached_reflection is not None
-                        else None,
-                        incremental=True
-                    )
-                    side_effects |= SideEffects.ModuleSchemaChanges
-                    kwargs['module'] = module
-
+                        else None
+                )
+                side_effects |= SideEffects.SchemaChanges
             if self._in_tx_with_sysconfig:
                 side_effects |= SideEffects.InstanceConfigChanges
             if self._in_tx_with_dbconfig:
@@ -594,7 +537,7 @@ cdef class DatabaseConnectionView:
             # is executed outside of a tx.
             self._reset_tx_state()
 
-        return side_effects, kwargs
+        return side_effects
 
     async def apply_config_ops(self, conn, ops):
         settings = config.get_settings()

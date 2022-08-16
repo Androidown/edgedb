@@ -310,29 +310,28 @@ class AlterSchemaVersion(
     ) -> s_schema.Schema:
         schema = super().apply(schema, context)
         expected_ver = self.get_orig_attribute_value('version')
-        module_name = context.module or 'builtin'
 
-        ddl_lock = 0xEDB0010C
-        if context.module_is_implicit:
-            lock_func = 'pg_try_advisory_lock'
-        else:
-            lock_func = 'pg_try_advisory_lock_shared'
-
-        concurrency_check = dbops.Query(
-            f'''
-                SELECT
-                    edgedb.raise_on_null(
-                        (SELECT NULLIF(
-                            (SELECT {lock_func}({ddl_lock})),
-                            FALSE
-                        )),
-                        'lock_not_available',
-                        msg => ('Concurrent DDL detected.')
-                    )
-                INTO _dummy_text
-            '''
-        )
-        self.pgops.add(concurrency_check)
+        # ddl_lock = 0xEDB0010C
+        # if context.module_is_implicit:
+        #     lock_func = 'pg_try_advisory_lock'
+        # else:
+        #     lock_func = 'pg_try_advisory_lock_shared'
+        #
+        # concurrency_check = dbops.Query(
+        #     f'''
+        #         SELECT
+        #             edgedb.raise_on_null(
+        #                 (SELECT NULLIF(
+        #                     (SELECT {lock_func}({ddl_lock})),
+        #                     FALSE
+        #                 )),
+        #                 'lock_not_available',
+        #                 msg => ('Concurrent DDL detected.')
+        #             )
+        #         INTO _dummy_text
+        #     '''
+        # )
+        # self.pgops.add(concurrency_check)
 
         check = dbops.Query(
             f'''
@@ -343,8 +342,6 @@ class AlterSchemaVersion(
                                 version::text
                             FROM
                                 edgedb."_SchemaSchemaVersion"
-                            WHERE
-                                module_name = {ql(module_name)}
                             FOR UPDATE),
                             {ql(str(expected_ver))}
                         )),
@@ -352,8 +349,7 @@ class AlterSchemaVersion(
                         msg => (
                             'Cannot serialize DDL: '
                             || (SELECT version::text FROM
-                                edgedb."_SchemaSchemaVersion"
-                                WHERE module_name = {ql(module_name)})
+                                edgedb."_SchemaSchemaVersion")
                         )
                     )
                 INTO _dummy_text
@@ -2725,6 +2721,39 @@ class CompositeMetaCommand(MetaCommand):
         ''')
 
     @classmethod
+    def get_inhview_boost(
+        cls,
+        inhview_name: str,
+        schema: s_schema.Schema,
+        obj: s_sources.Source,
+        exclude_children: FrozenSet[s_sources.Source] = frozenset(),
+        exclude_self: bool = False,
+    ):
+        descendants = (
+            child for child in obj.descendants(schema)
+            if has_table(child, schema) and child not in exclude_children
+        )
+        if not exclude_self:
+            rels = itertools.chain([obj], descendants)
+        else:
+            rels = descendants
+
+        get_schema_name = common.get_module_backend_name
+        query = '\nUNION ALL\n'.join(
+            '(SELECT "{rel}".id AS id, '
+            '"{rel}".__type__ AS __type__ '
+            'FROM {module}."{rel}" AS "{rel}")'.format(
+                rel=rel.id,
+                module=get_schema_name(rel.get_name(schema).get_module_name()),
+            )
+            for rel in rels
+        )
+        return dbops.View(
+            name=inhview_name,
+            query=query,
+        )
+
+    @classmethod
     def get_inhview(
         cls,
         schema: s_schema.Schema,
@@ -2733,12 +2762,42 @@ class CompositeMetaCommand(MetaCommand):
         exclude_ptrs: FrozenSet[s_pointers.Pointer] = frozenset(),
         exclude_self: bool = False,
         pg_schema: Optional[str] = None,
-    ) -> dbops.View:
+        from_command: Optional[sd.Command] = None,
+        context: Optional[sd.CommandContext] = None
+    ) -> Optional[dbops.View]:
         inhview_name = common.get_backend_name(
             schema, obj, catenate=False, aspect='inhview')
 
         if pg_schema is not None:
             inhview_name = (pg_schema, inhview_name[1])
+
+        if (
+            context is not None
+            and not context.stdmode
+            and from_command is not None
+            and obj.get_name(schema) in (
+                sn.QualName('std', 'Object'),
+                sn.QualName('std', 'BaseObject')
+            )
+        ):
+            exclude = []
+            if isinstance(from_command, s_links.DeleteLink):
+                if from_command.get_displayname() != '__type__':
+                    return
+                exclude.append(from_command.scls.get_source(schema))
+
+            elif isinstance(from_command, s_props.DeleteProperty):
+                if from_command.get_displayname() != 'id':
+                    return
+                exclude.append(from_command.scls.get_source(schema))
+
+            return cls.get_inhview_boost(
+                inhview_name,
+                schema=schema,
+                obj=obj,
+                exclude_children=frozenset(exclude),
+                exclude_self=exclude_self
+            )
 
         ptrs = {}
 
@@ -2859,15 +2918,19 @@ class CompositeMetaCommand(MetaCommand):
         alter_ancestors: bool = True,
     ) -> None:
         assert has_table(obj, schema)
-        inhview = self.get_inhview(schema, obj, exclude_ptrs=exclude_ptrs)
-        self.pgops.add(dbops.CreateView(view=inhview))
-        self.pgops.add(dbops.Comment(
-            object=inhview,
-            text=(
-                f"{obj.get_verbosename(schema, with_parent=True)} "
-                f"and descendants"
-            )
-        ))
+        inhview = self.get_inhview(
+            schema, obj, exclude_ptrs=exclude_ptrs,
+            from_command=self, context=context
+        )
+        if inhview is not None:
+            self.pgops.add(dbops.CreateView(view=inhview))
+            self.pgops.add(dbops.Comment(
+                object=inhview,
+                text=(
+                    f"{obj.get_verbosename(schema, with_parent=True)} "
+                    f"and descendants"
+                )
+            ))
         if alter_ancestors:
             self.alter_ancestor_inhviews(schema, context, obj)
 
@@ -2886,15 +2949,18 @@ class CompositeMetaCommand(MetaCommand):
             schema,
             obj,
             exclude_children=exclude_children,
+            from_command=self,
+            context=context
         )
-        self.pgops.add(dbops.CreateView(view=inhview, or_replace=True))
-        self.pgops.add(dbops.Comment(
-            object=inhview,
-            text=(
-                f"{obj.get_verbosename(schema, with_parent=True)} "
-                f"and descendants"
-            )
-        ))
+        if inhview is not None:
+            self.pgops.add(dbops.CreateView(view=inhview, or_replace=True))
+            self.pgops.add(dbops.Comment(
+                object=inhview,
+                text=(
+                    f"{obj.get_verbosename(schema, with_parent=True)} "
+                    f"and descendants"
+                )
+            ))
         if alter_ancestors:
             self.alter_ancestor_inhviews(
                 schema, context, obj, exclude_children=exclude_children)
@@ -3138,7 +3204,7 @@ class CreateObjectType(ObjectTypeMetaCommand,
             object=objtype_table,
             text=str(objtype.get_verbosename(schema)),
         ))
-        self.create_inhview(schema, context, objtype)
+        self.create_inhview(schema, context, objtype, alter_ancestors=False)
         return schema
 
     def _create_finalize(self, schema, context):
@@ -3240,6 +3306,7 @@ class DeleteObjectType(ObjectTypeMetaCommand,
         context: sd.CommandContext,
     ) -> s_schema.Schema:
         self.scls = objtype = schema.get(self.classname)
+        self._sort_subcommand()
 
         old_table_name = common.get_backend_name(
             schema, objtype, catenate=False)
@@ -3255,6 +3322,26 @@ class DeleteObjectType(ObjectTypeMetaCommand,
             self.pgops.add(dbops.DropTable(name=old_table_name))
 
         return schema
+
+    def _sort_subcommand(self):
+        """
+        Always delete link __type__ first. So that the first delete link will
+        create a correct view for both std::Object and std::BaseObject.
+
+        只要先删除 id或__type__，就可以使得Object/BaseObject的view里面不包含当前ObjectType。
+        """
+        target = None
+        for cmd in self.get_subcommands(type=s_links.DeleteLink):
+            if cmd.get_displayname() == '__type__':
+                target = cmd
+                break
+
+        assert target is not None
+        idx = self.ops.index(target)
+        if idx == len(self.ops) - 1:
+            self.ops = [target] + self.ops[: idx]
+        else:
+            self.ops = [target] + self.ops[: idx] + self.ops[idx + 1:]
 
 
 class SchedulePointerCardinalityUpdate(MetaCommand):
@@ -4705,12 +4792,24 @@ class PropertyMetaCommand(CompositeMetaCommand, PointerMetaCommand):
                 alter_table = source_op.get_alter_table(
                     schema, context, force_new=True, manual=True)
 
+                store_key = f"{source.get_name(schema)}-ancestors_altered"
+
+                ancestors_altered = (
+                    isinstance(source, s_objtypes.ObjectType)
+                    and context.is_deleting(source)
+                    and context.get_value(store_key) is not None
+                )
+
                 self.recreate_inhview(
                     schema,
                     context,
                     source,
                     exclude_ptrs=frozenset((prop,)),
+                    # alter_ancestors=not ancestors_altered
                 )
+
+                if not ancestors_altered and prop.get_displayname(orig_schema) == 'id':
+                    context.store_value(store_key, True)
 
                 col = dbops.AlterTableDropColumn(
                     dbops.Column(name=ptr_stor_info.column_name,
@@ -5012,11 +5111,8 @@ class UpdateEndpointDeleteActions(MetaCommand):
 
         return '(' + '\nUNION ALL\n    '.join(selects) + ') as q'
 
-    def get_trigger_name(
-        self, schema, target,
-        disposition, deferred=False, inline=False,
-        module: str = None
-    ):
+    def get_trigger_name(self, schema, target,
+                         disposition, deferred=False, inline=False):
         if disposition == 'target':
             aspect = 'target-del'
         else:
@@ -5034,17 +5130,11 @@ class UpdateEndpointDeleteActions(MetaCommand):
 
         aspect += '-t'
 
-        if module is not None:
-            aspect += f'-{module}'
-
         return common.get_backend_name(
             schema, target, catenate=False, aspect=aspect)[1]
 
-    def get_trigger_proc_name(
-        self, schema, target,
-        disposition, deferred=False, inline=False,
-        module: str = None
-    ):
+    def get_trigger_proc_name(self, schema, target,
+                              disposition, deferred=False, inline=False):
         if disposition == 'target':
             aspect = 'target-del'
         else:
@@ -5061,9 +5151,6 @@ class UpdateEndpointDeleteActions(MetaCommand):
             aspect += '-otl'
 
         aspect += '-f'
-
-        if module is not None:
-            aspect += f'-{module}'
 
         return common.get_backend_name(
             schema, target, catenate=False, aspect=aspect)
@@ -5373,6 +5460,18 @@ class UpdateEndpointDeleteActions(MetaCommand):
             for op, _ in self.changed_targets
         )
 
+        # -----------------------------------------------------------------------------
+        # first pass to filter __type__ link
+        # dunder_type_links = set()
+        # if not context.stdmode:
+        #     for link_op, link, orig_schema, eff_schema in self.link_ops:
+        #         if isinstance(link_op, DeleteLink):
+        #             if link.get_displayname(orig_schema) == '__type__':
+        #                 dunder_type_links.add(link)
+        #         elif isinstance(link_op, CreateLink):
+        #             if link.get_displayname(eff_schema) == '__type__':
+        #                 dunder_type_links.add(link)
+
         for link_op, link, orig_schema, eff_schema in self.link_ops:
             if (
                 isinstance(link_op, (DeleteProperty, DeleteLink))
@@ -5401,7 +5500,11 @@ class UpdateEndpointDeleteActions(MetaCommand):
                 if isinstance(link, s_links.Link) else None)
             target_is_affected = not (
                 (action is DA.Restrict or action is DA.DeferredRestrict)
-                and link.field_is_inherited(eff_schema, 'on_target_delete')
+                and (
+                    link.field_is_inherited(eff_schema, 'on_target_delete')
+                    or link.get_explicit_field_value(
+                        eff_schema, 'on_target_delete', None) is None
+                )
                 and link.get_implicit_bases(eff_schema)
             ) and isinstance(link, s_links.Link)
 
@@ -5467,9 +5570,7 @@ class UpdateEndpointDeleteActions(MetaCommand):
 
             if links or modifications:
                 self._update_action_triggers(
-                    schema, source, links, disposition='source',
-                    module=context.module
-                )
+                    schema, source, links, disposition='source')
 
         # All descendants of affected targets also need to have their
         # triggers updated, so track them down.
@@ -5550,31 +5651,23 @@ class UpdateEndpointDeleteActions(MetaCommand):
 
             if links or modifications:
                 self._update_action_triggers(
-                    schema, target, links, disposition='target',
-                    module=context.module
-                )
+                    schema, target, links, disposition='target')
 
             if inline_links or modifications:
                 self._update_action_triggers(
                     schema, target, inline_links,
-                    disposition='target', inline=True,
-                    module=context.module
-                )
+                    disposition='target', inline=True)
 
             if deferred_links or modifications:
                 self._update_action_triggers(
                     schema, target, deferred_links,
-                    disposition='target', deferred=True,
-                    module=context.module
-                )
+                    disposition='target', deferred=True)
 
             if deferred_inline_links or modifications:
                 self._update_action_triggers(
                     schema, target, deferred_inline_links,
                     disposition='target', deferred=True,
-                    inline=True,
-                    module=context.module
-                )
+                    inline=True)
 
         return schema
 
@@ -5599,35 +5692,29 @@ class UpdateEndpointDeleteActions(MetaCommand):
         return f'OLD."{module_name_ptr.id}" = \'{module}\''
 
     def _update_action_triggers(
-        self,
-        schema,
-        objtype: s_objtypes.ObjectType,
-        links: List[s_links.Link], *,
-        disposition: str,
-        deferred: bool = False,
-        inline: bool = False,
-        module: str = None,
-    ) -> None:
+            self,
+            schema,
+            objtype: s_objtypes.ObjectType,
+            links: List[s_links.Link], *,
+            disposition: str,
+            deferred: bool=False,
+            inline: bool=False) -> None:
 
         table_name = common.get_backend_name(
             schema, objtype, catenate=False)
 
         trigger_name = self.get_trigger_name(
             schema, objtype, disposition=disposition,
-            deferred=deferred, inline=inline, module=module)
+            deferred=deferred, inline=inline)
 
         proc_name = self.get_trigger_proc_name(
             schema, objtype, disposition=disposition,
-            deferred=deferred, inline=inline, module=module)
-
-        condition = self.get_trigger_condition(schema, objtype, module)
+            deferred=deferred, inline=inline)
 
         trigger = dbops.Trigger(
             name=trigger_name, table_name=table_name,
             events=('delete',), procedure=proc_name,
-            is_constraint=True, inherit=True, deferred=deferred,
-            condition=condition
-        )
+            is_constraint=True, inherit=True, deferred=deferred)
 
         if links:
             proc_text = self.get_trigger_proc_text(

@@ -26,7 +26,6 @@ cpdef enum SideEffects:
     InstanceConfigChanges = 1 << 2
     RoleChanges = 1 << 3
     GlobalSchemaChanges = 1 << 4
-    ModuleSchemaChanges = 1 << 5
 
 
 cdef class DatabaseIndex:
@@ -61,13 +60,12 @@ cdef class Database:
     cdef _new_view(self, query_cache)
     cdef _remove_view(self, view)
     cdef _update_backend_ids(self, new_types)
-    cpdef _set_and_signal_new_user_schema(
+    cdef _set_and_signal_new_user_schema(
         self,
         new_schema,
         reflection_cache=?,
         backend_ids=?,
         db_config=?,
-        incremental=?,
     )
 
 cdef class DatabaseConnectionView:
@@ -121,9 +119,9 @@ cdef class DatabaseConnectionView:
 
     cdef tx_error(self)
 
-    cdef start(self, query_unit, str module=?)
+    cdef start(self, query_unit)
     cdef on_error(self, query_unit)
-    cdef on_success(self, query_unit, new_types, str module=?)
+    cdef on_success(self, query_unit, new_types)
 
     cpdef get_session_config(self)
     cdef set_session_config(self, new_conf)

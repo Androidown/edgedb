@@ -386,7 +386,7 @@ async def _store_static_json_cache(
     await _execute(ctx.conn, text)
 
 
-def _process_delta(ctx, delta, schema):
+def _process_delta(ctx, delta, schema, stdmode=True):
     """Adapt and process the delta command."""
 
     if debug.flags.delta_plan:
@@ -402,7 +402,7 @@ def _process_delta(ctx, delta, schema):
 
     delta = delta_cmds.CommandMeta.adapt(delta)
     context = sd.CommandContext(
-        stdmode=True,
+        stdmode=stdmode,
         backend_runtime_params=ctx.cluster.get_runtime_params(),
     )
     schema = sd.apply(delta, schema=schema, context=context)

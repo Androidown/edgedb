@@ -184,7 +184,7 @@ def compile(
     *compile_args: Any,
     **compile_kwargs: Any,
 ):
-    gc.disable()
+    # gc.disable()
     db = __sync__(
         dbname,
         user_schema,
@@ -210,7 +210,7 @@ def compile(
     if cstate is not None:
         pickled_state = pickle.dumps(cstate, -1)
 
-    gc.enable()
+    # gc.enable()
     return units, pickled_state
 
 

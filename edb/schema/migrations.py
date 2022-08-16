@@ -96,7 +96,7 @@ class CreateMigration(MigrationCommand, sd.CreateObject[Migration]):
 
         module_name = context.module or 'builtin'
 
-        parent_migration = schema.get_last_migration(module_name)
+        parent_migration = schema.get_last_migration()
 
         parent: Optional[so.ObjectShell[Migration]]
 

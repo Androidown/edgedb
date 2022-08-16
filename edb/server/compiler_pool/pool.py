@@ -65,7 +65,7 @@ _ENV = os.environ.copy()
 _ENV['PYTHONPATH'] = ':'.join(sys.path)
 
 
-@util.simple_lru()
+@util.simple_lru(weakref_key='schema', weakref_pos=0)
 def _pickle_memoized(schema):
     return pickle.dumps(schema, -1)
 
