@@ -3387,7 +3387,8 @@ def _process_set_as_root_traverse_function(
             type=pgast.SubLinkType.ANY,
             expr=pgast.SelectStmt(
                 target_list=[sub_parent_col],
-                from_clause=[sub_src_table]
+                from_clause=[sub_src_table],
+                distinct_clause=[sub_parent_col]
             ),
         )
         is_base_alias = ctx.env.aliases.get('is-base')
