@@ -3586,6 +3586,7 @@ def process_set_as_traverse_function(
                 ],
                 from_clause=[pgast.RelRangeVar(relation=pgast.Relation(name=cte_name))],
                 where_clause=pgast.NullTest(arg=pgast.ColumnRef(name=[cte_parent_name]), negated=True),
+                distinct_clause=[pgast.Star()]
             )
         )
         if function_name == 'cal::ibase':
