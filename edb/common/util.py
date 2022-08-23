@@ -1,7 +1,11 @@
-import functools
-from collections import OrderedDict
 import weakref
 from typing import List, Union
+import functools
+import contextlib
+import time
+from collections import OrderedDict
+from enum import Enum
+import gc
 
 
 # def simple_lru(func=None, maxsize=128):
@@ -123,3 +127,137 @@ def simple_lru(
 
 # simple_lru = functools.lru_cache
 
+
+class TimeUnit(str, Enum):
+    ns = 'ns'
+    us = 'us'
+    ms = 'ms'
+    s = 's'
+    m = 'm'
+    h = 'h'
+
+
+TIME_MAP = {
+    'ns': 1,
+    'us': 1_000,
+    'ms': 1_000_000,
+    's': 1_000_000_000,
+    'm': 60_000_000_000,
+    'h': 3_600_000_000_000,
+}
+
+
+class Stopwatch(object):
+    """计时器
+
+    Args:
+        unit: 计时单位
+        sink: 耗时信息的输出函数，默认为 ``logger.info``
+
+    >>> watch = Stopwatch(unit='s', sink=print)
+    >>> import time
+    >>> with watch('[task - sleep]'):
+    ...    time.sleep(0)
+    [task - sleep]:0.00s
+    """
+    __slots__ = (
+        'runtimes', 'start_stack', 'rec_count', 'name',
+        '_unit_repr', '_unit', '_sink', '_msg_on_enter'
+    )
+
+    def __init__(self, unit: str = 'ns', sink=print, msg_on_enter: bool = True):
+        self.runtimes = OrderedDict()
+        self.start_stack = []
+        self.rec_count = 0
+        self.name = []
+        self._unit_repr = _unit = TimeUnit[unit]
+        self._unit = TIME_MAP[_unit]
+        self._sink = sink
+        self._msg_on_enter = msg_on_enter
+
+    def __call__(self, name=None):
+        self.name.append(name)
+        return self
+
+    def __enter__(self):
+        self.rec_count += 1
+        if self._msg_on_enter:
+            prefix, task_name = self.get_current_task_name(pop=False)
+            self._sink(f'{prefix}entering: {task_name}')
+
+        self.start_stack.append(time.perf_counter_ns())
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        time_gap = time.perf_counter_ns() - self.start_stack.pop(-1)
+        key = ''.join(self.get_current_task_name())
+        self._sink(f"{key} takes: {time_gap / self._unit :.2f}{self._unit_repr}")
+        self.runtimes[key] = time_gap
+
+    def get_current_task_name(self, pop=True):
+        stack_len = len(self.start_stack)
+        prefix = '\t' * stack_len
+
+        if self.name and self.name[-1] is not None:
+            if pop:
+                name = self.name.pop(-1)
+            else:
+                name = self.name[-1]
+        else:
+            name = f"task{self.rec_count}"
+
+        return prefix, name
+
+    def get_all_runtime(self):
+        return list(self.runtimes.values())
+
+    def clear(self):
+        self.runtimes.clear()
+        self.rec_count = 0
+
+    def __repr__(self):
+        return ', '.join(
+            f"{name}:{t / self._unit :.2f}{self._unit_repr}"
+            for name, t in self.runtimes.items()
+        )
+
+
+def stopwatch(func=None, unit: str = 'ms', name=None, use_global: bool = True):
+    if func is None:
+        return functools.partial(stopwatch, unit=unit, name=name, use_global=use_global)
+
+    if use_global:
+        watch = GlobalWatch
+    else:
+        watch = Stopwatch(unit)
+    func_name = name or func.__qualname__
+
+    @functools.wraps(func)
+    def wrap(*args, **kwargs):
+        with watch(func_name):
+            rtn = func(*args, **kwargs)
+
+        return rtn
+    return wrap
+
+
+class DummyStopwatch(Stopwatch):
+    def __enter__(self):
+        pass
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        pass
+
+
+GlobalWatch = DummyStopwatch(unit='ms')
+# GlobalWatch = Stopwatch(unit='ms')
+
+
+@contextlib.contextmanager
+def disable_gc():
+    gcold = gc.isenabled()
+    try:
+        gc.disable()
+        yield
+    finally:
+        if gcold:
+            gc.enable()

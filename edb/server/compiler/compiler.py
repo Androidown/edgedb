@@ -42,6 +42,7 @@ from edb.pgsql import compiler as pg_compiler
 from edb import edgeql
 from edb.common import debug
 from edb.common import verutils
+from edb.common import util
 from edb.common import uuidgen
 from edb.common import ast
 
@@ -373,22 +374,6 @@ class Compiler:
         self._compile_schema_storage_in_delta(
             ctx, pgdelta, subblock, context=context)
 
-        ddl_lock = 0xEDB0010C
-        if ctx.module_is_implicit:
-            unlock_func = 'pg_advisory_unlock'
-        else:
-            unlock_func = 'pg_advisory_unlock_shared'
-
-        if not db_cmd:
-            block.add_command(f"""
-                EXCEPTION
-                    WHEN lock_not_available THEN
-                        NULL;
-                        RAISE;
-                    WHEN OTHERS THEN
-                        SELECT {unlock_func}({ddl_lock}) INTO _dummy_text;
-                        RAISE;
-                """)
         return block, new_types
 
     def _compile_schema_storage_in_delta(
@@ -1711,6 +1696,7 @@ class Compiler:
         *,
         ctx: CompileContext,
         source: edgeql.Source,
+        send_mutation: bool = True
     ) -> List[dbstate.QueryUnit]:
         current_tx = ctx.state.current_tx()
         if current_tx.get_migration_state() is not None:
@@ -1720,10 +1706,10 @@ class Compiler:
                 source=original,
                 implicit_limit=0,
             )
-            return self._try_compile(ctx=ctx, source=original)
+            return self._try_compile(ctx=ctx, source=original, send_mutation=send_mutation)
 
         try:
-            return self._try_compile(ctx=ctx, source=source)
+            return self._try_compile(ctx=ctx, source=source, send_mutation=send_mutation)
         except errors.EdgeQLSyntaxError as original_err:
             if isinstance(source, edgeql.NormalizedSource):
                 # try non-normalized source
@@ -1746,6 +1732,7 @@ class Compiler:
         *,
         ctx: CompileContext,
         source: edgeql.Source,
+        send_mutation: bool = True
     ) -> List[dbstate.QueryUnit]:
 
         # When True it means that we're compiling for "connection.query()".
@@ -1847,7 +1834,11 @@ class Compiler:
                 unit.has_role_ddl = comp.has_role_ddl
                 unit.ddl_stmt_id = comp.ddl_stmt_id
                 if comp.user_schema is not None:
-                    unit.user_schema = pickle.dumps(comp.user_schema, -1)
+                    if send_mutation:
+                        unit.user_schema_mut_log = \
+                            pickle.dumps(comp.user_schema.get_mutation_logger(), -1)
+                    else:
+                        unit.user_schema = pickle.dumps(comp.user_schema, -1)
                 if comp.cached_reflection is not None:
                     unit.cached_reflection = \
                         pickle.dumps(comp.cached_reflection, -1)
@@ -1862,7 +1853,11 @@ class Compiler:
                 unit.sql += comp.sql
                 unit.cacheable = comp.cacheable
                 if comp.user_schema is not None:
-                    unit.user_schema = pickle.dumps(comp.user_schema, -1)
+                    if send_mutation:
+                        unit.user_schema_mut_log = \
+                            pickle.dumps(comp.user_schema.get_mutation_logger(), -1)
+                    else:
+                        unit.user_schema = pickle.dumps(comp.user_schema, -1)
                 if comp.cached_reflection is not None:
                     unit.cached_reflection = \
                         pickle.dumps(comp.cached_reflection, -1)
@@ -1890,7 +1885,11 @@ class Compiler:
                 unit.sql += comp.sql
                 unit.cacheable = comp.cacheable
                 if comp.user_schema is not None:
-                    unit.user_schema = pickle.dumps(comp.user_schema, -1)
+                    if send_mutation:
+                        unit.user_schema_mut_log = \
+                            pickle.dumps(comp.user_schema.get_mutation_logger(), -1)
+                    else:
+                        unit.user_schema = pickle.dumps(comp.user_schema, -1)
                 if comp.cached_reflection is not None:
                     unit.cached_reflection = \
                         pickle.dumps(comp.cached_reflection, -1)
@@ -2209,7 +2208,7 @@ class Compiler:
             module=module
         )
 
-        return self._compile(ctx=ctx, source=source), ctx.state
+        return self._compile(ctx=ctx, source=source, send_mutation=False), ctx.state
 
     def describe_database_dump(
         self,

@@ -67,7 +67,8 @@ _ENV['PYTHONPATH'] = ':'.join(sys.path)
 
 @util.simple_lru(weakref_key='schema', weakref_pos=0)
 def _pickle_memoized(schema):
-    return pickle.dumps(schema, -1)
+    with util.disable_gc():
+        return pickle.dumps(schema, -1)
 
 
 class Worker:
@@ -251,6 +252,7 @@ class BasePool(amsg.ServerProtocol, asyncio.SubprocessProtocol):
                 state.DatabaseState(
                     name=db.name,
                     user_schema=db.user_schema,
+                    user_schema_version=db.user_schema.version_id,
                     reflection_cache=db.reflection_cache,
                     database_config=db.db_config,
                 )
@@ -402,6 +404,7 @@ class BasePool(amsg.ServerProtocol, asyncio.SubprocessProtocol):
                 worker._dbs = worker._dbs.set(dbname, state.DatabaseState(
                     name=dbname,
                     user_schema=user_schema,
+                    user_schema_version=user_schema.version_id,
                     reflection_cache=reflection_cache,
                     database_config=database_config,
                 ))
@@ -413,10 +416,11 @@ class BasePool(amsg.ServerProtocol, asyncio.SubprocessProtocol):
                     or reflection_cache is not None
                     or database_config is not None
                 ):
+                    actual_user_schema = user_schema or worker_db.user_schema
                     worker._dbs = worker._dbs.set(dbname, state.DatabaseState(
                         name=dbname,
-                        user_schema=(
-                            user_schema or worker_db.user_schema),
+                        user_schema=actual_user_schema,
+                        user_schema_version=actual_user_schema.version_id,
                         reflection_cache=(
                             reflection_cache or worker_db.reflection_cache),
                         database_config=(
@@ -428,7 +432,7 @@ class BasePool(amsg.ServerProtocol, asyncio.SubprocessProtocol):
                 if system_config is not None:
                     worker._system_config = system_config
 
-        worker_db = worker._dbs.get(dbname)
+        worker_db: state.DatabaseState = worker._dbs.get(dbname)
         preargs = (dbname,)
         to_update = {}
 
@@ -448,7 +452,11 @@ class BasePool(amsg.ServerProtocol, asyncio.SubprocessProtocol):
                 'system_config': system_config,
             }
         else:
-            if worker_db.user_schema is not user_schema:
+            if worker_db.user_schema_version != user_schema.version_id:
+                logger.warning(
+                    f"Stored schema version: {worker_db.user_schema_version} "
+                    f"is not consistent with server schema version: {user_schema.version_id}"
+                )
                 preargs += (
                     _pickle_memoized(user_schema),
                 )
@@ -512,6 +520,125 @@ class BasePool(amsg.ServerProtocol, asyncio.SubprocessProtocol):
         # Skip disconnected workers
         if worker.get_pid() in self._workers:
             self._workers_queue.release(worker)
+
+    @staticmethod
+    def _update_user_schema_ver_id(worker, dbname, ver_id):
+        db_states: state.DatabaseState = worker._dbs.get(dbname)
+        db_states = db_states._replace(user_schema_version=ver_id)
+        worker._dbs = worker._dbs.set(dbname, db_states)
+
+    async def _apply_user_schema_mutation(self, pid, dbname, mutation_pickled):
+        worker = await self._acquire_worker(condition=lambda w: w.get_pid() == pid)
+        try:
+            status, ver_id = await worker.call('apply_schema_mutation', dbname, mutation_pickled)
+            logger.debug(f"DB<{dbname}> user schema version updated to {ver_id}")
+            if status is True:
+                self._update_user_schema_ver_id(worker, dbname, ver_id)
+            return pid, status
+        finally:
+            self._release_worker(worker)
+
+    async def _apply_schema_full_update(self, pid, dbname, schema_pickled):
+        worker = await self._acquire_worker(condition=lambda w: w.get_pid() == pid)
+        try:
+            status, ver_id = await worker.call('set_user_schema', dbname, schema_pickled)
+            if status is True:
+                self._update_user_schema_ver_id(worker, dbname, ver_id)
+            return pid, status
+        finally:
+            self._release_worker(worker)
+
+    async def _init_worker_db(
+        self,
+        pid,
+        dbname: str,
+        user_schema,
+        reflection_cache,
+        global_schema,
+        database_config,
+        system_config,
+    ):
+        worker = await self._acquire_worker(condition=lambda w: w.get_pid() == pid)
+        try:
+            await worker.call(
+                '__sync__',
+                dbname,
+                _pickle_memoized(user_schema),
+                _pickle_memoized(reflection_cache),
+                _pickle_memoized(global_schema),
+                _pickle_memoized(database_config),
+                _pickle_memoized(system_config),
+                False
+            )
+            worker._dbs = worker._dbs.set(dbname, state.DatabaseState(
+                name=dbname,
+                user_schema=user_schema,
+                user_schema_version=user_schema.version_id,
+                reflection_cache=reflection_cache,
+                database_config=database_config,
+            ))
+        finally:
+            self._release_worker(worker)
+
+    async def apply_user_schema_mutation_for_all(
+        self,
+        dbname,
+        mutation,
+        user_schema,
+        global_schema,
+        reflection_cache,
+        database_config,
+        system_config,
+    ):
+        mutation_tasks = []
+        db_init_pids = []
+        full_schema_replace_pids = []
+
+        # -----------------------------------------------------------------------------
+        # general mutation update
+        for pid, worker in self._workers.items():
+            if dbname not in worker._dbs:
+                db_init_pids.append(pid)
+            elif mutation is not None:
+                mutation_tasks.append(
+                    self._apply_user_schema_mutation(pid, dbname, mutation))
+            else:
+                full_schema_replace_pids.append(pid)
+
+        result = await asyncio.gather(*mutation_tasks)
+
+        full_schema_replace_pids.extend(pid for pid, succeed in result if not succeed)
+        # -----------------------------------------------------------------------------
+        # full user_schema update
+        if full_schema_replace_pids:
+            full_schema_replace_tasks = []
+            schema_pickled = _pickle_memoized(user_schema)
+            for pid in full_schema_replace_pids:
+                full_schema_replace_tasks.append(
+                    self._apply_schema_full_update(pid, dbname, schema_pickled))
+
+            result = await asyncio.gather(*full_schema_replace_tasks)
+
+            for pid, succeed in result:
+                if not succeed:
+                    db_init_pids.append(pid)
+
+        # -----------------------------------------------------------------------------
+        # new db initialization
+        if db_init_pids:
+            db_init_tasks = []
+            db_init_args = (
+                dbname,
+                user_schema,
+                reflection_cache,
+                global_schema,
+                database_config,
+                system_config,
+            )
+            for pid in db_init_pids:
+                db_init_tasks.append(self._init_worker_db(pid, *db_init_args))
+
+            await asyncio.gather(*db_init_tasks)
 
     async def compile(
         self,
@@ -798,6 +925,15 @@ class DebugWorker:
     _last_pickled_state = None
     connected = False
 
+    async def call(self, method_name, *args, sync_state=None):
+        from . import worker
+
+        method = getattr(worker, method_name)
+        r = method(*args)
+        if sync_state is not None:
+            sync_state()
+        return r
+
 
 @srvargs.CompilerPoolMode.Solo.assign_implementation
 class SoloPool(BasePool):
@@ -817,6 +953,7 @@ class SoloPool(BasePool):
                 state.DatabaseState(
                     name=db.name,
                     user_schema=db.user_schema,
+                    user_schema_version=db.user_schema.version_id,
                     reflection_cache=db.reflection_cache,
                     database_config=db.db_config,
                 )
@@ -844,6 +981,7 @@ class SoloPool(BasePool):
         self._worker.connected = True
         metrics.compiler_process_spawns.inc()
         metrics.current_compiler_processes.inc()
+        self._workers[pid] = self._worker
 
     def worker_disconnected(self, pid):
         self._worker.connected = False
@@ -851,6 +989,12 @@ class SoloPool(BasePool):
 
     def get_template_pid(self):
         return None
+
+    async def _acquire_worker(self, *, condition=None):
+        return self._worker
+
+    def _release_worker(self, worker):
+        return
 
     async def start(self):
         if self._running is not None:

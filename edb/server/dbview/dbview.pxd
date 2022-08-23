@@ -122,6 +122,7 @@ cdef class DatabaseConnectionView:
     cdef start(self, query_unit)
     cdef on_error(self, query_unit)
     cdef on_success(self, query_unit, new_types)
+    cdef _on_success(self, query_unit, new_types)
 
     cpdef get_session_config(self)
     cdef set_session_config(self, new_conf)

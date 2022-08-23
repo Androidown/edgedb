@@ -648,12 +648,14 @@ class Server(ha_base.ClusterProtocol):
             self.get_global_schema(),
         )
 
-        return s_refl.parse_into(
+        user_schema = s_refl.parse_into(
             base_schema=base_schema,
             schema=s_schema.FlatSchema(),
             data=json_data,
             schema_class_layout=self._schema_class_layout,
         )
+        user_schema.refresh_mutation_logger()
+        return user_schema
 
     async def introspect_user_schema_modularly(self, conn, module):
         json_data = await conn.parse_execute_json(

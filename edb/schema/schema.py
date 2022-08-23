@@ -19,6 +19,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import enum
 from typing import *
 
 import abc
@@ -41,6 +43,7 @@ from . import objects as so
 from . import operators as s_oper
 from . import pseudo as s_pseudo
 from . import types as s_types
+from . import version as s_ver
 
 if TYPE_CHECKING:
     import uuid
@@ -79,6 +82,197 @@ STD_SOURCES = (
 )
 
 Schema_T = TypeVar('Schema_T', bound='Schema')
+
+
+class SC(int, enum.Enum):
+    """SchemaCategory"""
+    #: id to data
+    ITD = enum.auto()
+    #: id_to_type
+    ITT = enum.auto()
+    #: shortname_to_id
+    STI = enum.auto()
+    #: name_to_id
+    NTI = enum.auto()
+    #: globalname_to_id
+    GTI = enum.auto()
+    #: refs_to
+    RT = enum.auto()
+
+
+class SetOp:
+    __slots__ = ('key', 'value')
+
+    def __init__(self, key, value):
+        self.key = key
+        self.value = value
+
+    def apply(self, source: immu.MapMutation):
+        source[self.key] = self.value
+
+    def __repr__(self):
+        return f'<Set {self.key} => {self.value}>'
+
+
+class DelOp:
+    __slots__ = ('key', )
+
+    def __init__(self, key):
+        self.key = key
+
+    def apply(self, source: immu.MapMutation):
+        if self.key in source:
+            del source[self.key]
+
+    def __repr__(self):
+        return f'<Del {self.key}>'
+
+
+class RefSetOp(SetOp):
+    __slots__ = ()
+
+    def apply(self, source: Refs_T):
+        id_key, obj_key = self.key
+        if (refs := source.get(id_key)) is None:
+            refs = immu.Map({obj_key: immu.Map({self.value: None})})
+        elif (inner_map := refs.get(obj_key)) is None:
+            refs = refs.set(obj_key, immu.Map({self.value: None}))
+        else:
+            inner_map = inner_map.set(self.value, None)
+            refs = refs.set(obj_key, inner_map)
+
+        return source.set(id_key, refs)
+
+
+class RefDelOp(DelOp):
+    __slots__ = ()
+
+    def apply(self, source: Refs_T):
+        id_key, obj_key, inner_id = self.key
+        if id_key not in source:
+            return source
+
+        refs = source[id_key]
+        if obj_key not in refs:
+            return source
+
+        field_refs = refs[obj_key]
+        if inner_id not in field_refs:
+            return source
+
+        field_refs = field_refs.delete(inner_id)
+        if not field_refs:
+            refs = refs.delete(obj_key)
+        else:
+            refs = refs.set(obj_key, field_refs)
+        return source.set(id_key, refs)
+
+
+T_Ops = Union[SetOp, DelOp]
+
+
+class SchemaMutationLogger:
+    # __slots__ = ('ops', 'generation', 'id', 'parent')
+
+    def __init__(self):
+        self.ops: Dict[SC, List[T_Ops]] = collections.defaultdict(list)
+        self.generation = 0
+        self.id = None
+        self.parent: Optional[SchemaMutationLogger] = None
+
+    def set_parent(self, parent: SchemaMutationLogger):
+        self.parent = parent
+
+    def set_id(self, ver_id: uuid.UUID):
+        self.id = ver_id
+
+    def set_generation(self, n: int):
+        self.generation = n
+
+    def log_set(self, category: SC, key, value):
+        self.ops[category].append(SetOp(key, value))
+
+    def log_del(self, category: SC, key):
+        self.ops[category].append(DelOp(key))
+
+    def refs_log_set(self, key):
+        *key, value = key
+        self.ops[SC.RT].append(RefSetOp(key, value))
+
+    def refs_log_del(self, key):
+        self.ops[SC.RT].append(RefDelOp(key))
+
+    def _merge(self, other: SchemaMutationLogger):
+        for category, ops in other.ops.items():
+            self.ops[category].extend(ops)
+        return self
+
+    @contextlib.contextmanager
+    def phantom(self):
+        phantom = SchemaMutationLogger()
+        yield phantom
+        self._merge(phantom)
+
+    # noinspection PyProtectedMember
+    def apply(self, schema: FlatSchema) -> FlatSchema:
+        target_id = schema.version_id
+        if self.id != target_id:
+            raise ValueError(
+                f'Cannot apply schema mutaion to version: {target_id}, '
+                f'schema version is supposed to be: {self.id}')
+
+        ops = self.ops
+
+        replace_dict = dict(
+            name_to_id=None,
+            shortname_to_id=None,
+            globalname_to_id=None,
+            id_to_data=None,
+            refs_to=None,
+        )
+
+        for schema_data, category, key in [
+            (schema._id_to_data, SC.ITD, 'id_to_data'),
+            (schema._id_to_type, SC.ITT, 'id_to_type'),
+            (schema._globalname_to_id, SC.GTI, 'globalname_to_id'),
+            (schema._shortname_to_id, SC.STI, 'shortname_to_id'),
+            (schema._name_to_id, SC.NTI, 'name_to_id'),
+        ]:
+            if category in ops:
+                with schema_data.mutate() as mm:
+                    for op in ops[category]:
+                        op.apply(mm)
+                    replace_dict[key] = mm.finish()
+
+        if SC.RT in ops:
+            refs_to = schema._refs_to
+            for op in ops[SC.RT]:
+                refs_to = op.apply(refs_to)
+
+            replace_dict['refs_to'] = refs_to
+
+        new = schema._replace(**replace_dict)
+        new._generation = self.generation
+        new.refresh_mutation_logger()
+        return new
+
+    def reduce(self) -> SchemaMutationLogger:
+        parent = self.parent
+        mut_history: Deque[SchemaMutationLogger] = collections.deque()
+
+        while parent is not None:
+            mut_history.appendleft(parent)
+            parent = parent.parent
+
+        if not mut_history:
+            return self
+
+        mut_history.append(self)
+
+        mut = functools.reduce(lambda x, y: x._merge(y), mut_history)
+        mut.id = mut_history[0].id
+        mut.generation = self.generation
+        return mut
 
 
 class Schema(abc.ABC):
@@ -488,6 +682,8 @@ class FlatSchema(Schema):
     ]
     _refs_to: Refs_T
     _generation: int
+    _mut_next: SchemaMutationLogger
+    _mut: SchemaMutationLogger
 
     def __init__(self) -> None:
         self._id_to_data = immu.Map()
@@ -497,6 +693,20 @@ class FlatSchema(Schema):
         self._globalname_to_id = immu.Map()
         self._refs_to = immu.Map()
         self._generation = 0
+        self._mut_next = SchemaMutationLogger()
+        self._mut = SchemaMutationLogger()
+
+    @functools.cached_property
+    def version_id(self):
+        return self.get_global(s_ver.SchemaVersion, '__schema_version__').get_version(self)
+
+    def refresh_mutation_logger(self):
+        self._mut = SchemaMutationLogger()
+        self._mut_next = SchemaMutationLogger()
+        self._mut.set_id(self.version_id)
+
+    def get_mutation_logger(self):
+        return self._mut.reduce()
 
     def _replace(
         self,
@@ -547,152 +757,12 @@ class FlatSchema(Schema):
         else:
             new._refs_to = refs_to
 
+        new._mut_next = SchemaMutationLogger()
+        new._mut = self._mut_next
         new._generation = self._generation + 1
-
-        return new
-
-    def split_by_module(
-        self
-    ) -> Dict[str, FlatSchema]:
-        get_by_id = self.get_by_id
-
-        common_id = []
-        module_to_ids = collections.defaultdict(list)
-
-        for _id in self._id_to_type:
-            obj = get_by_id(_id)
-            obj_name = obj.get_name(self)
-
-            if isinstance(obj_name, sn.UnqualName):
-                common_id.append(_id)
-            else:
-                module_name = obj_name.get_module_name()
-                if module_name in BUILTIN_MODULES:
-                    common_id.append(_id)
-                else:
-                    module_to_ids[module_name].append(_id)
-
-        if not module_to_ids:
-            return {'default': self}
-
-        splited_schema: Dict[str, FlatSchema] = {}
-
-        get_type_by_id = self._id_to_type.get
-        get_data_by_id = self._id_to_data.get
-
-        for module_name, ids in module_to_ids.items():
-            splited_schema[str(module_name)] = new = FlatSchema.__new__(FlatSchema)
-            target_ids = set(ids + common_id)
-
-            new._id_to_type = immu.Map(
-                (_id, get_type_by_id(_id))
-                for _id in target_ids
-            )
-            new._id_to_data = immu.Map(
-                (_id, get_data_by_id(_id))
-                for _id in target_ids
-            )
-
-            refs_to_final = immu.Map()
-            for _id, refs_to in self._refs_to.items():
-                refs_to_lv1 = immu.Map()
-                for key, nest_refs in refs_to.items():
-                    refs_to_lv2 = immu.Map(
-                        (k, v) for k, v in nest_refs.items()
-                        if k in target_ids
-                    )
-                    if refs_to_lv2:
-                        refs_to_lv1 = refs_to_lv1.set(key, refs_to_lv2)
-
-                if refs_to_lv1:
-                    refs_to_final = refs_to_final.set(_id, refs_to_lv1)
-
-            new._refs_to = refs_to_final
-
-            new._name_to_id = immu.Map(
-                (name, _id)
-                for name, _id in self._name_to_id.items()
-                if _id in target_ids
-            )
-            new._generation = self._generation
-
-            new._globalname_to_id = immu.Map()
-            new._shortname_to_id = immu.Map()
-
-        def _update_single(schema, key_, value_, is_global_):
-            if is_global_:
-                schema._globalname_to_id = schema._globalname_to_id.set(key_, value_)
-            else:
-                schema._shortname_to_id = schema._shortname_to_id.set(key_, value_)
-
-        def _update_for_all(key_, value_, is_global_):
-            for _, schema in splited_schema.items():
-                _update_single(schema, key_, value_, is_global_=is_global_)
-
-        # -----------------------------------------------------------------------------
-        # replace shortname_to_id
-        for is_global, immmap in zip((True, False), (self._globalname_to_id, self._shortname_to_id)):
-            for ((type_, name), _id) in immmap.items():
-                if isinstance(name, sn.QualName):
-                    mod_name = name.get_module_name()
-                    if mod_name not in BUILTIN_MODULES:
-                        _update_single(
-                            splited_schema[mod_name.name],
-                            (type_, name), _id, is_global
-                        )
-                    else:
-                        _update_for_all((type_, name), _id, is_global)
-                else:
-                    _update_for_all((type_, name), _id, is_global)
-
-        return splited_schema
-
-    def merge(
-        self,
-        other: FlatSchema,
-    ) -> FlatSchema:
-        new = FlatSchema.__new__(FlatSchema)
-
-        new._id_to_data = self._id_to_data.update(other._id_to_data)
-        new._id_to_type = self._id_to_type.update(other._id_to_type)
-        new._shortname_to_id = self._shortname_to_id.update(other._shortname_to_id)
-        new._globalname_to_id = self._globalname_to_id.update(other._globalname_to_id)
-        new._name_to_id = self._name_to_id.update(other._name_to_id)
-
-        refs_to = immu.Map()
-
-        common_ref_ids = set(self._refs_to).intersection(other._refs_to)
-        all_ref_ids = set(self._refs_to).union(other._refs_to)
-
-        for _id in all_ref_ids - common_ref_ids:
-            if _id in self._refs_to:
-                refs_to = refs_to.set(_id, self._refs_to.get(_id))
-            else:
-                refs_to = refs_to.set(_id, other._refs_to.get(_id))
-
-        for _id in common_ref_ids:
-            refs_self = self._refs_to.get(_id)
-            refs_other = other._refs_to.get(_id)
-
-            nest_key_visited = set()
-
-            for nest_key, nest_ref in refs_self.items():
-                nest_key_visited.add(nest_key)
-                if nest_key in refs_other:
-                    refs_self = refs_self.set(nest_key, nest_ref.update(refs_other.get(nest_key)))
-
-            for nest_key, nest_ref in refs_other.items():
-                if nest_key in nest_key_visited:
-                    continue
-
-                # nest key here only appears in refs_other
-                refs_self = refs_self.set(nest_key, nest_ref)
-
-            refs_to = refs_to.set(_id, refs_self)
-
-        new._refs_to = refs_to
-
-        new._generation = self._generation + other._generation
+        new._mut.set_parent(self._mut)
+        new._mut.set_generation(new._generation)
+        self._mut_next = SchemaMutationLogger()  # reset mut_next
         return new
 
     def _update_obj_name(
@@ -716,8 +786,10 @@ class FlatSchema(Schema):
         if old_name is not None:
             if is_global:
                 globalname_to_id = globalname_to_id.delete((sclass, old_name))
+                self._mut_next.log_del(SC.GTI, (sclass, old_name))
             else:
                 name_to_id = name_to_id.delete(old_name)
+                self._mut_next.log_del(SC.NTI, old_name)
             if has_sn_cache:
                 old_shortname = sn.shortname_from_fullname(old_name)
                 sn_key = (sclass, old_shortname)
@@ -725,8 +797,10 @@ class FlatSchema(Schema):
                 new_ids = shortname_to_id[sn_key] - {obj_id}
                 if new_ids:
                     shortname_to_id = shortname_to_id.set(sn_key, new_ids)
+                    self._mut_next.log_set(SC.STI, sn_key, new_ids)
                 else:
                     shortname_to_id = shortname_to_id.delete(sn_key)
+                    self._mut_next.log_del(SC.STI, sn_key)
 
         if new_name is not None:
             if is_global:
@@ -738,6 +812,7 @@ class FlatSchema(Schema):
                     raise errors.SchemaError(
                         f'{vn} already exists')
                 globalname_to_id = globalname_to_id.set(key, obj_id)
+                self._mut_next.log_set(SC.GTI, key, obj_id)
             else:
                 assert isinstance(new_name, sn.QualName)
                 if (
@@ -754,6 +829,7 @@ class FlatSchema(Schema):
                     raise errors.SchemaError(
                         f'{vn} already exists')
                 name_to_id = name_to_id.set(new_name, obj_id)
+                self._mut_next.log_set(SC.NTI, new_name, obj_id)
 
             if has_sn_cache:
                 new_shortname = sn.shortname_from_fullname(new_name)
@@ -764,7 +840,9 @@ class FlatSchema(Schema):
                 except KeyError:
                     ids = frozenset()
 
-                shortname_to_id = shortname_to_id.set(sn_key, ids | {obj_id})
+                new_id = ids | {obj_id}
+                shortname_to_id = shortname_to_id.set(sn_key, new_id)
+                self._mut_next.log_set(SC.STI, sn_key, new_id)
 
         return name_to_id, shortname_to_id, globalname_to_id
 
@@ -826,6 +904,7 @@ class FlatSchema(Schema):
             data[findex] = value
 
         id_to_data = self._id_to_data.set(obj_id, tuple(data))
+        self._mut_next.log_set(SC.ITD, obj_id, tuple(data))
         refs_to = self._update_refs_to(obj_id, sclass, orig_refs, new_refs)
 
         return self._replace(name_to_id=name_to_id,
@@ -889,6 +968,7 @@ class FlatSchema(Schema):
         new_data = tuple(data_list)
 
         id_to_data = self._id_to_data.set(obj_id, new_data)
+        self._mut_next.log_set(SC.ITD, obj_id, new_data)
 
         if not is_object_ref:
             refs_to = None
@@ -951,6 +1031,7 @@ class FlatSchema(Schema):
         new_data = tuple(data_list)
 
         id_to_data = self._id_to_data.set(obj_id, new_data)
+        self._mut_next.log_set(SC.ITD, obj_id, new_data)
         is_object_ref = field in sclass.get_object_reference_fields()
 
         if not is_object_ref:
@@ -1027,6 +1108,8 @@ class FlatSchema(Schema):
                                 field_refs = field_refs.set(object_id, None)
                             mm[ref_id] = refs.set(key, field_refs)
 
+                        self._mut_next.refs_log_set((ref_id, key, object_id))
+
                 if old_ids:
                     for ref_id in old_ids:
                         refs = mm[ref_id]
@@ -1035,6 +1118,8 @@ class FlatSchema(Schema):
                             mm[ref_id] = refs.delete(key)
                         else:
                             mm[ref_id] = refs.set(key, field_refs)
+
+                        self._mut_next.refs_log_del((ref_id, key, object_id))
 
             result = mm.finish()
 
@@ -1083,6 +1168,8 @@ class FlatSchema(Schema):
             globalname_to_id=globalname_to_id,
             refs_to=refs_to,
         )
+        self._mut_next.log_set(SC.ITD, id, data)
+        self._mut_next.log_set(SC.ITT, id, sclass.__name__)
 
         if (
             issubclass(sclass, so.QualifiedObject)
@@ -1148,6 +1235,8 @@ class FlatSchema(Schema):
             id_to_type=self._id_to_type.delete(obj.id),
             refs_to=refs_to,
         ))
+        self._mut_next.log_del(SC.ITD, obj.id)
+        self._mut_next.log_del(SC.ITT, obj.id)
 
         return self._replace(**updates)  # type: ignore
 

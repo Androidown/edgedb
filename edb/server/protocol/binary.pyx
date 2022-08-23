@@ -21,6 +21,7 @@ import collections
 import hashlib
 import json
 import logging
+import sys
 import time
 import statistics
 import traceback
@@ -73,6 +74,7 @@ from edb import errors
 from edb.errors import base as base_errors, EdgeQLSyntaxError
 from edb.common import debug, taskgroup
 from edb.common import context as pctx
+from edb.common import util
 
 from edgedb import scram
 
@@ -1238,10 +1240,26 @@ cdef class EdgeConnection:
                         if state is not orig_state:
                             # see the same comments in _execute()
                             conn.last_state = state
+                        if side_effects & dbview.SideEffects.SchemaChanges:
+                            await self.update_compiler_user_schema(query_unit)
         finally:
             self.maybe_release_pgcon(conn)
 
         return query_unit
+
+    async def update_compiler_user_schema(self, query_unit):
+        pool = self.server.get_compiler_pool()
+        cdef dbview.DatabaseConnectionView _dbview = self.get_dbview()
+
+        await pool.apply_user_schema_mutation_for_all(
+            _dbview.dbname,
+            query_unit.user_schema_mut_log,
+            _dbview.get_user_schema(),
+            _dbview.get_global_schema(),
+            _dbview.reflection_cache,
+            _dbview.get_database_config(),
+            _dbview.get_compilation_system_config(),
+        )
 
     def signal_side_effects(self, side_effects):
         if not self.server._accept_new_tasks:
@@ -1756,6 +1774,8 @@ cdef class EdgeConnection:
                     #   2. The state is synced with dbview (orig_state is None)
                     #   3. We came out from a transaction (orig_state is None)
                     conn.last_state = state
+                if side_effects & dbview.SideEffects.SchemaChanges:
+                    await self.update_compiler_user_schema(query_unit)
 
             self.write(self.make_command_complete_msg(query_unit))
         finally:

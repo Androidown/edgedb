@@ -311,28 +311,6 @@ class AlterSchemaVersion(
         schema = super().apply(schema, context)
         expected_ver = self.get_orig_attribute_value('version')
 
-        # ddl_lock = 0xEDB0010C
-        # if context.module_is_implicit:
-        #     lock_func = 'pg_try_advisory_lock'
-        # else:
-        #     lock_func = 'pg_try_advisory_lock_shared'
-        #
-        # concurrency_check = dbops.Query(
-        #     f'''
-        #         SELECT
-        #             edgedb.raise_on_null(
-        #                 (SELECT NULLIF(
-        #                     (SELECT {lock_func}({ddl_lock})),
-        #                     FALSE
-        #                 )),
-        #                 'lock_not_available',
-        #                 msg => ('Concurrent DDL detected.')
-        #             )
-        #         INTO _dummy_text
-        #     '''
-        # )
-        # self.pgops.add(concurrency_check)
-
         check = dbops.Query(
             f'''
                 SELECT
@@ -5084,6 +5062,23 @@ class UpdateEndpointDeleteActions(MetaCommand):
             ))
 
         return '(' + '\nUNION ALL\n    '.join(selects) + ') as q'
+
+    def _filter_duplicated_inhview_links(self, schema, links):
+        """
+        只能在aspect = inhview 时调用
+        有的link可能来自于继承，如果父表link已经出现，
+        由于父表的view中已经出现该link的信息，没有必要重复union
+        """
+        all_source_links = frozenset(
+            (link.get_source(schema), link.get_displayname(schema), link.get_target(schema))
+            for link in links
+        )
+
+        for link in links:
+            for ancestor in link.get_source(schema).get_ancestors(schema):
+                pass
+
+        return links
 
     def _get_inline_link_table_union(
             self, schema, links, include_children) -> str:
