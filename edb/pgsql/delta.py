@@ -5159,6 +5159,56 @@ class UpdateEndpointDeleteActions(MetaCommand):
             return self._get_outline_link_trigger_proc_text(
                 target, links, disposition=disposition, schema=schema)
 
+    def _get_dunder_type_trigger_proc_text(self, target, *, schema):
+        body = textwrap.dedent('''\
+            SELECT
+                CASE WHEN tp.builtin
+                    THEN 'edgedbstd'
+                    ELSE 'edgedbpub'
+                END AS sname
+                INTO schema_name
+            FROM edgedb."_SchemaType" as tp
+            WHERE tp.id = OLD.id;
+
+            SELECT EXISTS (
+                SELECT FROM pg_tables
+                WHERE  schemaname = "schema_name"
+                AND    tablename  = OLD.id::text
+            ) INTO table_exists;
+
+            IF table_exists THEN
+                target_sql = format('SELECT EXISTS (SELECT FROM %I.%I LIMIT 1)', "schema_name", OLD.id::text);
+                EXECUTE target_sql into del_prohibited;
+            ELSE
+                del_prohibited = FALSE;
+            END IF;
+
+            IF del_prohibited THEN
+            RAISE foreign_key_violation
+                USING
+                    TABLE = TG_TABLE_NAME,
+                    SCHEMA = TG_TABLE_SCHEMA,
+                    MESSAGE = 'deletion of {tgtname} (' || OLD.id
+                        || ') is prohibited by link target policy',
+                    DETAIL = 'Object is still referenced in link __type__'
+                        || ' of ' || edgedb._get_schema_object_name(OLD.id) || ' ('
+                        || OLD.id || ').';
+            END IF;
+        '''.format(tgtname=target.get_displayname(schema)))
+
+        text = textwrap.dedent('''\
+            DECLARE
+                table_exists bool;
+                del_prohibited bool;
+                schema_name text;
+                target_sql text;
+            BEGIN
+                {body}
+                RETURN OLD;
+            END;
+        ''').format(body=body)
+        return text
+
     def _get_outline_link_trigger_proc_text(
             self, target, links, *, disposition, schema):
 
@@ -5588,6 +5638,7 @@ class UpdateEndpointDeleteActions(MetaCommand):
             deferred_inline_links = []
             links = []
             inline_links = []
+            dunder_type_links = []
 
             inbound_links = schema.get_referrers(
                 target, scls_type=s_links.Link, field_name='target')
@@ -5619,7 +5670,10 @@ class UpdateEndpointDeleteActions(MetaCommand):
                     continue
                 ptr_stor_info = types.get_pointer_storage_info(
                     link, schema=schema)
-                if ptr_stor_info.table_type != 'link':
+                if ptr_stor_info.column_name == '__type__':
+                    assert action is DA.Restrict
+                    dunder_type_links.append(link)
+                elif ptr_stor_info.table_type != 'link':
                     if action is DA.DeferredRestrict:
                         deferred_inline_links.append(link)
                     else:
@@ -5643,6 +5697,9 @@ class UpdateEndpointDeleteActions(MetaCommand):
 
             deferred_inline_links.sort(
                 key=lambda l: l.get_name(schema))
+
+            if dunder_type_links:
+                self._update_dunder_type_link_triggers(schema, target)
 
             if links or modifications:
                 self._update_action_triggers(
@@ -5685,6 +5742,40 @@ class UpdateEndpointDeleteActions(MetaCommand):
 
         module_name_ptr = obj.getptr(schema, sn.UnqualName('module_name'))
         return f'OLD."{module_name_ptr.id}" = \'{module}\''
+
+    def _update_dunder_type_link_triggers(
+        self,
+        schema,
+        objtype: s_objtypes.ObjectType,
+    ) -> None:
+        table_name = common.get_backend_name(
+            schema, objtype, catenate=False)
+        aspect = 'dunder-type-link-'
+        trigger_name = common.get_backend_name(
+            schema, objtype, catenate=False, aspect=aspect + 't')[1]
+
+        proc_name = common.get_backend_name(
+            schema, objtype, catenate=False, aspect=aspect + 'f')
+
+        trigger = dbops.Trigger(
+            name=trigger_name, table_name=table_name,
+            events=('delete',), procedure=proc_name,
+            is_constraint=True, inherit=True, deferred=False)
+
+        proc_text = self._get_dunder_type_trigger_proc_text(
+            objtype, schema=schema)
+
+        trig_func = dbops.Function(
+            name=proc_name, text=proc_text, volatility='volatile',
+            returns='trigger', language='plpgsql')
+
+        self.pgops.add(dbops.CreateOrReplaceFunction(trig_func))
+
+        self.pgops.add(dbops.CreateTrigger(
+            trigger, neg_conditions=[dbops.TriggerExists(
+                trigger_name=trigger_name, table_name=table_name
+            )]
+        ))
 
     def _update_action_triggers(
             self,

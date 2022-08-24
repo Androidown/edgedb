@@ -207,12 +207,6 @@ class SchemaMutationLogger:
             self.ops[category].extend(ops)
         return self
 
-    @contextlib.contextmanager
-    def phantom(self):
-        phantom = SchemaMutationLogger()
-        yield phantom
-        self._merge(phantom)
-
     # noinspection PyProtectedMember
     def apply(self, schema: FlatSchema) -> FlatSchema:
         target_id = schema.version_id
@@ -272,10 +266,14 @@ class SchemaMutationLogger:
         mut = functools.reduce(lambda x, y: x._merge(y), mut_history)
         mut.id = mut_history[0].id
         mut.generation = self.generation
+        mut.parent = None
         return mut
 
 
 class Schema(abc.ABC):
+    @abc.abstractmethod
+    def reset_mutation(self: Schema_T) -> Schema_T:
+        raise NotImplementedError
 
     @abc.abstractmethod
     def add_raw(
@@ -701,9 +699,13 @@ class FlatSchema(Schema):
         return self.get_global(s_ver.SchemaVersion, '__schema_version__').get_version(self)
 
     def refresh_mutation_logger(self):
+        self.reset_mutation()
+        self._mut.set_id(self.version_id)
+
+    def reset_mutation(self: Schema_T) -> Schema_T:
         self._mut = SchemaMutationLogger()
         self._mut_next = SchemaMutationLogger()
-        self._mut.set_id(self.version_id)
+        return self
 
     def get_mutation_logger(self):
         return self._mut.reduce()
@@ -1752,6 +1754,12 @@ class ChainedSchema(Schema):
         self._base_schema = base_schema
         self._top_schema = top_schema
         self._global_schema = global_schema
+
+    def reset_mutation(self: ChainedSchema) -> ChainedSchema:
+        self._base_schema.reset_mutation()
+        self._top_schema.reset_mutation()
+        self._global_schema.reset_mutation()
+        return self
 
     def get_top_schema(self) -> FlatSchema:
         return self._top_schema

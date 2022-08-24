@@ -44,6 +44,7 @@ from . import keywords as pg_keywords
 
 
 RE_LINK_TRIGGER = re.compile(r'(source|target)-del-(def|imm)-(inl|otl)-(f|t)')
+RE_DUNDER_TYPE_LINK_TRIGGER = re.compile(r'dunder-type-link-[ft]')
 
 
 def quote_e_literal(string):
@@ -234,7 +235,11 @@ def get_aspect_suffix(aspect):
 def get_objtype_backend_name(id, module_name, *, catenate=True, aspect=None):
     if aspect is None:
         aspect = 'table'
-    if aspect not in {'table', 'inhview'} and not RE_LINK_TRIGGER.match(aspect):
+    if (
+        aspect not in {'table', 'inhview'}
+        and not RE_LINK_TRIGGER.match(aspect)
+        and not RE_DUNDER_TYPE_LINK_TRIGGER.match(aspect)
+    ):
         raise ValueError(
             f'unexpected aspect for object type backend name: {aspect!r}')
 
