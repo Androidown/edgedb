@@ -1837,6 +1837,7 @@ class Compiler:
                     if send_mutation:
                         unit.user_schema_mut_log = \
                             pickle.dumps(comp.user_schema.get_mutation_logger(), -1)
+                        comp.user_schema.refresh_mutation_logger()
                     else:
                         unit.user_schema = pickle.dumps(comp.user_schema, -1)
                 if comp.cached_reflection is not None:
@@ -1856,6 +1857,7 @@ class Compiler:
                     if send_mutation:
                         unit.user_schema_mut_log = \
                             pickle.dumps(comp.user_schema.get_mutation_logger(), -1)
+                        comp.user_schema.refresh_mutation_logger()
                     else:
                         unit.user_schema = pickle.dumps(comp.user_schema, -1)
                 if comp.cached_reflection is not None:
@@ -1888,6 +1890,7 @@ class Compiler:
                     if send_mutation:
                         unit.user_schema_mut_log = \
                             pickle.dumps(comp.user_schema.get_mutation_logger(), -1)
+                        comp.user_schema.refresh_mutation_logger()
                     else:
                         unit.user_schema = pickle.dumps(comp.user_schema, -1)
                 if comp.cached_reflection is not None:
