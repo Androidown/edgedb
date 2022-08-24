@@ -119,6 +119,8 @@ DEF SERVER_HEADER_CAPABILITIES = 0x1001
 
 DEF ALL_CAPABILITIES = 0xFFFFFFFFFFFFFFFF
 
+timeit = util.GlobalWatch
+
 
 def parse_capabilities_header(value: bytes) -> uint64_t:
     if len(value) != 8:
@@ -990,27 +992,28 @@ cdef class EdgeConnection:
                     module
                 )
             else:
-                units, self.last_state = await compiler_pool.compile(
-                    _dbview.dbname,
-                    _dbview.get_user_schema(),
-                    _dbview.get_global_schema(),
-                    _dbview.reflection_cache,
-                    _dbview.get_database_config(),
-                    _dbview.get_compilation_system_config(),
-                    source,
-                    _dbview.get_modaliases(),
-                    _dbview.get_session_config(),
-                    FMT_SCRIPT,
-                    False,
-                    0,
-                    False,
-                    False,
-                    stmt_mode,
-                    self.protocol_version,
-                    True, # inline_objectids
-                    False,  # json_parameters
-                    module,
-                )
+                with timeit('compile from server view'):
+                    units, self.last_state = await compiler_pool.compile(
+                        _dbview.dbname,
+                        _dbview.get_user_schema(),
+                        _dbview.get_global_schema(),
+                        _dbview.reflection_cache,
+                        _dbview.get_database_config(),
+                        _dbview.get_compilation_system_config(),
+                        source,
+                        _dbview.get_modaliases(),
+                        _dbview.get_session_config(),
+                        FMT_SCRIPT,
+                        False,
+                        0,
+                        False,
+                        False,
+                        stmt_mode,
+                        self.protocol_version,
+                        True, # inline_objectids
+                        False,  # json_parameters
+                        module,
+                    )
         finally:
             metrics.edgeql_query_compilation_duration.observe(
                 time.monotonic() - started_at)
@@ -1143,7 +1146,8 @@ cdef class EdgeConnection:
             dbview.DatabaseConnectionView _dbview
             pgcon.PGConnection conn
 
-        units = await self._compile_script(eql, stmt_mode=stmt_mode, module=module)
+        with timeit('compile script'):
+            units = await self._compile_script(eql, stmt_mode=stmt_mode, module=module)
         metrics.edgeql_query_compilations.inc(1.0, 'compiler')
 
         if self._cancelled:
@@ -1158,9 +1162,11 @@ cdef class EdgeConnection:
 
         _dbview = self.get_dbview()
         if not _dbview.in_tx():
-            orig_state = state = _dbview.serialize_state()
+            with timeit('dbview serialize state'):
+                orig_state = state = _dbview.serialize_state()
 
-        conn = await self.get_pgcon()
+        with timeit('get pg connection'):
+            conn = await self.get_pgcon()
         try:
             if conn.last_state == state:
                 # the current status in conn is in sync with dbview, skip the
@@ -1186,21 +1192,24 @@ cdef class EdgeConnection:
                     else:
                         if query_unit.sql:
                             if query_unit.ddl_stmt_id:
-                                ddl_ret = await conn.run_ddl(query_unit, state)
+                                with timeit('run ddl'):
+                                    ddl_ret = await conn.run_ddl(query_unit, state)
                                 if ddl_ret and ddl_ret['new_types']:
                                     new_types = ddl_ret['new_types']
                             elif query_unit.is_transactional:
-                                await conn.simple_query(
-                                    b';'.join(query_unit.sql),
-                                    ignore_data=True,
-                                    state=state)
+                                with timeit('transactional ddl'):
+                                    await conn.simple_query(
+                                        b';'.join(query_unit.sql),
+                                        ignore_data=True,
+                                        state=state)
                             else:
                                 i = 0
                                 for sql in query_unit.sql:
-                                    await conn.simple_query(
-                                        sql,
-                                        ignore_data=True,
-                                        state=state if i == 0 else None)
+                                    with timeit('run query'):
+                                        await conn.simple_query(
+                                            sql,
+                                            ignore_data=True,
+                                            state=state if i == 0 else None)
                                     # only apply state to the first query.
                                     i += 1
                             if state is not None:
@@ -1231,17 +1240,18 @@ cdef class EdgeConnection:
                         await self.recover_current_tx_info(conn)
                     raise
                 else:
-                    side_effects = _dbview.on_success(
-                        query_unit, new_types)
-                    if side_effects:
-                        self.signal_side_effects(side_effects)
-                    if not _dbview.in_tx():
-                        state = _dbview.serialize_state()
-                        if state is not orig_state:
-                            # see the same comments in _execute()
-                            conn.last_state = state
-                        if side_effects & dbview.SideEffects.SchemaChanges:
-                            await self.update_compiler_user_schema(query_unit)
+                    with timeit('post operation on DDL success'):
+                        side_effects = _dbview.on_success(
+                            query_unit, new_types)
+                        if side_effects:
+                            self.signal_side_effects(side_effects)
+                        if not _dbview.in_tx():
+                            state = _dbview.serialize_state()
+                            if state is not orig_state:
+                                # see the same comments in _execute()
+                                conn.last_state = state
+                            if side_effects & dbview.SideEffects.SchemaChanges:
+                                await self.update_compiler_user_schema(query_unit)
         finally:
             self.maybe_release_pgcon(conn)
 
@@ -1967,86 +1977,87 @@ cdef class EdgeConnection:
                 flush_sync_on_error = False
 
                 try:
-                    if mtype == b'P':
-                        await self.parse()
+                    with timeit(f'message: {chr(mtype)}'):
+                        if mtype == b'P':
+                            await self.parse()
 
-                    elif mtype == b'p':
-                        await self.parse(modular=True)
+                        elif mtype == b'p':
+                            await self.parse(modular=True)
 
-                    elif mtype == b'G':
-                        await self.parse(read_only=True)
+                        elif mtype == b'G':
+                            await self.parse(read_only=True)
 
-                    elif mtype == b'g':
-                        await self.parse(modular=True, read_only=True)
+                        elif mtype == b'g':
+                            await self.parse(modular=True, read_only=True)
 
-                    elif mtype == b'D':
-                        if self.protocol_version >= (0, 14):
-                            raise errors.BinaryProtocolError(
-                                "Describe message (D) is not supported in "
-                                "protocols greater 0.13")
-                        await self.describe()
+                        elif mtype == b'D':
+                            if self.protocol_version >= (0, 14):
+                                raise errors.BinaryProtocolError(
+                                    "Describe message (D) is not supported in "
+                                    "protocols greater 0.13")
+                            await self.describe()
 
-                    elif mtype == b'E':
-                        await self.execute()
+                        elif mtype == b'E':
+                            await self.execute()
 
-                    elif mtype == b'O':
-                        await self.optimistic_execute()
+                        elif mtype == b'O':
+                            await self.optimistic_execute()
 
-                    elif mtype == b'o':
-                        await self.optimistic_execute(modular=True)
+                        elif mtype == b'o':
+                            await self.optimistic_execute(modular=True)
 
-                    elif mtype == b'J':
-                        await self.optimistic_execute(read_only=True)
+                        elif mtype == b'J':
+                            await self.optimistic_execute(read_only=True)
 
-                    elif mtype == b'j':
-                        await self.optimistic_execute(modular=True, read_only=True)
+                        elif mtype == b'j':
+                            await self.optimistic_execute(modular=True, read_only=True)
 
-                    elif mtype == b'F':
-                        await self.fast_query()
+                        elif mtype == b'F':
+                            await self.fast_query()
 
-                    elif mtype == b'f':
-                        await self.fast_query(modular=True)
+                        elif mtype == b'f':
+                            await self.fast_query(modular=True)
 
-                    elif mtype == b'B':
-                        await self.fast_query(read_only=True)
+                        elif mtype == b'B':
+                            await self.fast_query(read_only=True)
 
-                    elif mtype == b'b':
-                        await self.fast_query(modular=True, read_only=True)
+                        elif mtype == b'b':
+                            await self.fast_query(modular=True, read_only=True)
 
-                    elif mtype == b'Q':
-                        flush_sync_on_error = True
-                        await self.simple_query()
+                        elif mtype == b'Q':
+                            flush_sync_on_error = True
+                            await self.simple_query()
 
-                    elif mtype == b'q':
-                        flush_sync_on_error = True
-                        await self.simple_query(modular=True)
+                        elif mtype == b'q':
+                            flush_sync_on_error = True
+                            await self.simple_query(modular=True)
 
-                    elif mtype == b'A':
-                        flush_sync_on_error = True
-                        await self.simple_query(read_only=True)
+                        elif mtype == b'A':
+                            flush_sync_on_error = True
+                            await self.simple_query(read_only=True)
 
-                    elif mtype == b'a':
-                        flush_sync_on_error = True
-                        await self.simple_query(modular=True, read_only=True)
+                        elif mtype == b'a':
+                            flush_sync_on_error = True
+                            await self.simple_query(modular=True, read_only=True)
 
-                    elif mtype == b'S':
-                        await self.sync()
+                        elif mtype == b'S':
+                            await self.sync()
 
-                    elif mtype == b'X':
-                        self.close()
-                        break
+                        elif mtype == b'X':
+                            self.close()
+                            break
 
-                    elif mtype == b'>':
-                        await self.dump()
+                        elif mtype == b'>':
+                            await self.dump()
 
-                    elif mtype == b'<':
-                        # The restore protocol cannot send SYNC beforehand,
-                        # so if an error occurs the server should send an
-                        # ERROR message immediately.
-                        await self.restore()
+                        elif mtype == b'<':
+                            # The restore protocol cannot send SYNC beforehand,
+                            # so if an error occurs the server should send an
+                            # ERROR message immediately.
+                            await self.restore()
 
-                    else:
-                        self.fallthrough()
+                        else:
+                            self.fallthrough()
 
                 except ConnectionError:
                     raise

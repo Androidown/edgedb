@@ -67,6 +67,8 @@ LOG_FILE = os.path.join(PROJECT_ROOT, 'edb_compiler.log')
 # is less than NUM_SPAWNS_RESET_INTERVAL seconds.
 NUM_SPAWNS_RESET_INTERVAL = 1
 
+timeit = util.GlobalWatch
+
 
 def __init_worker__(
     init_args_pickled: bytes,
@@ -120,6 +122,7 @@ def __init_worker__(
     )
 
 
+@util.stopwatch()
 def __sync__(
     dbname: str,
     user_schema: Optional[bytes],
@@ -139,9 +142,12 @@ def __sync__(
             assert user_schema is not None
             assert reflection_cache is not None
             assert database_config is not None
-            user_schema_unpacked = pickle.loads(user_schema)
-            reflection_cache_unpacked = pickle.loads(reflection_cache)
-            database_config_unpacked = pickle.loads(database_config)
+            with timeit('load user_schema (new db)'):
+                user_schema_unpacked = pickle.loads(user_schema)
+            with timeit('load reflection_cache (new db)'):
+                reflection_cache_unpacked = pickle.loads(reflection_cache)
+            with timeit('load database_config (new db)'):
+                database_config_unpacked = pickle.loads(database_config)
             db = state.DatabaseState(
                 dbname,
                 user_schema_unpacked,
@@ -154,22 +160,28 @@ def __sync__(
             updates = {}
 
             if user_schema is not None:
-                updates['user_schema'] = user_schema_unpacked = pickle.loads(user_schema)
-                updates['user_schema_version'] = user_schema_unpacked.version_id
+                with timeit('load user_schema'):
+                    updates['user_schema'] = user_schema_unpacked = pickle.loads(user_schema)
+                    updates['user_schema_version'] = user_schema_unpacked.version_id
             if reflection_cache is not None:
-                updates['reflection_cache'] = pickle.loads(reflection_cache)
+                with timeit('load reflection_cache'):
+                    updates['reflection_cache'] = pickle.loads(reflection_cache)
             if database_config is not None:
-                updates['database_config'] = pickle.loads(database_config)
+                with timeit('load database_config'):
+                    updates['database_config'] = pickle.loads(database_config)
 
             if updates:
-                db = db._replace(**updates)
-                DBS = DBS.set(dbname, db)
+                with timeit('update db'):
+                    db = db._replace(**updates)
+                    DBS = DBS.set(dbname, db)
 
         if global_schema is not None:
-            GLOBAL_SCHEMA = pickle.loads(global_schema)
+            with timeit('load global_schema'):
+                GLOBAL_SCHEMA = pickle.loads(global_schema)
 
         if system_config is not None:
-            INSTANCE_CONFIG = pickle.loads(system_config)
+            with timeit('load system_config'):
+                INSTANCE_CONFIG = pickle.loads(system_config)
 
     except Exception as ex:
         raise state.FailedStateSync(
@@ -179,6 +191,7 @@ def __sync__(
         return db
 
 
+@util.stopwatch(name='compile in worker')
 def compile(
     dbname: str,
     user_schema: Optional[bytes],
@@ -213,11 +226,13 @@ def compile(
         LAST_STATE = cstate
         pickled_state = None
         if cstate is not None:
-            pickled_state = pickle.dumps(cstate, -1)
+            with timeit('dump cstate'):
+                pickled_state = pickle.dumps(cstate, -1)
 
         return units, pickled_state
 
 
+@util.stopwatch(name='apply user schema mutation')
 def apply_schema_mutation(
     dbname: str,
     schema_mutation: bytes,
@@ -243,6 +258,7 @@ def apply_schema_mutation(
         return False, None
 
 
+@util.stopwatch()
 def set_user_schema(
     dbname: str,
     schema: bytes,

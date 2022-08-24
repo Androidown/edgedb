@@ -248,8 +248,8 @@ class DummyStopwatch(Stopwatch):
         pass
 
 
-GlobalWatch = DummyStopwatch(unit='ms')
-# GlobalWatch = Stopwatch(unit='ms')
+# GlobalWatch = DummyStopwatch(unit='ms')
+GlobalWatch = Stopwatch(unit='ms')
 
 
 @contextlib.contextmanager
