@@ -531,7 +531,7 @@ class BasePool(amsg.ServerProtocol, asyncio.SubprocessProtocol):
         worker = await self._acquire_worker(condition=lambda w: w.get_pid() == pid)
         try:
             status, ver_id = await worker.call('apply_schema_mutation', dbname, mutation_pickled)
-            logger.debug(f"DB<{dbname}> user schema version updated to {ver_id}")
+            logger.info(f"DB<{dbname}> user schema version updated to {ver_id}, is success: {status}")
             if status is True:
                 self._update_user_schema_ver_id(worker, dbname, ver_id)
             return pid, status
@@ -542,6 +542,7 @@ class BasePool(amsg.ServerProtocol, asyncio.SubprocessProtocol):
         worker = await self._acquire_worker(condition=lambda w: w.get_pid() == pid)
         try:
             status, ver_id = await worker.call('set_user_schema', dbname, schema_pickled)
+            logger.info(f"DB<{dbname}> user schema version set to {ver_id}, is success: {status}")
             if status is True:
                 self._update_user_schema_ver_id(worker, dbname, ver_id)
             return pid, status
