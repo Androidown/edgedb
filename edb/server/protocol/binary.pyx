@@ -1166,7 +1166,7 @@ cdef class EdgeConnection:
                 # the current status in conn is in sync with dbview, skip the
                 # state restoring
                 state = None
-            for query_unit in units:
+            for qu_idx, query_unit in enumerate(units, 1):
                 if self._cancelled:
                     raise ConnectionAbortedError
 
@@ -1240,8 +1240,15 @@ cdef class EdgeConnection:
                         if state is not orig_state:
                             # see the same comments in _execute()
                             conn.last_state = state
-                        if side_effects & dbview.SideEffects.SchemaChanges:
-                            await self.update_compiler_user_schema(query_unit)
+                    if (
+                        side_effects & dbview.SideEffects.SchemaChanges
+                        and (
+                            (_dbview.in_tx() and qu_idx == len(query_unit)) 
+                            or not _dbview.in_tx()
+                        )
+                    ):
+                        await self.update_compiler_user_schema(query_unit)
+
         finally:
             self.maybe_release_pgcon(conn)
 
@@ -1774,9 +1781,14 @@ cdef class EdgeConnection:
                     #   2. The state is synced with dbview (orig_state is None)
                     #   3. We came out from a transaction (orig_state is None)
                     conn.last_state = state
-                if side_effects & dbview.SideEffects.SchemaChanges:
+                if (
+                    side_effects & dbview.SideEffects.SchemaChanges
+                    and (
+                        (_dbview.in_tx() and qu_idx == len(query_unit)) 
+                        or not _dbview.in_tx()
+                    )
+                ):
                     await self.update_compiler_user_schema(query_unit)
-
             self.write(self.make_command_complete_msg(query_unit))
         finally:
             self.maybe_release_pgcon(conn)
