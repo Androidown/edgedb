@@ -986,6 +986,13 @@ class Object(s_abc.Object, ObjectContainer, metaclass=ObjectMeta):
         compcoef=0.999,
     )
 
+    module_name = SchemaField(
+        str,
+        default='builtin',
+        coerce=True,
+        inheritable=False,
+    )
+
     _fields: Dict[str, SchemaField[Any]]
 
     def schema_reduce(self) -> Tuple[str, uuid.UUID]:

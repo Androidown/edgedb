@@ -160,6 +160,20 @@ def is_empty(ir: irast.Base) -> bool:
     )
 
 
+def is_empty_enhanced(ir: irast.Base) -> bool:
+    if isinstance(ir, irast.SelectStmt):
+        return is_empty_enhanced(ir.result)
+    return (
+        isinstance(ir, irast.EmptySet) or
+        (isinstance(ir, irast.Array) and not ir.elements) or
+        (
+            isinstance(ir, irast.Set)
+            and ir.expr is not None
+            and is_empty_enhanced(ir.expr)
+        )
+    )
+
+
 def is_subquery_set(ir_expr: irast.Base) -> bool:
     """Return True if the given *ir_expr* expression is a subquery."""
     return (

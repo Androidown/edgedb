@@ -60,6 +60,9 @@ CREATE ABSTRACT TYPE schema::Object EXTENDING std::BaseObject {
         SET default := false;
     };
     CREATE PROPERTY computed_fields -> array<std::str>;
+    CREATE PROPERTY module_name -> std::str {
+        SET default := 'builtin';
+    };
 
     CREATE ACCESS POLICY not_internal
         ALLOW SELECT USING (not .internal);

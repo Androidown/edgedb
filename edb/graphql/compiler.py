@@ -34,13 +34,15 @@ def _get_gqlcore(
     std_schema: s_schema.FlatSchema,
     user_schema: s_schema.FlatSchema,
     global_schema: s_schema.FlatSchema,
+    module: str = None
 ) -> graphql.GQLCoreSchema:
     return graphql.GQLCoreSchema(
         s_schema.ChainedSchema(
             std_schema,
             user_schema,
             global_schema
-        )
+        ),
+        module
     )
 
 
@@ -54,15 +56,18 @@ def compile_graphql(
     tokens: Optional[
         List[Tuple[gql_lexer.TokenKind, int, int, int, int, str]]],
     substitutions: Optional[Dict[str, Tuple[str, int, int]]],
-    operation_name: str=None,
-    variables: Optional[Mapping[str, object]]=None,
+    operation_name: str = None,
+    variables: Optional[Mapping[str, object]] = None,
+    query_only: bool = False,
+    module: str = None,
+    limit: int = 0
 ) -> graphql.TranspiledOperation:
     if tokens is None:
         ast = graphql.parse_text(gql)
     else:
         ast = graphql.parse_tokens(gql, tokens)
 
-    gqlcore = _get_gqlcore(std_schema, user_schema, global_schema)
+    gqlcore = _get_gqlcore(std_schema, user_schema, global_schema, module)
 
     return graphql.translate_ast(
         gqlcore,
@@ -70,4 +75,5 @@ def compile_graphql(
         variables=variables,
         substitutions=substitutions,
         operation_name=operation_name,
+        module=module
     )

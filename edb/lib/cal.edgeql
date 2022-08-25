@@ -2047,3 +2047,64 @@ CREATE FUNCTION std::contains(
        SELECT "haystack" @> ("needle"::date)
     $$;
 };
+
+
+CREATE FUNCTION
+cal::base(member: SET OF anytype) -> SET OF anytype {
+    SET volatility := 'Stable';
+    CREATE ANNOTATION std::description :=
+        "Find base node from member in a tree-like type,
+        i.e. have a self-referencing link named 'parent'.";
+    USING SQL EXPRESSION;
+};
+
+
+CREATE FUNCTION
+cal::ibase(member: SET OF anytype) -> SET OF anytype {
+    SET volatility := 'Stable';
+    CREATE ANNOTATION std::description :=
+        "Find base node and member itself from member in a tree-like type,
+        i.e. have a self-referencing link named 'parent'.";
+    USING SQL EXPRESSION;
+};
+
+
+CREATE FUNCTION
+cal::children(member: SET OF anytype) -> SET OF anytype {
+    SET volatility := 'Stable';
+    CREATE ANNOTATION std::description :=
+        "Find children of member in a tree-like type,
+        i.e. have a self-referencing link named 'parent'.
+        BTW, it is recommended to fecth children through a backlink to parent.";
+    USING SQL EXPRESSION;
+};
+
+
+CREATE FUNCTION
+cal::ichildren(member: SET OF anytype) -> SET OF anytype {
+    SET volatility := 'Stable';
+    CREATE ANNOTATION std::description :=
+        "Find children of member and member itself in a tree-like type,
+        i.e. have a self-referencing link named 'parent'.";
+    USING SQL EXPRESSION;
+};
+
+
+CREATE FUNCTION
+cal::descendant(member: SET OF anytype) -> SET OF anytype {
+    SET volatility := 'Stable';
+    CREATE ANNOTATION std::description :=
+        "Find descendant of member in a tree-like type,
+        i.e. have a self-referencing link named 'parent'.";
+    USING SQL EXPRESSION;
+};
+
+
+CREATE FUNCTION
+cal::idescendant(member: SET OF anytype) -> SET OF anytype {
+    SET volatility := 'Stable';
+    CREATE ANNOTATION std::description :=
+        "Find descendant of member and member itself in a tree-like type,
+        i.e. have a self-referencing link named 'parent'.";
+    USING SQL EXPRESSION;
+};

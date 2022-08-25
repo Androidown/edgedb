@@ -26,6 +26,7 @@ import http
 import re
 import ssl
 import urllib.parse
+import json
 
 import httptools
 
@@ -35,6 +36,7 @@ from edb.common import markup
 
 from edb.graphql import extension as graphql_ext
 
+from edb.edgeql.parser.grammar.keywords import unreserved_keywords, future_reserved_keywords, reserved_keywords
 from edb.server import args as srvargs
 from edb.server.protocol cimport binary
 from edb.server.protocol import binary
@@ -50,6 +52,7 @@ from . import server_info
 from . import notebook_ext
 from . import system_api
 from . import ui_ext
+from . import schema_info
 
 
 HTTPStatus = http.HTTPStatus
@@ -509,9 +512,6 @@ cdef class HttpProtocol:
                 if extname == 'edgeql':
                     extname = 'edgeql_http'
 
-                if extname not in db.extensions:
-                    return self._not_found(request, response)
-
                 args = path_parts[3:]
 
                 if extname == 'graphql':
@@ -524,6 +524,10 @@ cdef class HttpProtocol:
                     )
                 elif extname == 'edgeql_http':
                     await edgeql_ext.handle_request(
+                        request, response, db, args, self.server
+                    )
+                elif extname == 'schema_info':
+                    await schema_info.handle_request(
                         request, response, db, args, self.server
                     )
 
@@ -579,6 +583,33 @@ cdef class HttpProtocol:
                 path_parts[1:],
                 self.server,
             )
+        elif (path_parts == ['keywords'] and
+            request.method == b'GET'
+        ):
+            response.status = http.HTTPStatus.OK
+            response.content_type = b'application/json'
+            all_keywords = unreserved_keywords | future_reserved_keywords | reserved_keywords
+            response.body = json.dumps(list(all_keywords), default=str).encode()
+            response.close_connection = True
+
+        elif (path_parts == ['categorized-keywords'] and
+            request.method == b'GET'
+        ):
+            response.status = http.HTTPStatus.OK
+            response.content_type = b'application/json'
+            response.body = json.dumps({'unreserved': list(unreserved_keywords),
+                                        'future_reserved': list(future_reserved_keywords),
+                                        'reserved': list(reserved_keywords)
+                                        }, default=str).encode()
+            response.close_connection = True
+
+        elif path_parts[0] == 'introspect':
+            db = path_parts[1]
+            await self.server.introspect_db(db)
+            response.body = b'Done'
+            response.status = http.HTTPStatus.OK
+            response.close_connection = True
+
         else:
             return self._not_found(request, response)
 

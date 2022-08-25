@@ -330,7 +330,7 @@ class GQLCoreSchema:
 
     _type_map: Dict[Tuple[str, bool], GQLBaseType]
 
-    def __init__(self, edb_schema: s_schema.Schema) -> None:
+    def __init__(self, edb_schema: s_schema.Schema, module: str = None) -> None:
         '''Create a graphql schema based on edgedb schema.'''
 
         self.edb_schema = edb_schema
@@ -339,6 +339,7 @@ class GQLCoreSchema:
             m.get_name(self.edb_schema)
             for m in self.edb_schema.get_objects(type=s_mod.Module)
         } - HIDDEN_MODULES))
+        self.customized_module = module or None
 
         self._gql_interfaces = {}
         self._gql_objtypes_from_alias = {}
@@ -396,7 +397,7 @@ class GQLCoreSchema:
 
     def get_gql_name(self, name: s_name.QualName) -> str:
         module, shortname = name.module, name.name
-        if module in {'default', 'std'}:
+        if module in {'default', 'std'} and not (module == 'default' and self.customized_module is not None):
             if shortname.startswith('__'):
                 # Use '_edb' prefix to mark derived and otherwise
                 # internal types. We opt out of '__edb' because we
@@ -406,6 +407,8 @@ class GQLCoreSchema:
                 return '_edb' + shortname
             else:
                 return shortname
+        elif self.customized_module is not None and module == self.customized_module:
+            return shortname
         else:
             assert module != '', f'get_gl_name {name=}'
             return f'{module}__{shortname}'
@@ -1628,7 +1631,7 @@ class GQLBaseType(metaclass=GQLTypeMeta):
     def is_field_shadowed(self, name: str) -> bool:
         return name in self._shadow_fields
 
-    def get_field_type(self, name: str) -> Optional[GQLBaseType]:
+    def get_field_type(self, name: str, module: str = None) -> Optional[GQLBaseType]:
         if self.dummy:
             return None
 
@@ -1831,7 +1834,7 @@ class GQLBaseQuery(GQLBaseType):
 class GQLQuery(GQLBaseQuery):
     edb_type = s_name.QualName(module='__graphql__', name='Query')
 
-    def get_field_type(self, name: str) -> Optional[GQLBaseType]:
+    def get_field_type(self, name: str, module: str = None) -> Optional[GQLBaseType]:
         fkey = (name, self.dummy)
         target = None
 
@@ -1845,6 +1848,8 @@ class GQLQuery(GQLBaseQuery):
             target = super().get_field_type(name)
 
             if target is None:
+                if '__' not in name and module is not None:
+                    name = f"{module}__{name}"
                 module, edb_name = self.get_module_and_name(name)
                 edb_qname = s_name.QualName(module=module, name=edb_name)
                 edb_type = self.edb_schema.get(
@@ -1854,6 +1859,8 @@ class GQLQuery(GQLBaseQuery):
                 )
                 if edb_type is not None:
                     target = self.convert_edb_to_gql_type(edb_type)
+                else:
+                    raise AssertionError(f'Unresolved type: {module}::{edb_name}.')
 
         if target is not None:
             self._fields[fkey] = target
@@ -1864,7 +1871,7 @@ class GQLQuery(GQLBaseQuery):
 class GQLMutation(GQLBaseQuery):
     edb_type = s_name.QualName(module='__graphql__', name='Mutation')
 
-    def get_field_type(self, name: str) -> Optional[GQLBaseType]:
+    def get_field_type(self, name: str, module: str = None) -> Optional[GQLBaseType]:
         fkey = (name, self.dummy)
         target = None
 
@@ -1873,6 +1880,8 @@ class GQLMutation(GQLBaseQuery):
             target = super().get_field_type(name)
 
             if target is None:
+                if '__' not in name and module is not None:
+                    name = f"{module}__{name}"
                 module, edb_name = self.get_module_and_name(name)
                 edb_qname = s_name.QualName(module=module, name=edb_name)
                 edb_type = self.edb_schema.get(
@@ -1882,6 +1891,8 @@ class GQLMutation(GQLBaseQuery):
                 )
                 if edb_type is not None:
                     target = self.convert_edb_to_gql_type(edb_type)
+                else:
+                    raise AssertionError(f'Unresolved type: {module}::{edb_name}.')
 
         if target is not None:
             self._fields[fkey] = target

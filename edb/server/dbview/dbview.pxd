@@ -128,7 +128,6 @@ cdef class DatabaseConnectionView:
         tuple _session_state_db_cache
         tuple _session_state_cache
 
-
         object _eql_to_compiled
 
         object _txid
@@ -178,6 +177,7 @@ cdef class DatabaseConnectionView:
     cdef start_implicit(self, query_unit)
     cdef on_error(self)
     cdef on_success(self, query_unit, new_types)
+    cdef _on_success(self, query_unit, new_types)
     cdef commit_implicit_tx(
         self, user_schema, global_schema, cached_reflection
     )

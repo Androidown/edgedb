@@ -77,12 +77,15 @@ async def handle_request(
     list args,
     object server,
 ):
+    query_only = False
+
     if args == ['explore'] and request.method == b'GET':
         response.body = explore.EXPLORE_HTML
         response.content_type = b'text/html'
         return
-
-    if args != []:
+    if args == ['query']:
+        query_only = True
+    elif args != []:
         response.body = b'Unknown path'
         response.status = http.HTTPStatus.NOT_FOUND
         response.close_connection = True
@@ -92,6 +95,8 @@ async def handle_request(
     variables = None
     globals = None
     query = None
+    module = None
+    limit = 0
 
     try:
         if request.method == b'POST':
@@ -103,6 +108,8 @@ async def handle_request(
                 query = body.get('query')
                 operation_name = body.get('operationName')
                 variables = body.get('variables')
+                module = body.get('module')
+                limit = body.get('limit', 0)
                 globals = body.get('globals')
             elif request.content_type == 'application/graphql':
                 query = request.body.decode('utf-8')
@@ -139,6 +146,14 @@ async def handle_request(
                         raise TypeError(
                             '"globals" must be a JSON object')
 
+                module = qs.get('module')
+                if module is not None:
+                    module = module[0]
+
+                limit = qs.get('limit')
+                if limit is not None:
+                    limit = limit[0]
+
         else:
             raise TypeError('expected a GET or a POST request')
 
@@ -168,7 +183,10 @@ async def handle_request(
     response.content_type = b'application/json'
     try:
         result = await _execute(
-            db, server, query, operation_name, variables, globals)
+            db, server, query,
+            operation_name, variables, globals,
+            query_only, module or None, limit
+        )
     except Exception as ex:
         if debug.flags.server:
             markup.dump(ex)
@@ -201,6 +219,9 @@ async def compile(
     substitutions: Optional[Dict[str, Tuple[str, int, int]]],
     operation_name: Optional[str],
     variables: Dict[str, Any],
+    query_only: bool,
+    module: Optional[str],
+    limit: int,
 ):
     compiler_pool = server.get_compiler_pool()
     return await compiler_pool.compile_graphql(
@@ -215,10 +236,16 @@ async def compile(
         substitutions,
         operation_name,
         variables,
+        query_only,
+        module,
+        limit
     )
 
 
-async def _execute(db, server, query, operation_name, variables, globals):
+async def _execute(
+    db, server, query, operation_name, variables,
+    globals, query_only, module, limit
+):
     dbver = db.dbver
     query_cache = server._http_query_cache
 
@@ -267,7 +294,7 @@ async def _execute(db, server, query, operation_name, variables, globals):
             print(f'key_vars: {key_var_names}')
             print(f'variables: {vars}')
 
-    cache_key = ('graphql', prepared_query, key_vars, operation_name, dbver)
+    cache_key = ('graphql', prepared_query, key_vars, operation_name, dbver, module, limit)
     use_prep_stmt = False
 
     entry: CacheEntry = None
@@ -276,7 +303,7 @@ async def _execute(db, server, query, operation_name, variables, globals):
 
     if isinstance(entry, CacheRedirect):
         key_vars2 = tuple(vars[k] for k in entry.key_vars)
-        cache_key2 = (prepared_query, key_vars2, operation_name, dbver)
+        cache_key2 = (prepared_query, key_vars2, operation_name, dbver, module, limit)
         entry = query_cache.get(cache_key2, None)
 
     if entry is None:
@@ -289,6 +316,9 @@ async def _execute(db, server, query, operation_name, variables, globals):
                 rewritten.substitutions(),
                 operation_name,
                 vars,
+                query_only,
+                module,
+                limit
             )
         else:
             qug, gql_op = await compile(
@@ -299,6 +329,9 @@ async def _execute(db, server, query, operation_name, variables, globals):
                 None,
                 operation_name,
                 vars,
+                query_only,
+                module,
+                limit
             )
 
         key_var_set = set(key_var_names)
@@ -309,7 +342,7 @@ async def _execute(db, server, query, operation_name, variables, globals):
             query_cache[cache_key] = redir
             key_vars2 = tuple(vars[k] for k in key_var_names)
             cache_key2 = (
-                'graphql', prepared_query, key_vars2, operation_name, dbver
+                'graphql', prepared_query, key_vars2, operation_name, dbver, module, limit
             )
             query_cache[cache_key2] = qug, gql_op
         else:

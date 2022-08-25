@@ -19,6 +19,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import enum
 from typing import *
 
 import abc
@@ -27,9 +29,10 @@ import functools
 import itertools
 
 import immutables as immu
+from edb.errors import SchemaError
 
 from edb import errors
-from edb.common import english
+from edb.common import english, util
 
 from . import casts as s_casts
 from . import functions as s_func
@@ -40,6 +43,7 @@ from . import objects as so
 from . import operators as s_oper
 from . import pseudo as s_pseudo
 from . import types as s_types
+from . import version as s_ver
 
 if TYPE_CHECKING:
     import uuid
@@ -62,6 +66,10 @@ STD_MODULES = (
     sn.UnqualName('cal'),
 )
 
+BUILTIN_MODULES = STD_MODULES + (sn.UnqualName('builtin'), )
+
+STD_MODULES_STR = {'sys', 'schema', 'cal', 'math'}
+
 # Specifies the order of processing of files and directories in lib/
 STD_SOURCES = (
     sn.UnqualName('std'),
@@ -76,7 +84,196 @@ STD_SOURCES = (
 Schema_T = TypeVar('Schema_T', bound='Schema')
 
 
+class SC(int, enum.Enum):
+    """SchemaCategory"""
+    #: id to data
+    ITD = enum.auto()
+    #: id_to_type
+    ITT = enum.auto()
+    #: shortname_to_id
+    STI = enum.auto()
+    #: name_to_id
+    NTI = enum.auto()
+    #: globalname_to_id
+    GTI = enum.auto()
+    #: refs_to
+    RT = enum.auto()
+
+
+class SetOp:
+    __slots__ = ('key', 'value')
+
+    def __init__(self, key, value):
+        self.key = key
+        self.value = value
+
+    def apply(self, source: immu.MapMutation):
+        source[self.key] = self.value
+
+    def __repr__(self):
+        return f'<Set {self.key} => {self.value}>'
+
+
+class DelOp:
+    __slots__ = ('key', )
+
+    def __init__(self, key):
+        self.key = key
+
+    def apply(self, source: immu.MapMutation):
+        if self.key in source:
+            del source[self.key]
+
+    def __repr__(self):
+        return f'<Del {self.key}>'
+
+
+class RefSetOp(SetOp):
+    __slots__ = ()
+
+    def apply(self, source: Refs_T):
+        id_key, obj_key = self.key
+        if (refs := source.get(id_key)) is None:
+            refs = immu.Map({obj_key: immu.Map({self.value: None})})
+        elif (inner_map := refs.get(obj_key)) is None:
+            refs = refs.set(obj_key, immu.Map({self.value: None}))
+        else:
+            inner_map = inner_map.set(self.value, None)
+            refs = refs.set(obj_key, inner_map)
+
+        return source.set(id_key, refs)
+
+
+class RefDelOp(DelOp):
+    __slots__ = ()
+
+    def apply(self, source: Refs_T):
+        id_key, obj_key, inner_id = self.key
+        if id_key not in source:
+            return source
+
+        refs = source[id_key]
+        if obj_key not in refs:
+            return source
+
+        field_refs = refs[obj_key]
+        if inner_id not in field_refs:
+            return source
+
+        field_refs = field_refs.delete(inner_id)
+        if not field_refs:
+            refs = refs.delete(obj_key)
+        else:
+            refs = refs.set(obj_key, field_refs)
+        return source.set(id_key, refs)
+
+
+T_Ops = Union[SetOp, DelOp]
+
+
+class SchemaMutationLogger:
+    # __slots__ = ('ops', 'generation', 'id', 'parent')
+
+    def __init__(self):
+        self.ops: Dict[SC, List[T_Ops]] = collections.defaultdict(list)
+        self.generation = 0
+        self.id = None
+        self.parent: Optional[SchemaMutationLogger] = None
+
+    def set_parent(self, parent: SchemaMutationLogger):
+        self.parent = parent
+
+    def set_id(self, ver_id: uuid.UUID):
+        self.id = ver_id
+
+    def set_generation(self, n: int):
+        self.generation = n
+
+    def log_set(self, category: SC, key, value):
+        self.ops[category].append(SetOp(key, value))
+
+    def log_del(self, category: SC, key):
+        self.ops[category].append(DelOp(key))
+
+    def refs_log_set(self, key):
+        *key, value = key
+        self.ops[SC.RT].append(RefSetOp(key, value))
+
+    def refs_log_del(self, key):
+        self.ops[SC.RT].append(RefDelOp(key))
+
+    def _merge(self, other: SchemaMutationLogger):
+        for category, ops in other.ops.items():
+            self.ops[category].extend(ops)
+        return self
+
+    # noinspection PyProtectedMember
+    def apply(self, schema: FlatSchema) -> FlatSchema:
+        target_id = schema.version_id
+        if self.id != target_id:
+            raise ValueError(
+                f'Cannot apply schema mutaion to version: {target_id}, '
+                f'schema version is supposed to be: {self.id}')
+
+        ops = self.ops
+
+        replace_dict = dict(
+            name_to_id=None,
+            shortname_to_id=None,
+            globalname_to_id=None,
+            id_to_data=None,
+            refs_to=None,
+        )
+
+        for schema_data, category, key in [
+            (schema._id_to_data, SC.ITD, 'id_to_data'),
+            (schema._id_to_type, SC.ITT, 'id_to_type'),
+            (schema._globalname_to_id, SC.GTI, 'globalname_to_id'),
+            (schema._shortname_to_id, SC.STI, 'shortname_to_id'),
+            (schema._name_to_id, SC.NTI, 'name_to_id'),
+        ]:
+            if category in ops:
+                with schema_data.mutate() as mm:
+                    for op in ops[category]:
+                        op.apply(mm)
+                    replace_dict[key] = mm.finish()
+
+        if SC.RT in ops:
+            refs_to = schema._refs_to
+            for op in ops[SC.RT]:
+                refs_to = op.apply(refs_to)
+
+            replace_dict['refs_to'] = refs_to
+
+        new = schema._replace(**replace_dict)
+        new._generation = self.generation
+        new.refresh_mutation_logger()
+        return new
+
+    def reduce(self) -> SchemaMutationLogger:
+        parent = self.parent
+        mut_history: Deque[SchemaMutationLogger] = collections.deque()
+
+        while parent is not None:
+            mut_history.appendleft(parent)
+            parent = parent.parent
+
+        if not mut_history:
+            return self
+
+        mut_history.append(self)
+
+        mut = functools.reduce(lambda x, y: x._merge(y), mut_history)
+        mut.id = mut_history[0].id
+        mut.generation = self.generation
+        mut.parent = None
+        return mut
+
+
 class Schema(abc.ABC):
+    @abc.abstractmethod
+    def reset_mutation(self: Schema_T) -> Schema_T:
+        raise NotImplementedError
 
     @abc.abstractmethod
     def add_raw(
@@ -468,7 +665,7 @@ class Schema(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def get_last_migration(self) -> Optional[s_migrations.Migration]:
+    def get_last_migration(self, module: str = None) -> Optional[s_migrations.Migration]:
         raise NotImplementedError
 
 
@@ -487,6 +684,8 @@ class FlatSchema(Schema):
     ]
     _refs_to: Refs_T
     _generation: int
+    _mut_next: SchemaMutationLogger
+    _mut: SchemaMutationLogger
 
     def __init__(self) -> None:
         self._id_to_data = immu.Map()
@@ -496,6 +695,24 @@ class FlatSchema(Schema):
         self._globalname_to_id = immu.Map()
         self._refs_to = immu.Map()
         self._generation = 0
+        self._mut_next = SchemaMutationLogger()
+        self._mut = SchemaMutationLogger()
+
+    @functools.cached_property
+    def version_id(self):
+        return self.get_global(s_ver.SchemaVersion, '__schema_version__').get_version(self)
+
+    def refresh_mutation_logger(self):
+        self.reset_mutation()
+        self._mut.set_id(self.version_id)
+
+    def reset_mutation(self: Schema_T) -> Schema_T:
+        self._mut = SchemaMutationLogger()
+        self._mut_next = SchemaMutationLogger()
+        return self
+
+    def get_mutation_logger(self):
+        return self._mut.reduce()
 
     def _replace(
         self,
@@ -546,8 +763,12 @@ class FlatSchema(Schema):
         else:
             new._refs_to = refs_to
 
+        new._mut_next = SchemaMutationLogger()
+        new._mut = self._mut_next
         new._generation = self._generation + 1
-
+        new._mut.set_parent(self._mut)
+        new._mut.set_generation(new._generation)
+        self._mut_next = SchemaMutationLogger()  # reset mut_next
         return new
 
     def _update_obj_name(
@@ -571,8 +792,10 @@ class FlatSchema(Schema):
         if old_name is not None:
             if is_global:
                 globalname_to_id = globalname_to_id.delete((sclass, old_name))
+                self._mut_next.log_del(SC.GTI, (sclass, old_name))
             else:
                 name_to_id = name_to_id.delete(old_name)
+                self._mut_next.log_del(SC.NTI, old_name)
             if has_sn_cache:
                 old_shortname = sn.shortname_from_fullname(old_name)
                 sn_key = (sclass, old_shortname)
@@ -580,8 +803,10 @@ class FlatSchema(Schema):
                 new_ids = shortname_to_id[sn_key] - {obj_id}
                 if new_ids:
                     shortname_to_id = shortname_to_id.set(sn_key, new_ids)
+                    self._mut_next.log_set(SC.STI, sn_key, new_ids)
                 else:
                     shortname_to_id = shortname_to_id.delete(sn_key)
+                    self._mut_next.log_del(SC.STI, sn_key)
 
         if new_name is not None:
             if is_global:
@@ -593,6 +818,7 @@ class FlatSchema(Schema):
                     raise errors.SchemaError(
                         f'{vn} already exists')
                 globalname_to_id = globalname_to_id.set(key, obj_id)
+                self._mut_next.log_set(SC.GTI, key, obj_id)
             else:
                 assert isinstance(new_name, sn.QualName)
                 if (
@@ -609,6 +835,7 @@ class FlatSchema(Schema):
                     raise errors.SchemaError(
                         f'{vn} already exists')
                 name_to_id = name_to_id.set(new_name, obj_id)
+                self._mut_next.log_set(SC.NTI, new_name, obj_id)
 
             if has_sn_cache:
                 new_shortname = sn.shortname_from_fullname(new_name)
@@ -619,7 +846,9 @@ class FlatSchema(Schema):
                 except KeyError:
                     ids = frozenset()
 
-                shortname_to_id = shortname_to_id.set(sn_key, ids | {obj_id})
+                new_id = ids | {obj_id}
+                shortname_to_id = shortname_to_id.set(sn_key, new_id)
+                self._mut_next.log_set(SC.STI, sn_key, new_id)
 
         return name_to_id, shortname_to_id, globalname_to_id
 
@@ -681,6 +910,7 @@ class FlatSchema(Schema):
             data[findex] = value
 
         id_to_data = self._id_to_data.set(obj_id, tuple(data))
+        self._mut_next.log_set(SC.ITD, obj_id, tuple(data))
         refs_to = self._update_refs_to(obj_id, sclass, orig_refs, new_refs)
 
         return self._replace(name_to_id=name_to_id,
@@ -744,6 +974,7 @@ class FlatSchema(Schema):
         new_data = tuple(data_list)
 
         id_to_data = self._id_to_data.set(obj_id, new_data)
+        self._mut_next.log_set(SC.ITD, obj_id, new_data)
 
         if not is_object_ref:
             refs_to = None
@@ -806,6 +1037,7 @@ class FlatSchema(Schema):
         new_data = tuple(data_list)
 
         id_to_data = self._id_to_data.set(obj_id, new_data)
+        self._mut_next.log_set(SC.ITD, obj_id, new_data)
         is_object_ref = field in sclass.get_object_reference_fields()
 
         if not is_object_ref:
@@ -882,6 +1114,8 @@ class FlatSchema(Schema):
                                 field_refs = field_refs.set(object_id, None)
                             mm[ref_id] = refs.set(key, field_refs)
 
+                        self._mut_next.refs_log_set((ref_id, key, object_id))
+
                 if old_ids:
                     for ref_id in old_ids:
                         refs = mm[ref_id]
@@ -890,6 +1124,8 @@ class FlatSchema(Schema):
                             mm[ref_id] = refs.delete(key)
                         else:
                             mm[ref_id] = refs.set(key, field_refs)
+
+                        self._mut_next.refs_log_del((ref_id, key, object_id))
 
             result = mm.finish()
 
@@ -938,6 +1174,8 @@ class FlatSchema(Schema):
             globalname_to_id=globalname_to_id,
             refs_to=refs_to,
         )
+        self._mut_next.log_set(SC.ITD, id, data)
+        self._mut_next.log_set(SC.ITT, id, sclass.__name__)
 
         if (
             issubclass(sclass, so.QualifiedObject)
@@ -1011,6 +1249,8 @@ class FlatSchema(Schema):
             id_to_type=self._id_to_type.delete(obj.id),
             refs_to=refs_to,
         ))
+        self._mut_next.log_del(SC.ITD, obj.id)
+        self._mut_next.log_del(SC.ITT, obj.id)
 
         return self._replace(**updates)  # type: ignore
 
@@ -1122,7 +1362,7 @@ class FlatSchema(Schema):
                 type=s_oper.Operator,
             )
 
-    @functools.lru_cache()
+    @util.simple_lru(weakref_pos=0)
     def _get_casts(
         self,
         stype: s_types.Type,
@@ -1178,7 +1418,7 @@ class FlatSchema(Schema):
         return self._get_referrers(
             scls, scls_type=scls_type, field_name=field_name)
 
-    @functools.lru_cache()
+    @util.simple_lru(weakref_pos=0)
     def _get_referrers(
         self,
         scls: so.Object,
@@ -1216,7 +1456,7 @@ class FlatSchema(Schema):
 
             return frozenset(referrers)  # type: ignore
 
-    @functools.lru_cache()
+    @util.simple_lru(weakref_pos=0)
     def get_referrers_ex(
         self,
         scls: so.Object,
@@ -1420,7 +1660,7 @@ class FlatSchema(Schema):
                 modules.append(self.get_by_id(objid, type=s_mod.Module))
         return tuple(modules)
 
-    def get_last_migration(self) -> Optional[s_migrations.Migration]:
+    def get_last_migration(self, module: str = None) -> Optional[s_migrations.Migration]:
         return _get_last_migration(self)
 
     def __repr__(self) -> str:
@@ -1526,6 +1766,12 @@ class ChainedSchema(Schema):
         self._base_schema = base_schema
         self._top_schema = top_schema
         self._global_schema = global_schema
+
+    def reset_mutation(self: ChainedSchema) -> ChainedSchema:
+        self._base_schema.reset_mutation()
+        self._top_schema.reset_mutation()
+        self._global_schema.reset_mutation()
+        return self
 
     def get_top_schema(self) -> FlatSchema:
         return self._top_schema
@@ -1937,14 +2183,14 @@ class ChainedSchema(Schema):
             + self._top_schema.get_modules()
         )
 
-    def get_last_migration(self) -> Optional[s_migrations.Migration]:
+    def get_last_migration(self, module: str = None) -> Optional[s_migrations.Migration]:
         migration = self._top_schema.get_last_migration()
         if migration is None:
             migration = self._base_schema.get_last_migration()
         return migration
 
 
-@functools.lru_cache()
+@util.simple_lru(weakref_key='schema', weakref_pos=0)
 def _get_functions(
     schema: FlatSchema,
     name: sn.Name,
@@ -1958,7 +2204,7 @@ def _get_functions(
     )
 
 
-@functools.lru_cache()
+@util.simple_lru(weakref_key='schema', weakref_pos=0)
 def _get_operators(
     schema: FlatSchema,
     name: sn.Name,
@@ -1972,7 +2218,7 @@ def _get_operators(
         )
 
 
-@functools.lru_cache()
+@util.simple_lru(weakref_pos=0)
 def _get_last_migration(
     schema: FlatSchema,
 ) -> Optional[s_migrations.Migration]:
@@ -2012,3 +2258,11 @@ def _get_last_migration(
         latest = children[0]
 
     return latest
+
+
+def merge_schema(
+    schema_list: Iterable[FlatSchema]
+) -> FlatSchema:
+    return functools.reduce(lambda x, y: x.merge(y), schema_list)
+
+

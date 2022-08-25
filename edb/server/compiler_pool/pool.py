@@ -36,12 +36,14 @@ import immutables
 
 from edb.common import debug
 from edb.common import taskgroup
+from edb.common import util
 
 from edb.pgsql import params as pgparams
 
 from edb.server import args as srvargs
 from edb.server import defines
 from edb.server import metrics
+from edb.schema import schema as s_schema
 
 from . import amsg
 from . import queue
@@ -65,9 +67,10 @@ _ENV = os.environ.copy()
 _ENV['PYTHONPATH'] = ':'.join(sys.path)
 
 
-@functools.lru_cache()
+@util.simple_lru(weakref_key='schema', weakref_pos=0)
 def _pickle_memoized(schema):
-    return pickle.dumps(schema, -1)
+    with util.disable_gc():
+        return pickle.dumps(schema, -1)
 
 
 class BaseWorker:
@@ -202,6 +205,7 @@ class AbstractPool:
                 state.DatabaseState(
                     name=db.name,
                     user_schema=db.user_schema,
+                    user_schema_version=db.user_schema.version_id,
                     reflection_cache=db.reflection_cache,
                     database_config=db.db_config,
                 )
@@ -263,6 +267,7 @@ class AbstractPool:
                 worker._dbs = worker._dbs.set(dbname, state.DatabaseState(
                     name=dbname,
                     user_schema=user_schema,
+                    user_schema_version=user_schema.version_id,
                     reflection_cache=reflection_cache,
                     database_config=database_config,
                 ))
@@ -274,10 +279,11 @@ class AbstractPool:
                     or reflection_cache is not None
                     or database_config is not None
                 ):
+                    actual_user_schema = user_schema or worker_db.user_schema
                     worker._dbs = worker._dbs.set(dbname, state.DatabaseState(
                         name=dbname,
-                        user_schema=(
-                            user_schema or worker_db.user_schema),
+                        user_schema=actual_user_schema,
+                        user_schema_version=actual_user_schema.version_id,
                         reflection_cache=(
                             reflection_cache or worker_db.reflection_cache),
                         database_config=(
@@ -289,7 +295,7 @@ class AbstractPool:
                 if system_config is not None:
                     worker._system_config = system_config
 
-        worker_db = worker._dbs.get(dbname)
+        worker_db: state.DatabaseState = worker._dbs.get(dbname)
         preargs = (dbname,)
         to_update = {}
 
@@ -309,7 +315,11 @@ class AbstractPool:
                 'system_config': system_config,
             }
         else:
-            if worker_db.user_schema is not user_schema:
+            if worker_db.user_schema_version != user_schema.version_id:
+                logger.warning(
+                    f"Stored schema version: {worker_db.user_schema_version} "
+                    f"is not consistent with server schema version: {user_schema.version_id}"
+                )
                 preargs += (
                     _pickle_memoized(user_schema),
                 )
@@ -366,6 +376,125 @@ class AbstractPool:
 
     def _release_worker(self, worker, *, put_in_front: bool = True):
         raise NotImplementedError
+
+    @staticmethod
+    def _update_user_schema_ver_id(worker, dbname, ver_id):
+        db_states: state.DatabaseState = worker._dbs.get(dbname)
+        db_states = db_states._replace(user_schema_version=ver_id)
+        worker._dbs = worker._dbs.set(dbname, db_states)
+
+    async def _apply_user_schema_mutation(self, pid, dbname, mutation_pickled):
+        worker = await self._acquire_worker(condition=lambda w: w.get_pid() == pid)
+        try:
+            status, ver_id = await worker.call('apply_schema_mutation', dbname, mutation_pickled)
+            logger.debug(f"DB<{dbname}> user schema version updated to {ver_id}")
+            if status is True:
+                self._update_user_schema_ver_id(worker, dbname, ver_id)
+            return pid, status
+        finally:
+            self._release_worker(worker)
+
+    async def _apply_schema_full_update(self, pid, dbname, schema_pickled):
+        worker = await self._acquire_worker(condition=lambda w: w.get_pid() == pid)
+        try:
+            status, ver_id = await worker.call('set_user_schema', dbname, schema_pickled)
+            if status is True:
+                self._update_user_schema_ver_id(worker, dbname, ver_id)
+            return pid, status
+        finally:
+            self._release_worker(worker)
+
+    async def _init_worker_db(
+        self,
+        pid,
+        dbname: str,
+        user_schema,
+        reflection_cache,
+        global_schema,
+        database_config,
+        system_config,
+    ):
+        worker = await self._acquire_worker(condition=lambda w: w.get_pid() == pid)
+        try:
+            await worker.call(
+                '__sync__',
+                dbname,
+                _pickle_memoized(user_schema),
+                _pickle_memoized(reflection_cache),
+                _pickle_memoized(global_schema),
+                _pickle_memoized(database_config),
+                _pickle_memoized(system_config),
+                False
+            )
+            worker._dbs = worker._dbs.set(dbname, state.DatabaseState(
+                name=dbname,
+                user_schema=user_schema,
+                user_schema_version=user_schema.version_id,
+                reflection_cache=reflection_cache,
+                database_config=database_config,
+            ))
+        finally:
+            self._release_worker(worker)
+
+    async def apply_user_schema_mutation_for_all(
+        self,
+        dbname,
+        mutation,
+        user_schema,
+        global_schema,
+        reflection_cache,
+        database_config,
+        system_config,
+    ):
+        mutation_tasks = []
+        db_init_pids = []
+        full_schema_replace_pids = []
+
+        # -----------------------------------------------------------------------------
+        # general mutation update
+        for pid, worker in self._workers.items():
+            if dbname not in worker._dbs:
+                db_init_pids.append(pid)
+            elif mutation is not None:
+                mutation_tasks.append(
+                    self._apply_user_schema_mutation(pid, dbname, mutation))
+            else:
+                full_schema_replace_pids.append(pid)
+
+        result = await asyncio.gather(*mutation_tasks)
+
+        full_schema_replace_pids.extend(pid for pid, succeed in result if not succeed)
+        # -----------------------------------------------------------------------------
+        # full user_schema update
+        if full_schema_replace_pids:
+            full_schema_replace_tasks = []
+            schema_pickled = _pickle_memoized(user_schema)
+            for pid in full_schema_replace_pids:
+                full_schema_replace_tasks.append(
+                    self._apply_schema_full_update(pid, dbname, schema_pickled))
+
+            result = await asyncio.gather(*full_schema_replace_tasks)
+
+            for pid, succeed in result:
+                if not succeed:
+                    db_init_pids.append(pid)
+
+        # -----------------------------------------------------------------------------
+        # new db initialization
+        if db_init_pids:
+            db_init_tasks = []
+            db_init_args = (
+                dbname,
+                user_schema,
+                reflection_cache,
+                global_schema,
+                database_config,
+                system_config,
+            )
+            for pid in db_init_pids:
+                db_init_tasks.append(self._init_worker_db(pid, *db_init_args))
+
+            await asyncio.gather(*db_init_tasks)
 
     async def compile(
         self,
@@ -835,6 +964,233 @@ class FixedPool(BaseLocalPool):
         if trans is not None:
             trans.terminate()
             await trans._wait()
+
+
+class DebugWorker:
+    _dbs: state.DatabasesState = None
+    _backend_runtime_params: pgparams.BackendRuntimeParams = None
+    _std_schema: s_schema.FlatSchema = None
+    _global_schema: s_schema.FlatSchema = None
+    _refl_schema: s_schema.FlatSchema = None
+    _system_config = None
+    _schema_class_layout = None
+    _last_pickled_state = None
+    connected = False
+
+    async def call(self, method_name, *args, sync_state=None):
+        from . import worker
+
+        method = getattr(worker, method_name)
+        r = method(*args)
+        if sync_state is not None:
+            sync_state()
+        return r
+
+
+@srvargs.CompilerPoolMode.Solo.assign_implementation
+class SoloPool(BasePool):
+    _worker = DebugWorker()
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        from . import worker
+        self.cworker = worker
+
+    @functools.lru_cache(maxsize=None)
+    def _get_init_args(self):
+        dbs: state.DatabasesState = immutables.Map()
+        for db in self._dbindex.iter_dbs():
+            dbs = dbs.set(
+                db.name,
+                state.DatabaseState(
+                    name=db.name,
+                    user_schema=db.user_schema,
+                    user_schema_version=db.user_schema.version_id,
+                    reflection_cache=db.reflection_cache,
+                    database_config=db.db_config,
+                )
+            )
+        self._worker._dbs = dbs
+        self._worker._backend_runtime_params = self._backend_runtime_params
+        self._worker._std_schema = self._std_schema
+        self._worker._global_schema = self._dbindex.get_global_schema()
+        self._worker._refl_schema = self._refl_schema
+        self._worker._schema_class_layout = self._schema_class_layout
+        self._worker._system_config = self._dbindex.get_compilation_system_config()
+        init_args = (
+            dbs,
+            self._backend_runtime_params,
+            self._std_schema,
+            self._refl_schema,
+            self._schema_class_layout,
+            self._dbindex.get_global_schema(),
+            self._dbindex.get_compilation_system_config(),
+        )
+        return pickle.dumps(init_args, -1)
+
+    def worker_connected(self, pid, version):
+        self.cworker.__init_worker__(self._get_init_args())
+        self._worker.connected = True
+        metrics.compiler_process_spawns.inc()
+        metrics.current_compiler_processes.inc()
+        self._workers[pid] = self._worker
+
+    def worker_disconnected(self, pid):
+        self._worker.connected = False
+        metrics.current_compiler_processes.dec()
+
+    def get_template_pid(self):
+        return None
+
+    async def _acquire_worker(self, *, condition=None):
+        return self._worker
+
+    def _release_worker(self, worker):
+        return
+
+    async def start(self):
+        if self._running is not None:
+            raise RuntimeError(
+                'the compiler pool has already been started once')
+        self._running = True
+        if not self._worker.connected:
+            self.worker_connected(os.getpid(), 'debug')
+
+    async def _start(self):
+        pass
+
+    async def _stop(self):
+        pass
+
+    async def stop(self):
+        if not self._running:
+            return
+        self._running = False
+        if self._worker.connected:
+            self.worker_disconnected(os.getpid())
+
+    async def compile(
+        self,
+        dbname,
+        user_schema,
+        global_schema,
+        reflection_cache,
+        database_config,
+        system_config,
+        *compile_args
+    ):
+        preargs, sync_state = self._compute_compile_preargs(
+            self._worker,
+            dbname,
+            user_schema,
+            global_schema,
+            reflection_cache,
+            database_config,
+            system_config,
+        )
+        units, state_ = self.cworker.compile(*preargs, *compile_args)
+        if sync_state is not None:
+            sync_state()
+        self._worker._last_pickled_state = state_
+
+        return units, state_
+
+    async def compile_in_tx(self, txid, pickled_state, *compile_args):
+        # When we compile a query, the compiler returns a tuple:
+        # a QueryUnit and the state the compiler is in if it's in a
+        # transaction.  The state contains the information about all savepoints
+        # and transient schema changes, so the next time we need to
+        # compile a new query in this transaction the state is needed
+        # to be passed to the next compiler compiling it.
+        #
+        # The compile state can be quite heavy and contain multiple versions
+        # of schema, configs, and other session-related data. So the compiler
+        # worker pickles it before sending it to the IO process, and the
+        # IO process doesn't need to ever unpickle it.
+        #
+        # There's one crucial optimization we do here though. We try to
+        # find the compiler process that we used before, that already has
+        # this state unpickled. If we can find it, it means that the
+        # compiler process won't have to waste time unpickling the state.
+        #
+        # We use "is" in `w._last_pickled_state is pickled_state` deliberately,
+        # because `pickled_state` is saved on the Worker instance and
+        # stored in edgecon; we never modify it, so `is` is sufficient and
+        # is faster than `==`.
+        _worker = self._worker
+        if _worker._last_pickled_state is pickled_state:
+            # Since we know that this particular worker already has the
+            # state, we don't want to waste resources transferring the
+            # state over the network. So we replace the state with a marker,
+            # that the compiler process will recognize.
+            pickled_state = state.REUSE_LAST_STATE_MARKER
+
+        units, new_pickled_state = self.cworker.compile_in_tx(pickled_state, txid, *compile_args)
+        self._worker._last_pickled_state = new_pickled_state
+        return units, new_pickled_state
+
+    async def compile_notebook(
+        self,
+        dbname,
+        user_schema,
+        global_schema,
+        reflection_cache,
+        database_config,
+        system_config,
+        *compile_args
+    ):
+        preargs, sync_state = self._compute_compile_preargs(
+            self._worker,
+            dbname,
+            user_schema,
+            global_schema,
+            reflection_cache,
+            database_config,
+            system_config,
+        )
+        return self.cworker.compile_notebook(*preargs, *compile_args)
+
+    async def try_compile_rollback(
+        self,
+        *compile_args,
+        **compile_kwargs,
+    ):
+        return self.cworker.try_compile_rollback(*compile_args, **compile_kwargs)
+
+    async def compile_graphql(
+        self,
+        dbname,
+        user_schema,
+        global_schema,
+        reflection_cache,
+        database_config,
+        system_config,
+        *compile_args
+    ):
+        preargs, sync_state = self._compute_compile_preargs(
+            self._worker,
+            dbname,
+            user_schema,
+            global_schema,
+            reflection_cache,
+            database_config,
+            system_config,
+        )
+        return self.cworker.compile_graphql(*preargs, *compile_args)
+
+    async def describe_database_dump(
+        self,
+        *args,
+        **kwargs
+    ):
+        return self.cworker.COMPILER.describe_database_dump(*args, **kwargs)
+
+    async def describe_database_restore(
+        self,
+        *args,
+        **kwargs
+    ):
+        return self.cworker.COMPILER.describe_database_restore(*args, **kwargs)
 
 
 @srvargs.CompilerPoolMode.OnDemand.assign_implementation

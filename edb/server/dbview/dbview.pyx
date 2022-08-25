@@ -31,13 +31,16 @@ import typing
 import weakref
 
 import immutables
+import logging
 
 from edb import errors
-from edb.common import lru, uuidgen
 from edb import edgeql
+from edb.common import lru, uuidgen, util
 from edb.edgeql import qltypes
 from edb.schema import extensions as s_ext
 from edb.schema import schema as s_schema
+from edb.schema import version as s_ver
+from edb.schema import name as sn
 from edb.server import compiler, defines, config, metrics
 from edb.server.compiler import dbstate, sertypes
 from edb.pgsql import dbops
@@ -55,6 +58,8 @@ cdef INT32_PACKER = struct.Struct('!l').pack
 
 cdef int VER_COUNTER = 0
 cdef DICTDEFAULT = (None, None)
+
+cdef object logger = logging.getLogger('edb.server')
 
 
 cdef next_dbver():
@@ -479,8 +484,9 @@ cdef class DatabaseConnectionView:
     def get_user_schema(self):
         if self._in_tx:
             if self._in_tx_user_schema_pickled:
-                self._in_tx_user_schema = pickle.loads(
-                    self._in_tx_user_schema_pickled)
+                with util.disable_gc():
+                    self._in_tx_user_schema = pickle.loads(
+                        self._in_tx_user_schema_pickled)
                 self._in_tx_user_schema_pickled = None
             return self._in_tx_user_schema
         else:
@@ -489,8 +495,9 @@ cdef class DatabaseConnectionView:
     def get_global_schema(self):
         if self._in_tx:
             if self._in_tx_global_schema_pickled:
-                self._in_tx_global_schema = pickle.loads(
-                    self._in_tx_global_schema_pickled)
+                with util.disable_gc():
+                    self._in_tx_global_schema = pickle.loads(
+                        self._in_tx_global_schema_pickled)
                 self._in_tx_global_schema_pickled = None
             return self._in_tx_global_schema
         else:
@@ -794,6 +801,10 @@ cdef class DatabaseConnectionView:
         self.tx_error()
 
     cdef on_success(self, query_unit, new_types):
+        with util.disable_gc():
+            return self._on_success(query_unit, new_types)
+
+    cdef _on_success(self, query_unit, new_types):
         side_effects = 0
 
         if query_unit.tx_savepoint_rollback:
@@ -804,11 +815,11 @@ cdef class DatabaseConnectionView:
         if not self._in_tx:
             if new_types:
                 self._db._update_backend_ids(new_types)
-            if query_unit.user_schema is not None:
+            if query_unit.user_schema_mut_log is not None:
                 self._in_tx_dbver = next_dbver()
                 self._state_serializer = None
                 self._db._set_and_signal_new_user_schema(
-                    pickle.loads(query_unit.user_schema),
+                    query_unit.update_user_schema(self._db.user_schema),
                     pickle.loads(query_unit.cached_reflection)
                         if query_unit.cached_reflection is not None
                         else None

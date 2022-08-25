@@ -1214,6 +1214,8 @@ class CommandContext:
         ] = None,
         backend_runtime_params: Optional[Any] = None,
         compat_ver: Optional[verutils.Version] = None,
+        module: Optional[str] = None,
+        module_is_implicit: Optional[bool] = False,
     ) -> None:
         self.stack: List[CommandContextToken[Command]] = []
         self._cache: Dict[Hashable, Any] = {}
@@ -1240,6 +1242,8 @@ class CommandContext:
             List[Tuple[Command, AlterObject[so.Object], List[str]]],
         ] = collections.defaultdict(list)
         self.compat_ver = compat_ver
+        self.module = module
+        self.module_is_implicit = module_is_implicit
 
     @property
     def modaliases(self) -> Mapping[Optional[str], str]:
@@ -2882,6 +2886,17 @@ class CreateObject(ObjectCommand[so.Object_T], Generic[so.Object_T]):
 
         props = self.get_resolved_attributes(schema, context)
         metaclass = self.get_schema_metaclass()
+
+        if 'module_name' not in props:
+            classsname = self.classname
+
+            if isinstance(classsname, sn.QualName):
+                modulename = classsname.module
+            else:
+                modulename = 'builtin'
+            self.set_attribute_value('module_name', modulename)
+            props['module_name'] = modulename
+
         schema, self.scls = metaclass.create_in_schema(schema, **props)
 
         if not props.get('id'):

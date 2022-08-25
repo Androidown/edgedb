@@ -34,6 +34,7 @@ from edb.edgeql.compiler import astutils as ql_astutils
 
 from edb.schema import name as s_name
 from edb.schema import pointers as s_pointers
+from edb.schema import properties as s_props
 from edb.schema import scalars as s_scalars
 from edb.schema import utils as s_utils
 from edb.schema import types as s_types
@@ -160,11 +161,46 @@ class ConstraintMech:
             exprdata=exprdata, is_multicol=is_multicol, is_trivial=is_trivial)
 
     @classmethod
+    def schema_idconstr_to_backedn_idconstr(
+        cls, subject, origin_subject, constraint, schema
+    ):
+        expr_data = {
+            'exprdata': {'plain': 'id', 'plain_chunks': ['id'], 'new': 'NEW.id', 'old': 'OLD.id'},
+            'is_multicol': False,
+            'is_trivial': True
+        }
+        subject_db_name = common.get_backend_name(
+            schema, subject.get_source(schema), catenate=False)
+        origin_subject_db_name = common.get_backend_name(
+            schema, origin_subject.get_source(schema), catenate=False)
+        pg_constr_data = {
+            'expressions': [expr_data],
+            'origin_expressions': [expr_data],
+            'table_type': 'ObjectType',
+            'scope': 'relation',
+            'type': 'unique',
+            "subject_db_name": subject_db_name,
+            "origin_subject_db_name": origin_subject_db_name,
+        }
+        return SchemaTableConstraint(
+            subject=subject, constraint=constraint,
+            pg_constr_data=pg_constr_data,
+            schema=schema
+        )
+
+    @classmethod
     def schema_constraint_to_backend_constraint(
             cls, subject, constraint, schema, context, source_context):
         assert constraint.get_subject(schema) is not None
 
         constraint_origins = constraint.get_constraint_origins(schema)
+
+        if (
+            isinstance(subject, s_props.Property)
+            and subject.get_displayname(schema) == 'id'
+        ):
+            return cls.schema_idconstr_to_backedn_idconstr(
+                subject, origin_subject, constraint, schema)
 
         singletons = frozenset({subject})
 

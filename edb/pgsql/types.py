@@ -34,6 +34,7 @@ from edb.schema import name as sn
 from edb.schema import objects as s_obj
 from edb.schema import schema as s_schema
 from edb.schema import types as s_types
+from edb.common.util import simple_lru
 
 from . import common
 
@@ -313,6 +314,13 @@ def pg_type_from_ir_typeref(
 
 
 class _PointerStorageInfo:
+    __slots__ = (
+        'table_name',
+        'table_type',
+        'column_name',
+        'column_type',
+    )
+
     @classmethod
     def _source_table_info(cls, schema, pointer):
         table = common.get_backend_name(
@@ -434,7 +442,7 @@ class _PointerStorageInfo:
                 self.table_type, self.column_name, self.column_type, id(self))
 
 
-@functools.lru_cache()
+@simple_lru(maxsize=5000, weakref_key='schema')
 def get_pointer_storage_info(
         pointer, *, schema, source=None, resolve_type=True,
         link_bias=False):
@@ -555,6 +563,10 @@ def _get_ptrref_storage_info(
             table_type = 'link'
 
         elif not link_bias and not allow_missing:
+            if ptrref.union_components:
+                # ptrref is a combination of multi and single links
+                return None
+
             raise RuntimeError(
                 f'cannot determine backend storage parameters for the '
                 f'{ptrref.name} pointer: unexpected characteristics')

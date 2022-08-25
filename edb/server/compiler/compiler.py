@@ -40,6 +40,7 @@ from edb.pgsql import compiler as pg_compiler
 from edb import edgeql
 from edb.common import debug
 from edb.common import verutils
+from edb.common import util
 from edb.common import uuidgen
 from edb.common import ast
 
@@ -109,6 +110,7 @@ class CompileContext:
     json_parameters: bool = False
     schema_reflection_mode: bool = False
     implicit_limit: int = 0
+    force_implicit_limit: bool = False
     inline_typeids: bool = False
     inline_typenames: bool = False
     inline_objectids: bool = True
@@ -120,6 +122,10 @@ class CompileContext:
     bootstrap_mode: bool = False
     internal_schema_mode: bool = False
     log_ddl_as_migrations: bool = True
+    # if only the user_schema under a specific module is provided,
+    # this var will be the module name. None means all modules are provided.
+    module: Optional[str] = None
+    module_is_implicit: Optional[bool] = False
 
 
 DEFAULT_MODULE_ALIASES_MAP = immutables.Map(
@@ -338,6 +344,7 @@ class Compiler:
         context.backend_runtime_params = self._backend_runtime_params
         context.allow_dml_in_functions = (
             self.get_config_val(ctx, 'allow_dml_in_functions'))
+        context.module = ctx.module
         return context
 
     def _process_delta(self, ctx: CompileContext, delta):
@@ -842,6 +849,28 @@ class Compiler:
                     ),
                     context=stmt.context,
                 )
+
+            if ctx.module is None:
+                ctx_props = dict(**ctx.__dict__)
+                ctx_props['module_is_implicit'] = True
+
+                if isinstance(stmt, qlast.NamedDDL):
+                    if (stmt_name := stmt.name) is not None:
+                        raw_ddl_module = stmt_name.module
+                        ddl_module = current_tx.get_modaliases().get(raw_ddl_module, raw_ddl_module)
+                        ctx_props['module'] = ddl_module
+                ctx = CompileContext(**ctx_props)
+            else:
+                if isinstance(stmt, qlast.ModuleCommand):
+                    raise errors.QueryError("Module command is not allowed in seperated schema.")
+                elif isinstance(stmt, qlast.NamedDDL):
+                    raw_ddl_module = stmt.name.module
+                    ddl_module = current_tx.get_modaliases().get(raw_ddl_module, raw_ddl_module)
+                    if ddl_module != ctx.module:
+                        raise errors.QueryError(
+                            f"DDL command of {ddl_module!r} module is not allowed in "
+                            f"current ({ctx.module!r}) schema.")
+
             cm = qlast.CreateMigration(
                 body=qlast.NestedQLBlock(
                     commands=[stmt],
@@ -858,6 +887,8 @@ class Compiler:
                 self.get_config_val(ctx, 'allow_dml_in_functions')),
             schema_object_ids=ctx.schema_object_ids,
             compat_ver=ctx.compat_ver,
+            module=ctx.module,
+            module_is_implicit=ctx.module_is_implicit
         )
 
         if debug.flags.delta_plan_input:
@@ -1723,6 +1754,7 @@ class Compiler:
         *,
         ctx: CompileContext,
         source: edgeql.Source,
+        send_mutation: bool = True
     ) -> dbstate.QueryUnitGroup:
         current_tx = ctx.state.current_tx()
         if current_tx.get_migration_state() is not None:
@@ -1732,10 +1764,10 @@ class Compiler:
                 source=original,
                 implicit_limit=0,
             )
-            return self._try_compile(ctx=ctx, source=original)
+            return self._try_compile(ctx=ctx, source=original, send_mutation=send_mutation)
 
         try:
-            return self._try_compile(ctx=ctx, source=source)
+            return self._try_compile(ctx=ctx, source=source, send_mutation=send_mutation)
         except errors.EdgeQLSyntaxError as original_err:
             if isinstance(source, edgeql.NormalizedSource):
                 # try non-normalized source
@@ -1758,6 +1790,7 @@ class Compiler:
         *,
         ctx: CompileContext,
         source: edgeql.Source,
+        send_mutation: bool = True
     ) -> dbstate.QueryUnitGroup:
 
         default_cardinality = enums.Cardinality.NO_RESULT
@@ -1867,7 +1900,12 @@ class Compiler:
                 unit.has_role_ddl = comp.has_role_ddl
                 unit.ddl_stmt_id = comp.ddl_stmt_id
                 if comp.user_schema is not None:
-                    unit.user_schema = pickle.dumps(comp.user_schema, -1)
+                    if send_mutation:
+                        unit.user_schema_mut_log = \
+                            pickle.dumps(comp.user_schema.get_mutation_logger(), -1)
+                        comp.user_schema.refresh_mutation_logger()
+                    else:
+                        unit.user_schema = pickle.dumps(comp.user_schema, -1)
                 if comp.cached_reflection is not None:
                     unit.cached_reflection = \
                         pickle.dumps(comp.cached_reflection, -1)
@@ -1880,7 +1918,12 @@ class Compiler:
                 unit.sql = comp.sql
                 unit.cacheable = comp.cacheable
                 if comp.user_schema is not None:
-                    unit.user_schema = pickle.dumps(comp.user_schema, -1)
+                    if send_mutation:
+                        unit.user_schema_mut_log = \
+                            pickle.dumps(comp.user_schema.get_mutation_logger(), -1)
+                        comp.user_schema.refresh_mutation_logger()
+                    else:
+                        unit.user_schema = pickle.dumps(comp.user_schema, -1)
                 if comp.cached_reflection is not None:
                     unit.cached_reflection = \
                         pickle.dumps(comp.cached_reflection, -1)
@@ -1909,7 +1952,12 @@ class Compiler:
                 unit.sql = comp.sql
                 unit.cacheable = comp.cacheable
                 if comp.user_schema is not None:
-                    unit.user_schema = pickle.dumps(comp.user_schema, -1)
+                    if send_mutation:
+                        unit.user_schema_mut_log = \
+                            pickle.dumps(comp.user_schema.get_mutation_logger(), -1)
+                        comp.user_schema.refresh_mutation_logger()
+                    else:
+                        unit.user_schema = pickle.dumps(comp.user_schema, -1)
                 if comp.cached_reflection is not None:
                     unit.cached_reflection = \
                         pickle.dumps(comp.cached_reflection, -1)
@@ -2162,6 +2210,7 @@ class Compiler:
         protocol_version: Tuple[int, int],
         inline_objectids: bool = True,
         json_parameters: bool = False,
+        module: Optional[str] = None,
     ) -> Tuple[dbstate.QueryUnitGroup,
                Optional[dbstate.CompilerConnectionState]]:
 
@@ -2176,6 +2225,9 @@ class Compiler:
 
         if sess_modaliases is None:
             sess_modaliases = DEFAULT_MODULE_ALIASES_MAP
+
+        if module is not None:
+            sess_modaliases = sess_modaliases.set(None, module)
 
         assert isinstance(sess_modaliases, immutables.Map)
         assert isinstance(sess_config, immutables.Map)
@@ -2202,6 +2254,7 @@ class Compiler:
             json_parameters=json_parameters,
             source=source,
             protocol_version=protocol_version,
+            module=module
         )
 
         unit_group = self._compile(ctx=ctx, source=source)
@@ -2231,6 +2284,7 @@ class Compiler:
         inline_objectids: bool = True,
         json_parameters: bool = False,
         expect_rollback: bool = False,
+        module: Optional[str] = None,
     ) -> Tuple[dbstate.QueryUnitGroup, dbstate.CompilerConnectionState]:
         if (
             expect_rollback and
@@ -2258,9 +2312,10 @@ class Compiler:
             protocol_version=protocol_version,
             json_parameters=json_parameters,
             expect_rollback=expect_rollback,
+            module=module
         )
 
-        return self._compile(ctx=ctx, source=source), ctx.state
+        return self._compile(ctx=ctx, source=source, send_mutation=False), ctx.state
 
     def describe_database_dump(
         self,

@@ -23,6 +23,7 @@ from typing import *  # NoQA
 import pickle
 
 import immutables
+from loguru import logger
 
 from edb import edgeql
 from edb import graphql
@@ -31,6 +32,7 @@ from edb.schema import schema as s_schema
 from edb.server import compiler
 from edb.server import config
 from edb.server import defines
+from edb.common import util
 
 from . import state
 from . import worker_proc
@@ -45,6 +47,8 @@ LAST_STATE: Optional[compiler.dbstate.CompilerConnectionState] = None
 STD_SCHEMA: s_schema.FlatSchema
 GLOBAL_SCHEMA: s_schema.FlatSchema
 INSTANCE_CONFIG: immutables.Map[str, config.SettingValue]
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+LOG_FILE = os.path.join(PROJECT_ROOT, 'edb_compiler.log')
 
 
 def __init_worker__(
@@ -82,6 +86,22 @@ def __init_worker__(
         std_schema, refl_schema, schema_class_layout,
     )
 
+    # -----------------------------------------------------------------------------
+    # setup loguru logger
+    logger.remove()
+    logger.configure(
+        handlers=[{
+            "level": 'INFO',
+            "sink": LOG_FILE,
+            "format": "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
+                      "<yellow>{process}</yellow> | "
+                      "<level>{level: <8}</level> | "
+                      "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan>"
+                      " - "
+                      "<level>{message}</level>",
+        }],
+    )
+
 
 def __sync__(
     dbname: str,
@@ -90,6 +110,7 @@ def __sync__(
     global_schema: Optional[bytes],
     database_config: Optional[bytes],
     system_config: Optional[bytes],
+    need_return: bool = True
 ) -> state.DatabaseState:
     global DBS
     global GLOBAL_SCHEMA
@@ -107,6 +128,7 @@ def __sync__(
             db = state.DatabaseState(
                 dbname,
                 user_schema_unpacked,
+                user_schema_unpacked.version_id,
                 reflection_cache_unpacked,
                 database_config_unpacked,
             )
@@ -115,7 +137,8 @@ def __sync__(
             updates = {}
 
             if user_schema is not None:
-                updates['user_schema'] = pickle.loads(user_schema)
+                updates['user_schema'] = user_schema_unpacked = pickle.loads(user_schema)
+                updates['user_schema_version'] = user_schema_unpacked.version_id
             if reflection_cache is not None:
                 updates['reflection_cache'] = pickle.loads(reflection_cache)
             if database_config is not None:
@@ -135,7 +158,8 @@ def __sync__(
         raise state.FailedStateSync(
             f'failed to sync worker state: {type(ex).__name__}({ex})') from ex
 
-    return db
+    if need_return:
+        return db
 
 
 def compile(
@@ -148,32 +172,76 @@ def compile(
     *compile_args: Any,
     **compile_kwargs: Any,
 ):
-    db = __sync__(
-        dbname,
-        user_schema,
-        reflection_cache,
-        global_schema,
-        database_config,
-        system_config,
-    )
+    with util.disable_gc():
+        db = __sync__(
+            dbname,
+            user_schema,
+            reflection_cache,
+            global_schema,
+            database_config,
+            system_config,
+        )
 
-    units, cstate = COMPILER.compile(
-        db.user_schema,
-        GLOBAL_SCHEMA,
-        db.reflection_cache,
-        db.database_config,
-        INSTANCE_CONFIG,
-        *compile_args,
-        **compile_kwargs
-    )
+        units, cstate = COMPILER.compile(
+            db.user_schema,
+            GLOBAL_SCHEMA,
+            db.reflection_cache,
+            db.database_config,
+            INSTANCE_CONFIG,
+            *compile_args,
+            **compile_kwargs
+        )
 
-    global LAST_STATE
-    LAST_STATE = cstate
-    pickled_state = None
-    if cstate is not None:
-        pickled_state = pickle.dumps(cstate, -1)
+        global LAST_STATE
+        LAST_STATE = cstate
+        pickled_state = None
+        if cstate is not None:
+            pickled_state = pickle.dumps(cstate, -1)
 
-    return units, pickled_state
+        return units, pickled_state
+
+
+def apply_schema_mutation(
+    dbname: str,
+    schema_mutation: bytes,
+):
+    global DBS
+
+    db = DBS.get(dbname)
+    if db is None:
+        return False, None
+
+    base_user_schema = db.user_schema
+
+    with util.disable_gc():
+        mutation: s_schema.SchemaMutationLogger = pickle.loads(schema_mutation)
+
+    try:
+        user_schema = mutation.apply(base_user_schema)
+        db = db._replace(user_schema=user_schema)
+        DBS = DBS.set(dbname, db)
+        return True, user_schema.version_id
+    except Exception:  # noqa
+        logger.exception('')
+        return False, None
+
+
+def set_user_schema(
+    dbname: str,
+    schema: bytes,
+):
+    global DBS
+
+    db = DBS.get(dbname)
+    if db is None:
+        return False, None
+
+    with util.disable_gc():
+        user_schema: s_schema.FlatSchema = pickle.loads(schema)
+
+    db = db._replace(user_schema=user_schema)
+    DBS = DBS.set(dbname, db)
+    return True, user_schema.version_id
 
 
 def compile_in_tx(cstate, *args, **kwargs):
@@ -298,6 +366,12 @@ def get_handler(methname):
             meth = compile_graphql
         elif methname == "try_compile_rollback":
             meth = try_compile_rollback
+        elif methname == 'set_user_schema':
+            meth = set_user_schema
+        elif methname == 'apply_schema_mutation':
+            meth = apply_schema_mutation
+        elif methname == '__sync__':
+            meth = __sync__
         else:
             meth = getattr(COMPILER, methname)
     return meth

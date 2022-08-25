@@ -18,6 +18,8 @@
 
 
 from __future__ import annotations
+
+import pickle
 from typing import *  # NoQA
 
 import dataclasses
@@ -282,14 +284,15 @@ class QueryUnit:
     # Set only when this unit contains a CONFIGURE command which
     # alters a backend configuration setting.
     backend_config: bool = False
-    config_ops: List[config.Operation] = (
-        dataclasses.field(default_factory=list))
+    config_ops: List[config.Operation] = dataclasses.field(default_factory=list)
     modaliases: Optional[immutables.Map] = None
 
     # If present, represents the future schema state after
     # the command is run. The schema is pickled.
     user_schema: Optional[bytes] = None
     cached_reflection: Optional[bytes] = None
+    # The pickled user_shema mutation log, aim to replace user_schema
+    user_schema_mut_log: Optional[bytes] = None
 
     # If present, represents the future global schema state
     # after the command is run. The schema is pickled.
@@ -299,6 +302,12 @@ class QueryUnit:
     def has_ddl(self) -> bool:
         return bool(self.capabilities & enums.Capability.DDL)
 
+    def update_user_schema(self, base_schema: s_schema.FlatSchema):
+        if self.user_schema_mut_log is not None:
+            mut: s_schema.SchemaMutationLogger = pickle.loads(self.user_schema_mut_log)
+            return mut.apply(base_schema)
+        else:
+            return base_schema
     @property
     def tx_control(self) -> bool:
         return (

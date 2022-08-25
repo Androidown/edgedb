@@ -407,7 +407,7 @@ async def _store_static_json_cache(
     await _execute(ctx.conn, text)
 
 
-def _process_delta(ctx, delta, schema):
+def _process_delta(ctx, delta, schema, stdmode=True):
     """Adapt and process the delta command."""
 
     if debug.flags.delta_plan:
@@ -423,7 +423,7 @@ def _process_delta(ctx, delta, schema):
 
     delta = delta_cmds.CommandMeta.adapt(delta)
     context = sd.CommandContext(
-        stdmode=True,
+        stdmode=stdmode,
         backend_runtime_params=ctx.cluster.get_runtime_params(),
     )
     schema = sd.apply(delta, schema=schema, context=context)
@@ -482,6 +482,8 @@ class StdlibBits(NamedTuple):
     classlayout: Dict[Type[s_obj.Object], s_refl.SchemaTypeLayout]
     #: Schema introspection SQL query.
     local_intro_query: str
+    #: Condtioned schema introspection SQL query.
+    conditioned_local_intro_query: str
     #: Global object introspection SQL query.
     global_intro_query: str
 
@@ -612,6 +614,7 @@ async def _make_stdlib(
     # that is much harder for Postgres to plan as opposed to a
     # straight flat UNION.
     sql_intro_local_parts = []
+    c_sql_intro_local_parts = []
     sql_intro_global_parts = []
     for intropart in reflection.local_intro_parts:
         sql_intro_local_parts.append(
@@ -631,9 +634,31 @@ async def _make_stdlib(
             ),
         )
 
+    compilerctx = edbcompiler.new_compiler_context(
+        user_schema=reflschema.get_top_schema(),
+        global_schema=schema.get_global_schema(),
+        schema_reflection_mode=True,
+        output_format=edbcompiler.IoFormat.JSON_ELEMENTS,
+        single_statement=True
+    )
+    for intropart in reflection.conditioned_local_intro_parts:
+        c_sql_intro_local_parts.append(
+            compile_single_query(
+                intropart,
+                compiler=compiler,
+                compilerctx=compilerctx,
+            ),
+        )
+
     local_intro_sql = ' UNION ALL '.join(sql_intro_local_parts)
     local_intro_sql = f'''
         WITH intro(c) AS ({local_intro_sql})
+        SELECT json_agg(intro.c) FROM intro
+    '''
+
+    c_local_intro_sql = ' UNION ALL '.join(c_sql_intro_local_parts)
+    c_local_intro_sql = f'''
+        WITH intro(c) AS ({c_local_intro_sql})
         SELECT json_agg(intro.c) FROM intro
     '''
 
@@ -644,13 +669,14 @@ async def _make_stdlib(
     '''
 
     return StdlibBits(
-        stdschema=schema.get_top_schema(),
-        reflschema=reflschema.get_top_schema(),
-        global_schema=schema.get_global_schema(),
+        stdschema=schema.get_top_schema().reset_mutation(),
+        reflschema=reflschema.get_top_schema().reset_mutation(),
+        global_schema=schema.get_global_schema().reset_mutation(),
         sqltext=sqltext,
         types=types,
         classlayout=reflection.class_layout,
         local_intro_query=local_intro_sql,
+        conditioned_local_intro_query=c_local_intro_sql,
         global_intro_query=global_intro_sql,
     )
 
@@ -703,7 +729,13 @@ async def _amend_stdlib(
 
     sqltext = topblock.to_string()
 
-    return stdlib._replace(stdschema=schema, reflschema=reflschema), sqltext
+    return (
+        stdlib._replace(
+            stdschema=schema.reset_mutation(),
+            reflschema=reflschema.reset_mutation()
+        ),
+        sqltext
+    )
 
 
 async def _init_stdlib(
@@ -874,6 +906,7 @@ async def _init_stdlib(
         t = schema.get_by_id(uuidgen.UUID(entry['id']))
         schema = t.set_field_value(
             schema, 'backend_id', entry['backend_id'])
+        schema.reset_mutation()
 
     stdlib = stdlib._replace(stdschema=schema)
 
@@ -905,6 +938,12 @@ async def _init_stdlib(
         ctx,
         'local_intro_query',
         stdlib.local_intro_query,
+    )
+
+    await _store_static_text_cache(
+        ctx,
+        'cond_local_intro_query',
+        stdlib.conditioned_local_intro_query,
     )
 
     await _store_static_text_cache(

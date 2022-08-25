@@ -584,6 +584,8 @@ def delta_from_ddl(
         Mapping[Tuple[sn.Name, Optional[str]], uuid.UUID]
     ]=None,
     compat_ver: Optional[verutils.Version] = None,
+    module: Optional[str] = None,
+    module_is_implicit: Optional[bool] = False,
 ) -> sd.DeltaRoot:
     _, cmd = _delta_from_ddl(
         ddl_stmt,
@@ -594,8 +596,32 @@ def delta_from_ddl(
         allow_dml_in_functions=allow_dml_in_functions,
         schema_object_ids=schema_object_ids,
         compat_ver=compat_ver,
+        module=module,
+        module_is_implicit=module_is_implicit,
     )
     return cmd
+
+
+def _log_schema_version_change(
+    ddl_stmt: qlast.DDL,
+    version_name,
+    version_id,
+    ori_version_id
+):
+    from loguru import logger
+    from contextlib import redirect_stdout
+    from io import StringIO
+
+    dumpio = StringIO()
+
+    with redirect_stdout(dumpio):
+        ddl_stmt.dump_edgeql()
+
+    logger.info(
+        f"{version_name} change from "
+        f"<{ori_version_id}> to {version_id}. "
+        f"excute ddl: {dumpio.getvalue()}"
+    )
 
 
 def _delta_from_ddl(
@@ -611,6 +637,8 @@ def _delta_from_ddl(
         Mapping[Tuple[sn.Name, Optional[str]], uuid.UUID]
     ]=None,
     compat_ver: Optional[verutils.Version] = None,
+    module: Optional[str] = None,
+    module_is_implicit: Optional[bool] = False,
 ) -> Tuple[s_schema.Schema, sd.DeltaRoot]:
     delta = sd.DeltaRoot()
     context = sd.CommandContext(
@@ -622,6 +650,8 @@ def _delta_from_ddl(
         allow_dml_in_functions=allow_dml_in_functions,
         schema_object_ids=schema_object_ids,
         compat_ver=compat_ver,
+        module=module,
+        module_is_implicit=module_is_implicit,
     )
 
     with context(sd.DeltaRootContext(schema=schema, op=delta)):

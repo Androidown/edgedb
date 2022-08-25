@@ -109,6 +109,7 @@ BUILD_DEPS = [
     CYTHON_DEPENDENCY,
     'packaging>=21.0',
     'setuptools-rust~=0.12.1',
+    'python-dateutil~=2.8.2',
     'wheel',  # needed by PyYAML and immutables, refs pypa/pip#5865
 ] + COMMON_DEPS
 
@@ -176,11 +177,14 @@ def _compile_build_meta(build_lib, version, pg_config, runstate_dir,
         vertuple[4] = tuple(version_suffix.split('.'))
     vertuple = tuple(vertuple)
 
-    pg_config_path = pathlib.Path(pg_config)
-    if not pg_config_path.is_absolute():
-        pg_config_path = f"_ROOT / {str(pg_config_path)!r}"
+    if pg_config:
+        pg_config_path = pathlib.Path(pg_config)
+        if not pg_config_path.is_absolute():
+            pg_config_path = f"_ROOT / {str(pg_config_path)!r}"
+        else:
+            pg_config_path = repr(str(pg_config_path))
     else:
-        pg_config_path = repr(str(pg_config_path))
+        pg_config_path = "None"
 
     if runstate_dir:
         runstate_dir_path = pathlib.Path(runstate_dir)
@@ -191,11 +195,14 @@ def _compile_build_meta(build_lib, version, pg_config, runstate_dir,
     else:
         runstate_dir_path = "None  # default to <data-dir>"
 
-    shared_dir_path = pathlib.Path(shared_dir)
-    if not shared_dir_path.is_absolute():
-        shared_dir_path = f"_ROOT / {str(shared_dir_path)!r}"
+    if shared_dir:
+        shared_dir_path = pathlib.Path(shared_dir)
+        if not shared_dir_path.is_absolute():
+            shared_dir_path = f"_ROOT / {str(shared_dir_path)!r}"
+        else:
+            shared_dir_path = repr(str(shared_dir_path))
     else:
-        shared_dir_path = repr(str(shared_dir_path))
+        shared_dir_path = "None"
 
     content = textwrap.dedent('''\
         #
@@ -950,7 +957,7 @@ def _version():
 setuptools.setup(
     version=_version(),
     setup_requires=BUILD_DEPS,
-    python_requires='>=3.10.0',
+    python_requires='>=3.9.0',
     name='edgedb-server',
     description='EdgeDB Server',
     author='MagicStack Inc.',

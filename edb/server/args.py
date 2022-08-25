@@ -140,6 +140,7 @@ class CompilerPoolMode(enum.StrEnum):
     Default = "default"
     Fixed = "fixed"
     OnDemand = "on_demand"
+    Solo = "solo"
     Remote = "remote"
 
     def __init__(self, name):

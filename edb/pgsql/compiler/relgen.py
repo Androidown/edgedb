@@ -28,7 +28,7 @@ import contextlib
 from edb import errors
 
 from edb.edgeql import qltypes
-
+from edb.common import util as common_util
 from edb.schema import objects as s_obj
 
 from edb.ir import ast as irast
@@ -378,6 +378,10 @@ def _get_set_rvar(
                 # Generic std::range() constructor
                 rvars = process_set_as_std_range(ir_set, stmt, ctx=ctx)
 
+            elif common_util.is_dim_function(fname):
+                rvars = process_set_as_traverse_function(
+                    ir_set, stmt, ctx=ctx, function_name=str(expr.func_shortname))
+
             elif any(
                 pm is qltypes.TypeModifier.SetOfType
                 for pm in expr.params_typemods
@@ -445,9 +449,9 @@ def ensure_source_rvar(
         stmt, ir_set.path_id, aspect='source', ctx=ctx)
     if rvar is None:
         get_set_rvar(ir_set, ctx=ctx)
+        rvar = relctx.maybe_get_path_rvar(
+            stmt, ir_set.path_id, aspect='source', ctx=ctx)
 
-    rvar = relctx.maybe_get_path_rvar(
-        stmt, ir_set.path_id, aspect='source', ctx=ctx)
     if rvar is None:
         scope_stmt = relctx.maybe_get_scope_stmt(ir_set.path_id, ctx=ctx)
         if scope_stmt is None:
@@ -3567,3 +3571,321 @@ def process_set_as_array_expr(
         stmt, ir_set.path_id, set_expr, env=ctx.env)
 
     return new_stmt_set_rvar(ir_set, stmt, ctx=ctx)
+
+
+def _get_cte_source_table(
+    source: irast.Set,
+    parent_link: irast.Set,
+    *,
+    ctx: context.CompilerContextLevel
+) -> Tuple[pgast.BaseRangeVar, pgast.ColumnRef, pgast.ColumnRef]:
+    if parent_link.rptr.ptrref.out_cardinality.is_single():
+        # store in source
+        src_table = relctx.new_root_rvar(source, ctx=ctx)
+        ptrref = parent_link.rptr.ptrref
+        if ptrref.material_ptr is not None:
+            ptrref = ptrref.material_ptr
+
+        parent_colref = astutils.get_column(src_table, str(ptrref.id))
+        id_colref = astutils.get_column(src_table, 'id')
+    else:
+        main_table = relctx.new_root_rvar(source, ctx=ctx)
+        link_table = relctx.new_pointer_rvar(parent_link.rptr, src_rvar=main_table, ctx=ctx)
+        src_table_name = ctx.env.aliases.get('cte-src-joined')
+        join = pgast.JoinExpr(
+            type='LEFT',
+            larg=main_table,
+            rarg=link_table,
+            quals=astutils.join_condition(
+                lref=astutils.get_column(main_table, colspec='id'),
+                rref=astutils.get_column(link_table, colspec='source'),
+            ),
+            parenthesis=True
+        )
+        src_table = pgast.RangeSubselect(
+            subquery=join,
+            alias=pgast.Alias(aliasname=src_table_name)
+        )
+        parent_colref = pgast.ColumnRef(name=[src_table_name, 'target'])
+        id_colref = pgast.ColumnRef(name=[src_table_name, 'id'])
+    return src_table, parent_colref, id_colref
+
+
+def _process_set_as_root_traverse_function(
+    ir_set: irast.Set,
+    stmt: pgast.SelectStmt,
+    *,
+    ctx: context.CompilerContextLevel,
+    function_name: str
+) -> SetRVars:
+    expr = ir_set.expr
+    assert isinstance(expr, irast.FunctionCall)
+
+    with ctx.subrel() as subctx:
+        src_table, parent_col, id_col = _get_cte_source_table(
+            source=expr.args[0].expr,
+            parent_link=expr.args[1].expr,
+            ctx=subctx
+        )
+        stmt.from_clause.append(src_table)
+
+    if function_name in ('cal::base', 'cal::ibase'):
+        sub_src_table, sub_parent_col, sub_id_col = _get_cte_source_table(
+            source=expr.args[0].expr,
+            parent_link=expr.args[1].expr,
+            ctx=subctx
+        )
+        subquery_alias = ctx.env.aliases.get('base-filter')
+        base_filter = pgast.SubLink(
+            type=pgast.SubLinkType.ANY,
+            expr=pgast.SelectStmt(
+                target_list=[sub_parent_col],
+                from_clause=[sub_src_table],
+                distinct_clause=[sub_parent_col]
+            ),
+        )
+        is_base_alias = ctx.env.aliases.get('is-base')
+
+        stmt.from_clause.append(pgast.RangeSubselect(
+            subquery=pgast.SelectStmt(
+                target_list=[pgast.ResTarget(
+                    val=pgast.NullTest(
+                        arg=pgast.Expr(
+                            nullable=True,
+                            name='=',
+                            lexpr=id_col,
+                            rexpr=base_filter
+                        ),
+                        negated=True
+                    ),
+                    name=is_base_alias
+                )]
+            ),
+            alias=pgast.Alias(aliasname=subquery_alias),
+            lateral=True
+        ))
+        stmt.where_clause = astutils.extend_binop(
+            stmt.where_clause,
+            astutils.new_unop('NOT', pgast.ColumnRef(name=[subquery_alias, is_base_alias]))
+        )
+    elif function_name in ('cal::children', 'cal::ichildren'):
+        stmt.where_clause = astutils.extend_binop(
+            stmt.where_clause,
+            pgast.NullTest(arg=parent_col, negated=False),
+        )
+    elif function_name in ('cal::descendant', 'cal::idescendant'):
+        pass
+
+    new_rvars = new_stmt_set_rvar(ir_set, stmt, ctx=ctx)
+    stmt.target_list.append(pgast.ResTarget(
+        val=id_col,
+        name='id'
+    ))
+    stmt.distinct_clause = [id_col]
+    pathctx._put_path_output_var(  # noqa
+        rel=stmt,
+        path_id=ir_set.path_id,
+        aspect='value',
+        var=id_col,
+        env=ctx.env
+    )
+    return new_rvars
+
+
+def process_set_as_traverse_function(
+    ir_set: irast.Set,
+    stmt: pgast.SelectStmt,
+    *,
+    ctx: context.CompilerContextLevel,
+    function_name: str
+) -> SetRVars:
+    expr = ir_set.expr
+    assert isinstance(expr, irast.FunctionCall)
+
+    rel_src = irutils.unwrap_set(expr.args[0].expr)
+    if irutils.is_empty_enhanced(rel_src):
+        return _process_set_as_root_traverse_function(
+            ir_set, stmt,
+            ctx=ctx,
+            function_name=function_name
+        )
+
+    cte_name = ctx.env.aliases.get('cte')
+
+    with contextlib.ExitStack() as cstack:
+        ctx1 = cstack.enter_context(ctx.subrel())
+        cte_src_query = ctx1.rel
+        src_table, parent_col, id_col = _get_cte_source_table(
+            source=expr.args[0].expr,
+            parent_link=expr.args[1].expr,
+            ctx=ctx1
+        )
+
+        cte_src_query.from_clause.append(src_table)
+
+        ctx2 = cstack.enter_context(ctx1.newrel())
+        rvar = get_set_rvar(rel_src, ctx=ctx2)
+
+        sub_query = ctx2.rel
+        assert isinstance(rvar.query, pgast.SelectStmt)
+        rvar_query = cast(pgast.SelectStmt, rvar.query)
+
+        sub_query_target = pgast.ResTarget(
+            val=pgast.Expr(
+                nullable=False,
+                name='=',
+                lexpr=id_col,
+                rexpr=pgast.ColumnRef(name=[
+                    rvar.alias.aliasname,
+                    rvar_query.target_list[0].name
+                ]),
+            ),
+            name=pathctx.get_path_output_alias(
+                rel_src.path_id, aspect='cte-flag', env=ctx.env)
+        )
+        sub_query.target_list.append(sub_query_target)
+
+        new_subrvar = pgast.RangeSubselect(
+            subquery=sub_query,
+            alias=pgast.Alias(
+                aliasname=ctx.env.aliases.get('cte-main')
+            ),
+            lateral=True
+        )
+        set_rvar = SetRVar(rvar=new_subrvar, path_id=rel_src.path_id)
+
+        _include_rvars(
+            SetRVars(main=set_rvar, new=[set_rvar]),
+            scope_stmt=cte_src_query, ctx=ctx1
+        )
+
+        cte_src_query.where_clause = astutils.extend_binop(
+            cte_src_query.where_clause,
+            pgast.ColumnRef(name=[
+                new_subrvar.alias.aliasname,
+                sub_query_target.name
+            ])
+        )
+        cte_src_query.target_list.append(pgast.ResTarget(val=id_col, name='id'))
+
+        cte_self_ref = pgast.RelRangeVar(
+            alias=pgast.Alias(aliasname=ctx.env.aliases.get('cte-ref')),
+            relation=pgast.Relation(name=cte_name)
+        )
+
+        cte_parent_name = ctx.env.aliases.get('parent')
+        cte_src_query.target_list.append(pgast.ResTarget(
+            val=parent_col,
+            name=cte_parent_name
+        ))
+
+        ctx3 = cstack.enter_context(ctx2.subrel())
+        table_child, child_parent_col, child_id_col = _get_cte_source_table(
+            source=expr.args[0].expr,
+            parent_link=expr.args[1].expr,
+            ctx=ctx3
+        )
+
+        cte_recur_query = pgast.SelectStmt(
+            target_list=[
+                pgast.ResTarget(val=child_id_col, name='id'),
+                pgast.ResTarget(val=child_parent_col, name=cte_parent_name),
+            ],
+            from_clause=[table_child, cte_self_ref],
+            where_clause=pgast.Expr(
+                nullable=False,
+                name='=',
+                lexpr=child_parent_col,
+                rexpr=pgast.ColumnRef(name=[cte_self_ref.alias.aliasname, 'id'])
+            )
+        )
+
+    # cte
+    cte = pgast.CommonTableExpr(
+        name=cte_name,
+        recursive=True,
+        nullable=True,
+        query=pgast.SelectStmt(
+            larg=cte_src_query,
+            rarg=cte_recur_query,
+            op='UNION',
+            all=True
+        )
+    )
+
+    new_rvars = new_stmt_set_rvar(ir_set, stmt, ctx=ctx)
+    main_query = ctx.rel
+
+    main_query.append_cte(cte)
+
+    main_query.from_clause.append(pgast.RelRangeVar(
+        relation=pgast.Relation(name=cte_name)
+    ))
+
+    output_var = pgast.ColumnRef(name=['id'])
+    main_query.target_list.append(pgast.ResTarget(
+        val=output_var,
+        name='id'
+    ))
+
+    if function_name in ('cal::base', 'cal::ibase'):
+        main_query.where_clause = pgast.Expr(
+            nullable=False,
+            name='NOT IN',
+            lexpr=pgast.ColumnRef(name=[cte_name, 'id']),
+            rexpr=pgast.SelectStmt(
+                target_list=[
+                    pgast.ResTarget(val=pgast.ColumnRef(name=[cte_parent_name])),
+                ],
+                from_clause=[pgast.RelRangeVar(relation=pgast.Relation(name=cte_name))],
+                where_clause=pgast.NullTest(arg=pgast.ColumnRef(name=[cte_parent_name]), negated=True),
+                distinct_clause=[pgast.Star()]
+            )
+        )
+        if function_name == 'cal::ibase':
+            main_query.where_clause = astutils.extend_binop(
+                main_query.where_clause,
+                pgast.Expr(
+                    nullable=False,
+                    name='IN',
+                    lexpr=pgast.ColumnRef(name=[cte_name, 'id']),
+                    rexpr=rvar_query
+                ),
+                op='OR'
+            )
+    elif function_name == 'cal::descendant':
+        main_query.where_clause = pgast.Expr(
+            nullable=False,
+            name='NOT IN',
+            lexpr=pgast.ColumnRef(name=[cte_name, 'id']),
+            rexpr=rvar_query
+        )
+    elif function_name in ('cal::children', 'cal::ichildren'):
+        # todo nulltest
+        main_query.where_clause = pgast.Expr(
+            nullable=False,
+            name='IN',
+            lexpr=pgast.ColumnRef(name=[cte_name, cte_parent_name]),
+            rexpr=rvar_query
+        )
+
+        if function_name == 'cal::ichildren':
+            main_query.where_clause = astutils.extend_binop(
+                main_query.where_clause,
+                pgast.Expr(
+                    nullable=False,
+                    name='IN',
+                    lexpr=pgast.ColumnRef(name=[cte_name, 'id']),
+                    rexpr=rvar_query
+                ),
+                op='OR'
+            )
+    main_query.distinct_clause = [pgast.Star()]
+    pathctx._put_path_output_var(  # noqa
+        rel=main_query,
+        path_id=ir_set.path_id,
+        aspect='value',
+        var=output_var,
+        env=ctx.env
+    )
+    return new_rvars
