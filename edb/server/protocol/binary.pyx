@@ -1235,19 +1235,20 @@ cdef class EdgeConnection:
                         query_unit, new_types)
                     if side_effects:
                         self.signal_side_effects(side_effects)
+                        if (
+                            side_effects & dbview.SideEffects.SchemaChanges
+                            and (
+                                (_dbview.in_tx() and qu_idx == len(units)) 
+                                or not _dbview.in_tx()
+                            )
+                        ):
+                            await self.update_compiler_user_schema(query_unit)
+
                     if not _dbview.in_tx():
                         state = _dbview.serialize_state()
                         if state is not orig_state:
                             # see the same comments in _execute()
                             conn.last_state = state
-                    if (
-                        side_effects & dbview.SideEffects.SchemaChanges
-                        and (
-                            (_dbview.in_tx() and qu_idx == len(query_unit)) 
-                            or not _dbview.in_tx()
-                        )
-                    ):
-                        await self.update_compiler_user_schema(query_unit)
 
         finally:
             self.maybe_release_pgcon(conn)
@@ -1773,6 +1774,8 @@ cdef class EdgeConnection:
             side_effects = _dbview.on_success(query_unit, new_types)
             if side_effects:
                 self.signal_side_effects(side_effects)
+                if side_effects & dbview.SideEffects.SchemaChanges:
+                    await self.update_compiler_user_schema(query_unit)
             if not _dbview.in_tx():
                 state = _dbview.serialize_state()
                 if state is not orig_state:
@@ -1781,14 +1784,7 @@ cdef class EdgeConnection:
                     #   2. The state is synced with dbview (orig_state is None)
                     #   3. We came out from a transaction (orig_state is None)
                     conn.last_state = state
-                if (
-                    side_effects & dbview.SideEffects.SchemaChanges
-                    and (
-                        (_dbview.in_tx() and qu_idx == len(query_unit)) 
-                        or not _dbview.in_tx()
-                    )
-                ):
-                    await self.update_compiler_user_schema(query_unit)
+
             self.write(self.make_command_complete_msg(query_unit))
         finally:
             self.maybe_release_pgcon(conn)
