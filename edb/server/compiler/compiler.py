@@ -1655,16 +1655,12 @@ class Compiler:
                 return (query, enums.Capability(0))
 
         elif isinstance(ql, (qlast.DatabaseCommand, qlast.DDL)):
-            if source is not None:
-                logger.info(f"Receive DDL: {source.text()}")
             return (
                 self._compile_and_apply_ddl_stmt(ctx, ql, source=source),
                 enums.Capability.DDL,
             )
 
         elif isinstance(ql, qlast.Transaction):
-            if source is not None:
-                logger.info(f"Receive Transaction: {source.text()}")
             return (
                 self._compile_ql_transaction(ctx, ql),
                 enums.Capability.TRANSACTION,
@@ -1745,6 +1741,7 @@ class Compiler:
         # information, correctly inferred "singleton_result" field etc.
         single_stmt_mode = ctx.stmt_mode is enums.CompileStatementMode.SINGLE
         default_cardinality = enums.Cardinality.NO_RESULT
+        logger.info(f"Receive EdgeQL:{source.text()}")
 
         statements = edgeql.parse_block(source)
         statements_len = len(statements)
