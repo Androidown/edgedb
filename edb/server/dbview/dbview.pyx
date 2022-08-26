@@ -476,13 +476,20 @@ cdef class DatabaseConnectionView:
                 self._db._update_backend_ids(new_types)
             if query_unit.user_schema_mut_log is not None:
                 self._in_tx_dbver = next_dbver()
-                self._db._set_and_signal_new_user_schema(
-                    query_unit.update_user_schema(self._db.user_schema),
-                    pickle.loads(query_unit.cached_reflection)
-                        if query_unit.cached_reflection is not None
-                        else None
-                )
-                side_effects |= SideEffects.SchemaChanges
+                try:
+                    self._db._set_and_signal_new_user_schema(
+                        query_unit.update_user_schema(self._db.user_schema),
+                        pickle.loads(query_unit.cached_reflection)
+                            if query_unit.cached_reflection is not None
+                            else None
+                    )
+                    side_effects |= SideEffects.SchemaChanges
+                except ValueError:
+                    # Should never happend
+                    logger.exception('')
+                    side_effects |= SideEffects.SchemaMutationFailure
+                    side_effects |= SideEffects.SchemaChanges
+
             if query_unit.system_config:
                 side_effects |= SideEffects.InstanceConfigChanges
             if query_unit.database_config:

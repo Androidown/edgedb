@@ -26,6 +26,7 @@ cpdef enum SideEffects:
     InstanceConfigChanges = 1 << 2
     RoleChanges = 1 << 3
     GlobalSchemaChanges = 1 << 4
+    SchemaMutationFailure = 1 << 5
 
 
 cdef class DatabaseIndex:

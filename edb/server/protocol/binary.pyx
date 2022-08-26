@@ -1234,7 +1234,7 @@ cdef class EdgeConnection:
                     side_effects = _dbview.on_success(
                         query_unit, new_types)
                     if side_effects:
-                        self.signal_side_effects(side_effects)
+                        await self.signal_side_effects(side_effects)
                     if not _dbview.in_tx():
                         state = _dbview.serialize_state()
                         if state is not orig_state:
@@ -1261,7 +1261,11 @@ cdef class EdgeConnection:
             _dbview.get_compilation_system_config(),
         )
 
-    def signal_side_effects(self, side_effects):
+    async def signal_side_effects(self, side_effects):
+        if side_effects & dbview.SideEffects.SchemaMutationFailure:
+            logger.info(f'Start introspect database <{self.get_dbview().dbname}>')
+            await self.server.introspect_db(dbname=self.get_dbview().dbname)
+            logger.info(f'Finished introspect database <{self.get_dbview().dbname}>')
         if not self.server._accept_new_tasks:
             return
         if side_effects & dbview.SideEffects.SchemaChanges:
@@ -1765,7 +1769,7 @@ cdef class EdgeConnection:
         else:
             side_effects = _dbview.on_success(query_unit, new_types)
             if side_effects:
-                self.signal_side_effects(side_effects)
+                await self.signal_side_effects(side_effects)
             if not _dbview.in_tx():
                 state = _dbview.serialize_state()
                 if state is not orig_state:
