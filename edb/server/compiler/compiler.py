@@ -20,7 +20,6 @@
 
 
 from __future__ import annotations
-from tkinter import N
 from typing import *
 
 import collections
@@ -831,7 +830,7 @@ class Compiler:
                 ),
             )
             return self._compile_and_apply_ddl_stmt(ctx, cm)
-        
+
         delta = s_ddl.delta_from_ddl(
             stmt,
             schema=schema,

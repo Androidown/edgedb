@@ -420,7 +420,7 @@ class BasePool(amsg.ServerProtocol, asyncio.SubprocessProtocol):
                     worker._dbs = worker._dbs.set(dbname, state.DatabaseState(
                         name=dbname,
                         user_schema=actual_user_schema,
-                        user_schema_version=actual_user_schema.version_id,
+                        user_schema_version=worker_db.user_schema_version,
                         reflection_cache=(
                             reflection_cache or worker_db.reflection_cache),
                         database_config=(
