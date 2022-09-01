@@ -102,7 +102,6 @@ def init_context(
     ctx.implicit_tid_in_shapes = options.implicit_tid_in_shapes
     ctx.implicit_tname_in_shapes = options.implicit_tname_in_shapes
     ctx.implicit_limit = options.implicit_limit
-    ctx.force_implicit_limit = options.force_implicit_limit
     ctx.expr_exposed = context.Exposure.EXPOSED
 
     return ctx
