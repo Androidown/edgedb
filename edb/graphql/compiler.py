@@ -93,7 +93,8 @@ def compile_graphql(
         variables=variables,
         substitutions=substitutions,
         operation_name=operation_name,
-        module=module
+        module=module,
+        limit=int(limit)
     )
 
     ir = qlcompiler.compile_ast_to_ir(
@@ -106,8 +107,7 @@ def compile_graphql(
         options=qlcompiler.CompilerOptions(
             json_parameters=True,
             allow_top_level_shape_dml=True,
-            implicit_limit=int(limit),
-            force_implicit_limit=True
+            implicit_limit=int(limit)
         ),
     )
 

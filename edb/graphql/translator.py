@@ -86,7 +86,7 @@ INT_FLOAT_ERROR = re.compile(
 
 class GraphQLTranslatorContext:
     def __init__(self, *, gqlcore: gt.GQLCoreSchema,
-                 variables, query, document_ast, operation_name, module=None):
+                 variables, query, document_ast, operation_name, module=None, limit=0):
         self.variables = variables
         self.fragments = {}
         self.validated_fragments = {}
@@ -100,6 +100,7 @@ class GraphQLTranslatorContext:
         self.document_ast = document_ast
         self.operation_name = operation_name
         self.module = module
+        self.limit = limit
 
         # only used inside ObjectFieldNode
         self.base_expr = None
@@ -752,7 +753,7 @@ class GraphQLTranslator:
             Step(name=frag.type_condition, type=frag_type, eql_alias=None)])
         self._context.include_base.append(is_specialized)
 
-    def _visit_query_arguments(self, arguments):
+    def _visit_query_arguments(self, arguments, from_query=True):
         where = None
         orderby = []
         first = last = before = after = None
@@ -785,6 +786,16 @@ class GraphQLTranslator:
         # (positive integer) so that the values used for offset and
         # limit can be cast into it and appropriate errors will be
         # produced.
+        if self._context.limit > 0 and limit is not None and from_query:
+            limit = qlast.IfElse(
+                    if_expr=limit,
+                    condition=qlast.BinOp(
+                        left=qlast.IntegerConstant(value=str(self._context.limit)),
+                        op='>',
+                        right=limit
+                    ),
+                    else_expr=qlast.IntegerConstant(value=str(self._context.limit))
+                )
 
         return where, orderby, offset, limit
 
@@ -1219,7 +1230,7 @@ class GraphQLTranslator:
                 eql.result = shape.expr
                 # this is a filter spec
                 where, orderby, offset, limit = \
-                    self._visit_query_arguments(node.fields)
+                    self._visit_query_arguments(node.fields, from_query=False)
                 filterable.where = where
                 filterable.orderby = orderby
                 filterable.offset = offset
@@ -1797,6 +1808,7 @@ def translate_ast(
     variables: Optional[Mapping[str, Any]]=None,
     substitutions: Optional[Dict[str, Tuple[str, int, int]]],
     module: Optional[str]=None,
+    limit: int=0,
 ) -> TranspiledOperation:
 
     if variables is None:
@@ -1821,7 +1833,7 @@ def translate_ast(
     context = GraphQLTranslatorContext(
         gqlcore=gqlcore, query=None,
         variables=variables, document_ast=document_ast,
-        operation_name=operation_name, module=module)
+        operation_name=operation_name, module=module, limit=limit)
 
     edge_forest_map = GraphQLTranslator(context=context).visit(document_ast)
 
