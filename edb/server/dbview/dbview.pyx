@@ -894,7 +894,7 @@ cdef class DatabaseConnectionView:
         return side_effects
 
     cdef commit_implicit_tx(
-        self, user_schema, global_schema, cached_reflection
+        self, user_schema, user_schema_unpacked, global_schema, cached_reflection
     ):
         assert self._in_tx
         side_effects = 0
@@ -905,10 +905,12 @@ cdef class DatabaseConnectionView:
 
         if self._in_tx_new_types:
             self._db._update_backend_ids(self._in_tx_new_types)
-        if user_schema is not None:
+        if user_schema is not None or user_schema_unpacked is not None:
+            if user_schema is not None:
+                user_schema_unpacked = pickle.loads(user_schema)
             self._state_serializer = None
             self._db._set_and_signal_new_user_schema(
-                pickle.loads(user_schema),
+                user_schema_unpacked,
                 pickle.loads(cached_reflection)
                     if cached_reflection is not None
                     else None

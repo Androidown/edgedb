@@ -169,10 +169,10 @@ async def execute_script(
         bytes state = None, orig_state = None
         ssize_t sent = 0
         bint in_tx
-        object user_schema, cached_reflection, global_schema
+        object user_schema, user_schema_unpacked, cached_reflection, global_schema
         WriteBuffer bind_data
 
-    user_schema = cached_reflection = global_schema = None
+    user_schema = user_schema_unpacked = cached_reflection = global_schema = None
     unit_group = compiled.query_unit_group
     if unit_group.tx_control:
         # TODO: move to the server.compiler once binary_v0 is dropped
@@ -182,6 +182,7 @@ async def execute_script(
         )
 
     in_tx = dbv.in_tx()
+    base_user_schema = dbv.get_user_schema()
     if not in_tx:
         orig_state = state = dbv.serialize_state()
 
@@ -227,7 +228,10 @@ async def execute_script(
                 dbv.start_implicit(query_unit)
                 config_ops = query_unit.config_ops
 
-                if query_unit.user_schema:
+                if query_unit.user_schema_mut_log:
+                    user_schema_unpacked = query_unit.update_user_schema(base_user_schema)
+                    cached_reflection = query_unit.cached_reflection
+                elif query_unit.user_schema:
                     user_schema = query_unit.user_schema
                     cached_reflection = query_unit.cached_reflection
 
@@ -285,7 +289,7 @@ async def execute_script(
     else:
         if not in_tx:
             side_effects = dbv.commit_implicit_tx(
-                user_schema, global_schema, cached_reflection
+                user_schema, user_schema_unpacked, global_schema, cached_reflection
             )
             if side_effects:
                 signal_side_effects(dbv, side_effects)
