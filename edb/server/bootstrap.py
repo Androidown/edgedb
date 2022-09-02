@@ -612,7 +612,6 @@ async def _make_stdlib(
     # that is much harder for Postgres to plan as opposed to a
     # straight flat UNION.
     sql_intro_local_parts = []
-    c_sql_intro_local_parts = []
     sql_intro_global_parts = []
     for intropart in reflection.local_intro_parts:
         sql_intro_local_parts.append(

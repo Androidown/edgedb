@@ -110,7 +110,6 @@ class CompileContext:
     json_parameters: bool = False
     schema_reflection_mode: bool = False
     implicit_limit: int = 0
-    force_implicit_limit: bool = False
     inline_typeids: bool = False
     inline_typenames: bool = False
     inline_objectids: bool = True

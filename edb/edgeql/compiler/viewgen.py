@@ -648,7 +648,7 @@ def _normalize_view_ptr_expr(
 
             if (
                 (ctx.expr_exposed or ctx.stmt is ctx.toplevel_stmt)
-                and (not qlexpr.limit or ctx.force_implicit_limit)
+                and not qlexpr.limit
                 and ctx.implicit_limit
                 and not base_is_singleton
             ):
@@ -762,9 +762,9 @@ def _normalize_view_ptr_expr(
             qlexpr = astutils.ensure_ql_select(qlexpr)
 
         if ((ctx.expr_exposed or ctx.stmt is ctx.toplevel_stmt)
-            and ctx.implicit_limit
-            and isinstance(qlexpr, qlast.OffsetLimitMixin)
-            and (not qlexpr.limit or ctx.force_implicit_limit)):
+                and ctx.implicit_limit
+                and isinstance(qlexpr, qlast.OffsetLimitMixin)
+                and not qlexpr.limit):
             qlexpr = qlast.SelectQuery(result=qlexpr, implicit=True)
             qlexpr.limit = qlast.IntegerConstant(value=str(ctx.implicit_limit))
 

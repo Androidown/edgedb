@@ -665,7 +665,7 @@ class Schema(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def get_last_migration(self, module: str = None) -> Optional[s_migrations.Migration]:
+    def get_last_migration(self) -> Optional[s_migrations.Migration]:
         raise NotImplementedError
 
 
@@ -1660,7 +1660,7 @@ class FlatSchema(Schema):
                 modules.append(self.get_by_id(objid, type=s_mod.Module))
         return tuple(modules)
 
-    def get_last_migration(self, module: str = None) -> Optional[s_migrations.Migration]:
+    def get_last_migration(self) -> Optional[s_migrations.Migration]:
         return _get_last_migration(self)
 
     def __repr__(self) -> str:
@@ -2183,7 +2183,7 @@ class ChainedSchema(Schema):
             + self._top_schema.get_modules()
         )
 
-    def get_last_migration(self, module: str = None) -> Optional[s_migrations.Migration]:
+    def get_last_migration(self) -> Optional[s_migrations.Migration]:
         migration = self._top_schema.get_last_migration()
         if migration is None:
             migration = self._base_schema.get_last_migration()
@@ -2258,11 +2258,3 @@ def _get_last_migration(
         latest = children[0]
 
     return latest
-
-
-def merge_schema(
-    schema_list: Iterable[FlatSchema]
-) -> FlatSchema:
-    return functools.reduce(lambda x, y: x.merge(y), schema_list)
-
-

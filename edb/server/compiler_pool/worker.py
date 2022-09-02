@@ -39,7 +39,7 @@ from edb.common import util
 from . import state
 from . import worker_proc
 
-sys.setrecursionlimit(5000)
+
 INITED: bool = False
 DBS: state.DatabasesState = immutables.Map()
 BACKEND_RUNTIME_PARAMS: pgparams.BackendRuntimeParams = \

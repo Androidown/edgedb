@@ -785,16 +785,13 @@ def generate_structure(schema: s_schema.Schema) -> SchemaReflectionParts:
 
         rschema_name = get_schema_name_for_pycls(py_cls)
         shape = ',\n'.join(shape_els)
-        cqry = qry = f'''
+        qry = f'''
             SELECT {rschema_name} {{
                 {shape}
             }}
         '''
         if not issubclass(py_cls, (s_types.Collection, s_obj.GlobalObject)):
             qry += ' FILTER NOT .builtin'
-            cqry = qry + " AND (NOT exists .module_name " \
-                         " OR .module_name in " \
-                         f"{{<std::str>$__module_name, 'builtin', {STD_MODULE_TEXT}}})"
 
         if issubclass(py_cls, s_obj.GlobalObject):
             global_parts.append(qry)

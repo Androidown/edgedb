@@ -281,10 +281,10 @@ class AbstractPool:
                     or reflection_cache is not None
                     or database_config is not None
                 ):
-                    actual_user_schema = user_schema or worker_db.user_schema
                     worker._dbs = worker._dbs.set(dbname, state.DatabaseState(
                         name=dbname,
-                        user_schema=actual_user_schema,
+                        user_schema=(
+                            user_schema or worker_db.user_schema),
                         user_schema_version=worker_db.user_schema_version,
                         reflection_cache=(
                             reflection_cache or worker_db.reflection_cache),

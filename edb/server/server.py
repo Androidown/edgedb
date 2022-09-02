@@ -687,7 +687,7 @@ class Server(ha_base.ClusterProtocol):
                 raise
         return conn
 
-    async def introspect_db(self, dbname, module: str = None):
+    async def introspect_db(self, dbname):
         """Use this method to (re-)introspect a DB.
 
         If the DB is already registered in self._dbindex, its
@@ -1183,16 +1183,15 @@ class Server(ha_base.ClusterProtocol):
             metrics.background_errors.inc(1.0, 'signal_sysevent')
             raise
 
-    def _on_remote_ddl(self, dbname, module: str = None):
+    def _on_remote_ddl(self, dbname):
         if not self._accept_new_tasks:
             return
 
         # Triggered by a postgres notification event 'schema-changes'
-        # or 'module-schema-changes'
         # on the __edgedb_sysevent__ channel
         async def task():
             try:
-                await self.introspect_db(dbname, module)
+                await self.introspect_db(dbname)
             except Exception:
                 metrics.background_errors.inc(1.0, 'on_remote_ddl')
                 raise
