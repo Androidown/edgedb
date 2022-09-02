@@ -540,7 +540,7 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
                     _dbview.on_error()
                     raise
                 else:
-                    _dbview.on_success(query_unit, new_types)
+                    await _dbview.on_success(query_unit, new_types)
 
             restore_blocks = {
                 b.schema_object_id: b
@@ -1236,7 +1236,7 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
                         _dbview.abort_tx()
                     raise
                 else:
-                    side_effects = _dbview.on_success(
+                    side_effects = await _dbview.on_success(
                         query_unit, new_types)
                     if side_effects:
                         execute.signal_side_effects(_dbview, side_effects)

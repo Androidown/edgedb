@@ -95,7 +95,6 @@ class SchemaReflectionParts(NamedTuple):
     intro_schema_delta: sd.Command
     class_layout: Dict[Type[s_obj.Object], SchemaTypeLayout]
     local_intro_parts: List[str]
-    conditioned_local_intro_parts: List[str]
     global_intro_parts: List[str]
 
 
@@ -773,7 +772,6 @@ def generate_structure(schema: s_schema.Schema) -> SchemaReflectionParts:
                 read_shape.append(read_ptr)
 
     local_parts = []
-    local_conditioned_parts = []
     global_parts = []
     for py_cls, shape_els in read_sets.items():
         if (
@@ -802,14 +800,12 @@ def generate_structure(schema: s_schema.Schema) -> SchemaReflectionParts:
             global_parts.append(qry)
         else:
             local_parts.append(qry)
-            local_conditioned_parts.append(cqry)
 
     delta.canonical = True
     return SchemaReflectionParts(
         intro_schema_delta=delta,
         class_layout=classlayout,
         local_intro_parts=local_parts,
-        conditioned_local_intro_parts=local_conditioned_parts,
         global_intro_parts=global_parts,
     )
 

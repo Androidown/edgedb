@@ -239,7 +239,7 @@ async def load_std_schema(backend_conn: pgcon.PGConnection) -> s_schema.Schema:
 async def load_schema_intro_query(
     backend_conn: pgcon.PGConnection,
     kind: str,
-) -> str:
+) -> bytes:
     return await backend_conn.sql_fetch_val(
         b"""
         SELECT text FROM edgedbinstdata.instdata
@@ -967,7 +967,7 @@ class Compiler:
                     f'{pg_common.quote_literal(tid)}::uuid'
                     for tid in new_types
                 ]
-                sql = sql + (textwrap.dedent(f'''\
+                sql += (textwrap.dedent(f'''\
                     SELECT
                         json_build_object(
                             'ddl_stmt_id',
@@ -1455,7 +1455,7 @@ class Compiler:
 
     def _compile_ql_transaction(
             self, ctx: CompileContext,
-            ql: qlast.Transaction) -> dbstate.Query:
+            ql: qlast.Transaction) -> dbstate.TxControlQuery:
 
         cacheable = True
         single_unit = False
@@ -1905,6 +1905,7 @@ class Compiler:
                             pickle.dumps(comp.user_schema.get_mutation_logger(), -1)
                         comp.user_schema.refresh_mutation_logger()
                     else:
+                        comp.user_schema.refresh_mutation_logger()
                         unit.user_schema = pickle.dumps(comp.user_schema, -1)
                 if comp.cached_reflection is not None:
                     unit.cached_reflection = \
@@ -1923,6 +1924,7 @@ class Compiler:
                             pickle.dumps(comp.user_schema.get_mutation_logger(), -1)
                         comp.user_schema.refresh_mutation_logger()
                     else:
+                        comp.user_schema.refresh_mutation_logger()
                         unit.user_schema = pickle.dumps(comp.user_schema, -1)
                 if comp.cached_reflection is not None:
                     unit.cached_reflection = \
@@ -1957,6 +1959,7 @@ class Compiler:
                             pickle.dumps(comp.user_schema.get_mutation_logger(), -1)
                         comp.user_schema.refresh_mutation_logger()
                     else:
+                        comp.user_schema.refresh_mutation_logger()
                         unit.user_schema = pickle.dumps(comp.user_schema, -1)
                 if comp.cached_reflection is not None:
                     unit.cached_reflection = \

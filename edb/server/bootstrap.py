@@ -482,8 +482,6 @@ class StdlibBits(NamedTuple):
     classlayout: Dict[Type[s_obj.Object], s_refl.SchemaTypeLayout]
     #: Schema introspection SQL query.
     local_intro_query: str
-    #: Condtioned schema introspection SQL query.
-    conditioned_local_intro_query: str
     #: Global object introspection SQL query.
     global_intro_query: str
 
@@ -634,31 +632,9 @@ async def _make_stdlib(
             ),
         )
 
-    compilerctx = edbcompiler.new_compiler_context(
-        user_schema=reflschema.get_top_schema(),
-        global_schema=schema.get_global_schema(),
-        schema_reflection_mode=True,
-        output_format=edbcompiler.IoFormat.JSON_ELEMENTS,
-        single_statement=True
-    )
-    for intropart in reflection.conditioned_local_intro_parts:
-        c_sql_intro_local_parts.append(
-            compile_single_query(
-                intropart,
-                compiler=compiler,
-                compilerctx=compilerctx,
-            ),
-        )
-
     local_intro_sql = ' UNION ALL '.join(sql_intro_local_parts)
     local_intro_sql = f'''
         WITH intro(c) AS ({local_intro_sql})
-        SELECT json_agg(intro.c) FROM intro
-    '''
-
-    c_local_intro_sql = ' UNION ALL '.join(c_sql_intro_local_parts)
-    c_local_intro_sql = f'''
-        WITH intro(c) AS ({c_local_intro_sql})
         SELECT json_agg(intro.c) FROM intro
     '''
 
@@ -676,7 +652,6 @@ async def _make_stdlib(
         types=types,
         classlayout=reflection.class_layout,
         local_intro_query=local_intro_sql,
-        conditioned_local_intro_query=c_local_intro_sql,
         global_intro_query=global_intro_sql,
     )
 
@@ -938,12 +913,6 @@ async def _init_stdlib(
         ctx,
         'local_intro_query',
         stdlib.local_intro_query,
-    )
-
-    await _store_static_text_cache(
-        ctx,
-        'cond_local_intro_query',
-        stdlib.conditioned_local_intro_query,
     )
 
     await _store_static_text_cache(

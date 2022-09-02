@@ -800,11 +800,15 @@ cdef class DatabaseConnectionView:
     cdef on_error(self):
         self.tx_error()
 
-    cdef on_success(self, query_unit, new_types):
+    async def on_success(self, query_unit, new_types):
         with util.disable_gc():
-            return self._on_success(query_unit, new_types)
+            side_effects = self._on_success(query_unit, new_types)
 
-    cdef _on_success(self, query_unit, new_types):
+        if not self._in_tx and side_effects and (side_effects & SideEffects.SchemaChanges):
+            await self.update_compiler_user_schema(query_unit)
+        return side_effects
+
+    def _on_success(self, query_unit, new_types):
         side_effects = 0
 
         if query_unit.tx_savepoint_rollback:
@@ -1013,6 +1017,19 @@ cdef class DatabaseConnectionView:
             first_extra=source.first_extra(),
             extra_counts=source.extra_counts(),
             extra_blobs=source.extra_blobs(),
+        )
+
+    async def update_compiler_user_schema(self, query_unit: dbstate.QueryUnit):
+        compiler_pool = self._db._index._server.get_compiler_pool()
+
+        await compiler_pool.apply_user_schema_mutation_for_all(
+            self.dbname,
+            query_unit.user_schema_mut_log,
+            self.get_user_schema(),
+            self.get_global_schema(),
+            self.reflection_cache,
+            self.get_database_config(),
+            self.get_compilation_system_config(),
         )
 
     async def _compile(

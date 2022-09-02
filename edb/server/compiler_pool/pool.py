@@ -200,12 +200,14 @@ class AbstractPool:
     def _get_init_args_uncached(self):
         dbs: state.DatabasesState = immutables.Map()
         for db in self._dbindex.iter_dbs():
+            db_user_schema = db.user_schema
+            version_id = None if db_user_schema is None else db_user_schema.version_id
             dbs = dbs.set(
                 db.name,
                 state.DatabaseState(
                     name=db.name,
-                    user_schema=db.user_schema,
-                    user_schema_version=db.user_schema.version_id,
+                    user_schema=db_user_schema,
+                    user_schema_version=version_id,
                     reflection_cache=db.reflection_cache,
                     database_config=db.db_config,
                 )
@@ -283,7 +285,7 @@ class AbstractPool:
                     worker._dbs = worker._dbs.set(dbname, state.DatabaseState(
                         name=dbname,
                         user_schema=actual_user_schema,
-                        user_schema_version=actual_user_schema.version_id,
+                        user_schema_version=worker_db.user_schema_version,
                         reflection_cache=(
                             reflection_cache or worker_db.reflection_cache),
                         database_config=(
@@ -316,10 +318,19 @@ class AbstractPool:
             }
         else:
             if worker_db.user_schema_version != user_schema.version_id:
-                logger.warning(
-                    f"Stored schema version: {worker_db.user_schema_version} "
-                    f"is not consistent with server schema version: {user_schema.version_id}"
-                )
+                if worker_db.user_schema_version is None:
+                    worker._dbs = worker._dbs.set(
+                        dbname,
+                        worker_db._replace(user_schema_version=user_schema.version_id)
+                    )
+                    logger.info(
+                        f"Initialize db <{dbname}> schema version to: {user_schema.version_id}"
+                    )
+                else:
+                    logger.warning(
+                        f"Stored schema version: {worker_db.user_schema_version} "
+                        f"is not consistent with server schema version: {user_schema.version_id}"
+                    )
                 preargs += (
                     _pickle_memoized(user_schema),
                 )
@@ -387,7 +398,7 @@ class AbstractPool:
         worker = await self._acquire_worker(condition=lambda w: w.get_pid() == pid)
         try:
             status, ver_id = await worker.call('apply_schema_mutation', dbname, mutation_pickled)
-            logger.debug(f"DB<{dbname}> user schema version updated to {ver_id}")
+            logger.info(f"DB<{dbname}> user schema version updated to {ver_id}, is success: {status}")
             if status is True:
                 self._update_user_schema_ver_id(worker, dbname, ver_id)
             return pid, status
@@ -398,6 +409,7 @@ class AbstractPool:
         worker = await self._acquire_worker(condition=lambda w: w.get_pid() == pid)
         try:
             status, ver_id = await worker.call('set_user_schema', dbname, schema_pickled)
+            logger.info(f"DB<{dbname}> user schema version set to {ver_id}, is success: {status}")
             if status is True:
                 self._update_user_schema_ver_id(worker, dbname, ver_id)
             return pid, status
@@ -988,7 +1000,7 @@ class DebugWorker:
 
 
 @srvargs.CompilerPoolMode.Solo.assign_implementation
-class SoloPool(BasePool):
+class SoloPool(BaseLocalPool):
     _worker = DebugWorker()
 
     def __init__(self, **kwargs):
@@ -1000,12 +1012,14 @@ class SoloPool(BasePool):
     def _get_init_args(self):
         dbs: state.DatabasesState = immutables.Map()
         for db in self._dbindex.iter_dbs():
+            db_user_schema = db.user_schema
+            version_id = None if db_user_schema is None else db_user_schema.version_id
             dbs = dbs.set(
                 db.name,
                 state.DatabaseState(
                     name=db.name,
-                    user_schema=db.user_schema,
-                    user_schema_version=db.user_schema.version_id,
+                    user_schema=db_user_schema,
+                    user_schema_version=version_id,
                     reflection_cache=db.reflection_cache,
                     database_config=db.db_config,
                 )
@@ -1042,10 +1056,10 @@ class SoloPool(BasePool):
     def get_template_pid(self):
         return None
 
-    async def _acquire_worker(self, *, condition=None):
+    async def _acquire_worker(self, *, condition=None, **kwargs):
         return self._worker
 
-    def _release_worker(self, worker):
+    def _release_worker(self, worker, **kwargs):
         return
 
     async def start(self):
@@ -1068,129 +1082,6 @@ class SoloPool(BasePool):
         self._running = False
         if self._worker.connected:
             self.worker_disconnected(os.getpid())
-
-    async def compile(
-        self,
-        dbname,
-        user_schema,
-        global_schema,
-        reflection_cache,
-        database_config,
-        system_config,
-        *compile_args
-    ):
-        preargs, sync_state = self._compute_compile_preargs(
-            self._worker,
-            dbname,
-            user_schema,
-            global_schema,
-            reflection_cache,
-            database_config,
-            system_config,
-        )
-        units, state_ = self.cworker.compile(*preargs, *compile_args)
-        if sync_state is not None:
-            sync_state()
-        self._worker._last_pickled_state = state_
-
-        return units, state_
-
-    async def compile_in_tx(self, txid, pickled_state, *compile_args):
-        # When we compile a query, the compiler returns a tuple:
-        # a QueryUnit and the state the compiler is in if it's in a
-        # transaction.  The state contains the information about all savepoints
-        # and transient schema changes, so the next time we need to
-        # compile a new query in this transaction the state is needed
-        # to be passed to the next compiler compiling it.
-        #
-        # The compile state can be quite heavy and contain multiple versions
-        # of schema, configs, and other session-related data. So the compiler
-        # worker pickles it before sending it to the IO process, and the
-        # IO process doesn't need to ever unpickle it.
-        #
-        # There's one crucial optimization we do here though. We try to
-        # find the compiler process that we used before, that already has
-        # this state unpickled. If we can find it, it means that the
-        # compiler process won't have to waste time unpickling the state.
-        #
-        # We use "is" in `w._last_pickled_state is pickled_state` deliberately,
-        # because `pickled_state` is saved on the Worker instance and
-        # stored in edgecon; we never modify it, so `is` is sufficient and
-        # is faster than `==`.
-        _worker = self._worker
-        if _worker._last_pickled_state is pickled_state:
-            # Since we know that this particular worker already has the
-            # state, we don't want to waste resources transferring the
-            # state over the network. So we replace the state with a marker,
-            # that the compiler process will recognize.
-            pickled_state = state.REUSE_LAST_STATE_MARKER
-
-        units, new_pickled_state = self.cworker.compile_in_tx(pickled_state, txid, *compile_args)
-        self._worker._last_pickled_state = new_pickled_state
-        return units, new_pickled_state
-
-    async def compile_notebook(
-        self,
-        dbname,
-        user_schema,
-        global_schema,
-        reflection_cache,
-        database_config,
-        system_config,
-        *compile_args
-    ):
-        preargs, sync_state = self._compute_compile_preargs(
-            self._worker,
-            dbname,
-            user_schema,
-            global_schema,
-            reflection_cache,
-            database_config,
-            system_config,
-        )
-        return self.cworker.compile_notebook(*preargs, *compile_args)
-
-    async def try_compile_rollback(
-        self,
-        *compile_args,
-        **compile_kwargs,
-    ):
-        return self.cworker.try_compile_rollback(*compile_args, **compile_kwargs)
-
-    async def compile_graphql(
-        self,
-        dbname,
-        user_schema,
-        global_schema,
-        reflection_cache,
-        database_config,
-        system_config,
-        *compile_args
-    ):
-        preargs, sync_state = self._compute_compile_preargs(
-            self._worker,
-            dbname,
-            user_schema,
-            global_schema,
-            reflection_cache,
-            database_config,
-            system_config,
-        )
-        return self.cworker.compile_graphql(*preargs, *compile_args)
-
-    async def describe_database_dump(
-        self,
-        *args,
-        **kwargs
-    ):
-        return self.cworker.COMPILER.describe_database_dump(*args, **kwargs)
-
-    async def describe_database_restore(
-        self,
-        *args,
-        **kwargs
-    ):
-        return self.cworker.COMPILER.describe_database_restore(*args, **kwargs)
 
 
 @srvargs.CompilerPoolMode.OnDemand.assign_implementation

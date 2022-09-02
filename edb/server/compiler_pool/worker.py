@@ -21,6 +21,8 @@ from __future__ import annotations
 from typing import *  # NoQA
 
 import pickle
+import os
+import sys
 
 import immutables
 from loguru import logger
@@ -37,7 +39,7 @@ from edb.common import util
 from . import state
 from . import worker_proc
 
-
+sys.setrecursionlimit(5000)
 INITED: bool = False
 DBS: state.DatabasesState = immutables.Map()
 BACKEND_RUNTIME_PARAMS: pgparams.BackendRuntimeParams = \
@@ -238,6 +240,7 @@ def set_user_schema(
 
     with util.disable_gc():
         user_schema: s_schema.FlatSchema = pickle.loads(schema)
+        user_schema.refresh_mutation_logger()
 
     db = db._replace(user_schema=user_schema)
     DBS = DBS.set(dbname, db)

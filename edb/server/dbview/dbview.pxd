@@ -176,8 +176,6 @@ cdef class DatabaseConnectionView:
     cdef _apply_in_tx(self, query_unit)
     cdef start_implicit(self, query_unit)
     cdef on_error(self)
-    cdef on_success(self, query_unit, new_types)
-    cdef _on_success(self, query_unit, new_types)
     cdef commit_implicit_tx(
         self, user_schema, global_schema, cached_reflection
     )

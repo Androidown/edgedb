@@ -739,7 +739,6 @@ def resolve_ptr(
                 components=concrete_ptrs,
                 opaque=opaque,
                 modname=ctx.derived_target_module,
-                recursive=recursive
                 ctx=ctx,
             )
 

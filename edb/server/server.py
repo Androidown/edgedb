@@ -670,26 +670,6 @@ class Server(ha_base.ClusterProtocol):
         user_schema.refresh_mutation_logger()
         return user_schema
 
-    async def introspect_user_schema_modularly(self, conn, module):
-        json_data = await conn.parse_execute_json(
-            self._cond_local_intro_query, b'__cond_local_intro_query',
-            dbver=0, use_prep_stmt=True, args=(LiteralString(module), ),
-        )
-
-        base_schema = s_schema.ChainedSchema(
-            self._std_schema,
-            s_schema.FlatSchema(),
-            self.get_global_schema(),
-        )
-        schema = s_refl.parse_into(
-            base_schema=base_schema,
-            schema=s_schema.FlatSchema(),
-            data=json_data,
-            schema_class_layout=self._schema_class_layout,
-        )
-
-        return {module: schema}
-
     async def _acquire_intro_pgcon(self, dbname):
         try:
             conn = await self.acquire_pgcon(dbname)
@@ -872,11 +852,6 @@ class Server(ha_base.ClusterProtocol):
             self._global_intro_query = await syscon.sql_fetch_val(b'''\
                 SELECT text FROM edgedbinstdata.instdata
                 WHERE key = 'global_intro_query';
-            ''')
-
-            self._cond_local_intro_query = await syscon.sql_fetch_val(b'''\
-                SELECT text FROM edgedbinstdata.instdata
-                WHERE key = 'cond_local_intro_query';
             ''')
 
             result = await syscon.sql_fetch_val(b'''\

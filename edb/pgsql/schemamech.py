@@ -164,15 +164,17 @@ class ConstraintMech:
     def schema_idconstr_to_backedn_idconstr(
         cls, subject, origin_subject, constraint, schema
     ):
+        origin_subject_db_name = common.get_backend_name(
+            schema, origin_subject.get_source(schema), catenate=False)
         expr_data = {
             'exprdata': {'plain': 'id', 'plain_chunks': ['id'], 'new': 'NEW.id', 'old': 'OLD.id'},
             'is_multicol': False,
-            'is_trivial': True
+            'is_trivial': True,
+            'origin_except_data': None,
+            'origin_subject_db_name': origin_subject_db_name
         }
         subject_db_name = common.get_backend_name(
             schema, subject.get_source(schema), catenate=False)
-        origin_subject_db_name = common.get_backend_name(
-            schema, origin_subject.get_source(schema), catenate=False)
         pg_constr_data = {
             'expressions': [expr_data],
             'origin_expressions': [expr_data],
@@ -180,7 +182,7 @@ class ConstraintMech:
             'scope': 'relation',
             'type': 'unique',
             "subject_db_name": subject_db_name,
-            "origin_subject_db_name": origin_subject_db_name,
+            'except_data': None,
         }
         return SchemaTableConstraint(
             subject=subject, constraint=constraint,
@@ -199,6 +201,11 @@ class ConstraintMech:
             isinstance(subject, s_props.Property)
             and subject.get_displayname(schema) == 'id'
         ):
+            if constraint_origins and constraint_origins[0] != constraint:
+                origin_subject = constraint_origins[0].get_subject(schema)
+            else:
+                origin_subject = subject
+
             return cls.schema_idconstr_to_backedn_idconstr(
                 subject, origin_subject, constraint, schema)
 
