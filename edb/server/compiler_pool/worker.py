@@ -27,7 +27,7 @@ import sys
 import immutables
 from loguru import logger
 
-from edb import edgeql
+from edb import edgeql, errors
 from edb import graphql
 from edb.pgsql import params as pgparams
 from edb.schema import schema as s_schema
@@ -305,6 +305,14 @@ def compile_graphql(
     *compile_args: Any,
     **compile_kwargs: Any,
 ) -> tuple[compiler.QueryUnitGroup, graphql.TranspiledOperation]:
+    *_, query_only, module, limit = compile_args
+
+    try:
+        if int(limit) < 0:
+            raise errors.QueryError("LIMIT must not be negative")
+    except ValueError:
+        raise errors.QueryError("LIMIT must be an integer.")
+
     db = __sync__(
         dbname,
         user_schema,
@@ -339,7 +347,7 @@ def compile_graphql(
         sess_config=None,
         output_format=compiler.OutputFormat.JSON,
         expect_one=True,
-        implicit_limit=0,
+        implicit_limit=int(limit),
         inline_typeids=False,
         inline_typenames=False,
         inline_objectids=False,
@@ -347,6 +355,9 @@ def compile_graphql(
         skip_first=False,
         protocol_version=defines.CURRENT_PROTOCOL,
     )
+
+    if (unit_group.capabilities & compiler.Capability.MODIFICATIONS) and query_only:
+        raise errors.QueryError("仅可执行查询操作")
 
     return unit_group, gql_op
 

@@ -75,5 +75,6 @@ def compile_graphql(
         variables=variables,
         substitutions=substitutions,
         operation_name=operation_name,
-        module=module
+        module=module,
+        limit=limit
     )

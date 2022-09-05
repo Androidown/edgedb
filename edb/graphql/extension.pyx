@@ -77,6 +77,7 @@ async def handle_request(
     list args,
     object server,
 ):
+    await db.introspection()
     query_only = False
 
     if args == ['explore'] and request.method == b'GET':
@@ -294,7 +295,7 @@ async def _execute(
             print(f'key_vars: {key_var_names}')
             print(f'variables: {vars}')
 
-    cache_key = ('graphql', prepared_query, key_vars, operation_name, dbver, module, limit)
+    cache_key = ('graphql', prepared_query, key_vars, operation_name, dbver, query_only, module, limit)
     use_prep_stmt = False
 
     entry: CacheEntry = None
@@ -303,7 +304,7 @@ async def _execute(
 
     if isinstance(entry, CacheRedirect):
         key_vars2 = tuple(vars[k] for k in entry.key_vars)
-        cache_key2 = (prepared_query, key_vars2, operation_name, dbver, module, limit)
+        cache_key2 = (prepared_query, key_vars2, operation_name, dbver, query_only, module, limit)
         entry = query_cache.get(cache_key2, None)
 
     if entry is None:
@@ -342,7 +343,7 @@ async def _execute(
             query_cache[cache_key] = redir
             key_vars2 = tuple(vars[k] for k in key_var_names)
             cache_key2 = (
-                'graphql', prepared_query, key_vars2, operation_name, dbver, module, limit
+                'graphql', prepared_query, key_vars2, operation_name, dbver, query_only, module, limit
             )
             query_cache[cache_key2] = qug, gql_op
         else:
