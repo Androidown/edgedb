@@ -182,7 +182,6 @@ async def execute_script(
         )
 
     in_tx = dbv.in_tx()
-    base_user_schema = dbv.get_user_schema()
     if not in_tx:
         orig_state = state = dbv.serialize_state()
 
@@ -229,6 +228,7 @@ async def execute_script(
                 config_ops = query_unit.config_ops
 
                 if query_unit.user_schema_mut_log:
+                    base_user_schema = dbv.get_user_schema()
                     user_schema_unpacked = query_unit.update_user_schema(base_user_schema)
                     cached_reflection = query_unit.cached_reflection
                 elif query_unit.user_schema:

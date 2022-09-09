@@ -799,9 +799,8 @@ async def get_pg_bin_dir() -> pathlib.Path:
 
 async def get_pg_config() -> Dict[str, str]:
     stdout_lines, _, _ = await _run_logged_text_subprocess(
-        buildmeta.get_pg_config_path().get_cmd(),
+        [str(buildmeta.get_pg_config_path())],
         logger=pg_config_logger,
-        env=os.environ.copy()
     )
 
     config = {}
