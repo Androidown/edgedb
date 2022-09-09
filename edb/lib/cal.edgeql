@@ -1511,12 +1511,12 @@ std::duration_truncate(
     USING SQL $$
     SELECT CASE WHEN "unit" IN (
             'days', 'weeks', 'months', 'years', 'decades', 'centuries')
-        THEN date_trunc("unit", "dt")::edgedb.relative_duration_t
+        THEN date_trunc("unit", "dt")::edgedb.date_duration_t
         WHEN "unit" = 'quarters'
-        THEN date_trunc('quarter', "dt")::edgedb.relative_duration_t
+        THEN date_trunc('quarter', "dt")::edgedb.date_duration_t
         ELSE
             edgedb.raise(
-                NULL::edgedb.relative_duration_t,
+                NULL::edgedb.date_duration_t,
                 'invalid_datetime_format',
                 msg => (
                     'invalid unit for std::duration_truncate: '

@@ -184,7 +184,7 @@ std::bit_rshift(val: std::int16, n: std::int64) -> std::int16
         CASE
             WHEN n < 0 THEN
                 edgedb.raise(
-                    NULL::int8,
+                    NULL::int2,
                     'invalid_parameter_value',
                     msg => (
                         'bit_rshift(): cannot shift by negative amount'
@@ -192,8 +192,8 @@ std::bit_rshift(val: std::int16, n: std::int64) -> std::int16
                 )
             WHEN n > 31 THEN
                 CASE
-                    WHEN val < 0 THEN -1
-                    ELSE 0
+                    WHEN val < 0 THEN -1::int2
+                    ELSE 0::int2
                 END
             ELSE val >> n::int4
         END
@@ -213,7 +213,7 @@ std::bit_rshift(val: std::int32, n: std::int64) -> std::int32
         CASE
             WHEN n < 0 THEN
                 edgedb.raise(
-                    NULL::int8,
+                    NULL::int4,
                     'invalid_parameter_value',
                     msg => (
                         'bit_rshift(): cannot shift by negative amount'
@@ -221,8 +221,8 @@ std::bit_rshift(val: std::int32, n: std::int64) -> std::int32
                 )
             WHEN n > 31 THEN
                 CASE
-                    WHEN val < 0 THEN -1
-                    ELSE 0
+                    WHEN val < 0 THEN -1::int4
+                    ELSE 0::int4
                 END
             ELSE val >> n::int4
         END
@@ -271,13 +271,13 @@ std::bit_lshift(val: std::int16, n: std::int64) -> std::int16
         CASE
             WHEN n < 0 THEN
                 edgedb.raise(
-                    NULL::int8,
+                    NULL::int2,
                     'invalid_parameter_value',
                     msg => (
                         'bit_lshift(): cannot shift by negative amount'
                     )
                 )
-            WHEN n > 31 THEN 0
+            WHEN n > 31 THEN 0::int2
             ELSE val << n::int4
         END
     )
@@ -296,13 +296,13 @@ std::bit_lshift(val: std::int32, n: std::int64) -> std::int32
         CASE
             WHEN n < 0 THEN
                 edgedb.raise(
-                    NULL::int8,
+                    NULL::int4,
                     'invalid_parameter_value',
                     msg => (
                         'bit_lshift(): cannot shift by negative amount'
                     )
                 )
-            WHEN n > 31 THEN 0
+            WHEN n > 31 THEN 0::int4
             ELSE val << n::int4
         END
     )
