@@ -154,6 +154,8 @@ async def handle_request(
                 limit = qs.get('limit')
                 if limit is not None:
                     limit = limit[0]
+                else:
+                    limit = 0
 
         else:
             raise TypeError('expected a GET or a POST request')
