@@ -708,6 +708,9 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
                     elif mtype == b'E':
                         await self.legacy_execute()
 
+                    elif mtype == b'F':
+                        await self.legacy_fast_query()
+
                     elif mtype == b'O':
                         await self.legacy_optimistic_execute()
 
@@ -898,6 +901,8 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
             bint inline_typenames = False
             bint inline_objectids = True
             bytes stmt_name = b''
+            str module = None
+            bint read_only = False
 
         headers = self.legacy_parse_headers()
         if headers:
@@ -912,6 +917,10 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
                     allow_capabilities = parse_capabilities_header(v)
                 elif k == QUERY_HEADER_EXPLICIT_OBJECTIDS:
                     inline_objectids = not parse_boolean(v, "EXPLICIT_OBJECTIDS")
+                elif k == QUERY_HEADER_EXPLICIT_MODULE:
+                    module = v.decode()
+                elif k == QUERY_HEADER_PROHIBIT_MUTATION:
+                    read_only = parse_boolean(v, "PROHIBIT_MUTATION")
                 else:
                     raise errors.BinaryProtocolError(
                         f'unexpected message header: {k}'
@@ -944,6 +953,8 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
             inline_typenames=inline_typenames,
             inline_objectids=inline_objectids,
             allow_capabilities=allow_capabilities,
+            module=module,
+            read_only=read_only
         )
 
         return eql, query_req, stmt_name
@@ -1326,3 +1337,37 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
             attrs[key] = value
             num_fields -= 1
         return attrs
+
+
+    async def legacy_fast_query(self):
+        cdef:
+            bytes eql
+            dbview.QueryRequestInfo query_req
+
+        self._last_anon_compiled = None
+        _, query_req, stmt_name = self.legacy_parse_prepare_query_part(True)
+        compiled_query = await self._parse(query_req)
+        self._last_anon_compiled = compiled_query
+
+        rtype = self.buffer.read_byte()
+        if rtype == b'T':
+            desc_msg = self.make_legacy_command_data_description_msg(compiled_query)
+        else:
+            raise errors.BinaryProtocolError(
+                f'unsupported "describe" message mode {chr(rtype)!r}')
+
+        arguments = self.buffer.read_len_prefixed_bytes()
+        if arguments:
+            raise errors.UnsupportedFeatureError(
+                'arguments are not yet supporteed')
+
+        self.buffer.finish_message()
+
+        if compiled_query.query_unit_group.capabilities & ~query_req.allow_capabilities:
+            raise compiled_query.query_unit_group.capabilities.make_error(
+                query_req.allow_capabilities,
+                errors.DisabledCapabilityError,
+            )
+
+        self.write(desc_msg)
+        await self._execute(compiled_query, arguments, False)

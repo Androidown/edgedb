@@ -44,6 +44,8 @@ cdef class QueryRequestInfo:
     cdef public bint inline_typenames
     cdef public bint inline_objectids
     cdef public uint64_t allow_capabilities
+    cdef public object module
+    cdef public bint read_only
 
     cdef int cached_hash
 

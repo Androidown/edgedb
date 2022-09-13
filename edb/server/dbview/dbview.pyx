@@ -42,7 +42,7 @@ from edb.schema import schema as s_schema
 from edb.schema import version as s_ver
 from edb.schema import name as sn
 from edb.server import compiler, defines, config, metrics
-from edb.server.compiler import dbstate, sertypes
+from edb.server.compiler import dbstate, sertypes, enums
 from edb.pgsql import dbops
 
 cimport cython
@@ -84,6 +84,8 @@ cdef class QueryRequestInfo:
         inline_typenames: bint = False,
         inline_objectids: bint = True,
         allow_capabilities: uint64_t = <uint64_t>compiler.Capability.ALL,
+        module: str = None,
+        read_only: bint = False,
     ):
         self.source = source
         self.protocol_version = protocol_version
@@ -95,6 +97,8 @@ cdef class QueryRequestInfo:
         self.inline_typenames = inline_typenames
         self.inline_objectids = inline_objectids
         self.allow_capabilities = allow_capabilities
+        self.module = module
+        self.read_only = read_only
 
         self.cached_hash = hash((
             self.source.cache_key(),
@@ -106,6 +110,7 @@ cdef class QueryRequestInfo:
             self.inline_typeids,
             self.inline_typenames,
             self.inline_objectids,
+            self.module
         ))
 
     def __hash__(self):
@@ -121,7 +126,8 @@ cdef class QueryRequestInfo:
             self.implicit_limit == other.implicit_limit and
             self.inline_typeids == other.inline_typeids and
             self.inline_typenames == other.inline_typenames and
-            self.inline_objectids == other.inline_objectids
+            self.inline_objectids == other.inline_objectids and
+            self.module == other.module
         )
 
 
@@ -1013,6 +1019,10 @@ cdef class DatabaseConnectionView:
             1.0,
             'cache' if cached else 'compiler'
         )
+        if query_req.read_only and bool(
+            query_unit_group.capabilities & enums.Capability.MODIFICATIONS
+        ):
+            raise errors.QueryError('Mutation is prohibited in read-only context.')
 
         return CompiledQuery(
             query_unit_group=query_unit_group,
@@ -1059,6 +1069,7 @@ cdef class DatabaseConnectionView:
                     query_req.inline_objectids,
                     query_req.input_format is compiler.InputFormat.JSON,
                     self.in_tx_error(),
+                    query_req.module,
                 )
             else:
                 result = await compiler_pool.compile(
@@ -1080,6 +1091,7 @@ cdef class DatabaseConnectionView:
                     self._protocol_version,
                     query_req.inline_objectids,
                     query_req.input_format is compiler.InputFormat.JSON,
+                    query_req.module,
                 )
         finally:
             metrics.edgeql_query_compilation_duration.observe(
