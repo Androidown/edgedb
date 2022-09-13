@@ -227,13 +227,10 @@ async def execute_script(
                 dbv.start_implicit(query_unit)
                 config_ops = query_unit.config_ops
 
-                if query_unit.user_schema_mut_log:
-                    base_user_schema = dbv.get_user_schema()
-                    user_schema_unpacked = query_unit.update_user_schema(base_user_schema)
-                    cached_reflection = query_unit.cached_reflection
-                elif query_unit.user_schema:
+                if query_unit.user_schema:
                     user_schema = query_unit.user_schema
                     cached_reflection = query_unit.cached_reflection
+                    user_schema_unpacked = None
 
                 if query_unit.global_schema:
                     global_schema = query_unit.global_schema
@@ -267,6 +264,16 @@ async def execute_script(
                                 ignore_data=False,
                                 fe_conn=fe_conn,
                             )
+
+                if not query_unit.user_schema and query_unit.user_schema_mut_log:
+                    if user_schema_unpacked is None:
+                        base_user_schema = user_schema or dbv.get_user_schema()
+                    else:
+                        base_user_schema = user_schema_unpacked
+
+                    user_schema_unpacked = query_unit.update_user_schema(base_user_schema)
+                    user_schema = None
+                    cached_reflection = query_unit.cached_reflection
 
                 if config_ops:
                     await dbv.apply_config_ops(conn, config_ops)
