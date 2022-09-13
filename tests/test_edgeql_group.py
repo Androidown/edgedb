@@ -39,6 +39,7 @@ class TestEdgeQLGroup(tb.QueryTestCase):
         'SET MODULE cards;',
         os.path.join(os.path.dirname(__file__), 'schemas',
                      'cards_setup.edgeql'),
+        'SET MODULE default;',
     ]
 
     async def test_edgeql_group_simple_01(self):
