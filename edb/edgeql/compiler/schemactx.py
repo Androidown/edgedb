@@ -559,6 +559,7 @@ def get_union_pointer(
     opaque: bool = False,
     modname: Optional[str] = None,
     ctx: context.ContextLevel,
+    recursive: bool = True
 ) -> s_pointers.Pointer:
 
     ctx.env.schema, ptr = s_pointers.get_or_create_union_pointer(
@@ -570,6 +571,7 @@ def get_union_pointer(
         opaque=opaque,
         modname=modname,
         transient=True,
+        recursive=recursive
     )
 
     ctx.env.created_schema_objects.add(ptr)

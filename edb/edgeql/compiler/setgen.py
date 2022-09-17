@@ -740,6 +740,7 @@ def resolve_ptr(
                 opaque=opaque,
                 modname=ctx.derived_target_module,
                 ctx=ctx,
+                recursive=recursive,
             )
 
     if ptr is not None:
