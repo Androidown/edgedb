@@ -973,6 +973,11 @@ class EdgeQLSourceGenerator(codegen.SourceGenerator):
                 group_by_system_comment=group_by_system_comment,
                 allow_short=allow_short,
             )
+        else:
+            self._write_empty_block()
+
+    def _write_empty_block(self):
+        self.write(' {}')
 
     def _visit_DropObject(
         self,

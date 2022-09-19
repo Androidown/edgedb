@@ -5223,6 +5223,16 @@ aa';
         };
         """
 
+    def test_edgeql_syntax_ddl_type_23(self):
+        """
+        ALTER TYPE Foo {};
+        """
+
+    def test_edgeql_syntax_ddl_type_24(self):
+        """
+        ALTER TYPE Foo { ALTER PROPERTY bar {};};
+        """
+
     def test_edgeql_syntax_set_command_01(self):
         """
         SET MODULE default;
