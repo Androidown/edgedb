@@ -1019,10 +1019,6 @@ cdef class DatabaseConnectionView:
             1.0,
             'cache' if cached else 'compiler'
         )
-        if query_req.read_only and bool(
-            query_unit_group.capabilities & enums.Capability.MODIFICATIONS
-        ):
-            raise errors.QueryError('Mutation is prohibited in read-only context.')
 
         return CompiledQuery(
             query_unit_group=query_unit_group,
@@ -1098,6 +1094,10 @@ cdef class DatabaseConnectionView:
                 time.monotonic() - started_at)
 
         unit_group, self._last_comp_state, self._last_comp_state_id = result
+        if query_req.read_only and bool(
+            unit_group.capabilities & enums.Capability.MODIFICATIONS
+        ):
+            raise errors.QueryError('Mutation is prohibited in read-only context.')
 
         return unit_group
 

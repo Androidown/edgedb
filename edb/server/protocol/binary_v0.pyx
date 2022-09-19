@@ -1045,11 +1045,15 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
         query: bytes,
         *,
         skip_first: bool,
+        module: str = None,
+        read_only: bool = False,
     ):
         query_req = dbview.QueryRequestInfo(
             source=edgeql.Source.from_string(query.decode("utf-8")),
             protocol_version=self.protocol_version,
             output_format=FMT_NONE,
+            module=module,
+            read_only=read_only
         )
 
         return await self.get_dbview()._compile(
@@ -1100,11 +1104,17 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
             WriteBuffer packet
             uint64_t allow_capabilities = ALL_CAPABILITIES
 
+        module = None
+        read_only = False
         headers = self.legacy_parse_headers()
         if headers:
             for k, v in headers.items():
                 if k == QUERY_HEADER_ALLOW_CAPABILITIES:
                     allow_capabilities = parse_capabilities_header(v)
+                elif k == QUERY_HEADER_EXPLICIT_MODULE:
+                    module = v.decode()
+                elif k == QUERY_HEADER_PROHIBIT_MUTATION:
+                    read_only = parse_boolean(v, "PROHIBIT_MUTATION")
                 else:
                     raise errors.BinaryProtocolError(
                         f'unexpected message header: {k}'
@@ -1139,7 +1149,8 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
             raise ConnectionAbortedError
 
         query_unit = await self._legacy_simple_query(
-            eql, allow_capabilities, skip_first)
+            eql, allow_capabilities, skip_first,
+            module, read_only)
 
         packet = WriteBuffer.new()
         packet.write_buffer(self.make_legacy_command_complete_msg(query_unit))
@@ -1152,6 +1163,8 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
         eql: bytes,
         allow_capabilities: uint64_t,
         skip_first: bint,
+        module: str = None,
+        read_only: bool = False,
     ):
         cdef:
             bytes state = None, orig_state = None
@@ -1160,7 +1173,7 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
             pgcon.PGConnection conn
 
         unit_group = await self._legacy_compile_script(
-            eql, skip_first=skip_first)
+            eql, skip_first=skip_first, module=module, read_only=read_only)
         metrics.edgeql_query_compilations.inc(1.0, 'compiler')
 
         if self._cancelled:
