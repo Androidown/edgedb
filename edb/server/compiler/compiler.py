@@ -609,6 +609,7 @@ class Compiler:
                 ctx, 'allow_user_specified_id') or ctx.schema_reflection_mode,
             testmode=self.get_config_val(ctx, '__internal_testmode'),
             devmode=self._is_dev_instance(),
+            schema_reflection_mode=ctx.schema_reflection_mode
         )
 
     def _compile_ql_query(

@@ -662,7 +662,10 @@ def compile_inheritance_conflict_checks(
 
     has_id_write = _has_explicit_id_write(stmt)
 
-    if not ctx.env.dml_stmts and not has_id_write:
+    if (
+        ctx.env.options.schema_reflection_mode or
+        (not ctx.env.dml_stmts and not has_id_write)
+    ):
         return None
 
     assert isinstance(subject_stype, s_objtypes.ObjectType)

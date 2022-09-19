@@ -83,6 +83,9 @@ class GlobalCompilerOptions:
     #: Is the compiler running in testmode
     testmode: bool = False
 
+    #: Is the compiler running in schema reflection mode
+    schema_reflection_mode: bool = False
+
 
 @dataclass
 class CompilerOptions(GlobalCompilerOptions):

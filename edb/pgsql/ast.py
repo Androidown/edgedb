@@ -42,9 +42,9 @@ class Base(ast.AST):
     def __repr__(self):
         return f'<pg.{self.__class__.__name__} at 0x{id(self):x}>'
 
-    def dump_sql(self) -> None:
+    def dump_sql(self, reordered=True) -> None:
         from edb.common.debug import dump_sql
-        dump_sql(self, reordered=True, pretty=True)
+        dump_sql(self, reordered=reordered, pretty=True)
 
 
 class ImmutableBase(ast.ImmutableASTMixin, Base):
