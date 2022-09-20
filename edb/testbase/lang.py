@@ -288,7 +288,6 @@ def _load_std_schema():
                 schema, std_dirs_hash, 'transient-stdschema.pickle')
 
         _std_schema = schema
-        _std_schema.reset_mutation()
 
     return _std_schema
 
@@ -323,7 +322,7 @@ def _load_reflection_schema():
                     'transient-reflschema.pickle',
                 )
 
-        _refl_schema = reflschema.reset_mutation()
+        _refl_schema = reflschema
         _schema_class_layout = classlayout
 
     return _refl_schema, _schema_class_layout

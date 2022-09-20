@@ -644,9 +644,9 @@ async def _make_stdlib(
     '''
 
     return StdlibBits(
-        stdschema=schema.get_top_schema().reset_mutation(),
-        reflschema=reflschema.get_top_schema().reset_mutation(),
-        global_schema=schema.get_global_schema().reset_mutation(),
+        stdschema=schema.get_top_schema(),
+        reflschema=reflschema.get_top_schema(),
+        global_schema=schema.get_global_schema(),
         sqltext=sqltext,
         types=types,
         classlayout=reflection.class_layout,
@@ -705,8 +705,8 @@ async def _amend_stdlib(
 
     return (
         stdlib._replace(
-            stdschema=schema.reset_mutation(),
-            reflschema=reflschema.reset_mutation()
+            stdschema=schema,
+            reflschema=reflschema
         ),
         sqltext
     )
@@ -880,7 +880,6 @@ async def _init_stdlib(
         t = schema.get_by_id(uuidgen.UUID(entry['id']))
         schema = t.set_field_value(
             schema, 'backend_id', entry['backend_id'])
-        schema.reset_mutation()
 
     stdlib = stdlib._replace(stdschema=schema)
 

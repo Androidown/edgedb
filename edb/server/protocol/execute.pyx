@@ -265,7 +265,7 @@ async def execute_script(
                                 fe_conn=fe_conn,
                             )
 
-                if not query_unit.user_schema and query_unit.user_schema_mut_log:
+                if not query_unit.user_schema and query_unit.user_schema_mutation:
                     if user_schema_unpacked is None:
                         base_user_schema = user_schema or dbv.get_user_schema()
                     else:
@@ -295,11 +295,19 @@ async def execute_script(
 
     else:
         if not in_tx:
+            group_mutation = unit_group.user_schema_mutation
             side_effects = dbv.commit_implicit_tx(
-                user_schema, user_schema_unpacked, global_schema, cached_reflection
+                user_schema, user_schema_unpacked, group_mutation,
+                global_schema, cached_reflection
             )
             if side_effects:
                 signal_side_effects(dbv, side_effects)
+                if (
+                    side_effects & dbview.SideEffects.SchemaChanges
+                    and group_mutation is not None
+                ):
+                    await dbv.update_compiler_user_schema(group_mutation)
+
             state = dbv.serialize_state()
             if state is not orig_state:
                 conn.last_state = state

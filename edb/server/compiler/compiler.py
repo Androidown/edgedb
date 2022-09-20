@@ -1829,6 +1829,8 @@ class Compiler:
             non_trailing_ctx = dataclasses.replace(
                 ctx, output_format=enums.OutputFormat.NONE)
 
+        mutations = []
+
         for i, stmt in enumerate(statements):
             is_trailing_stmt = i == statements_len - 1
             stmt_ctx = ctx if is_trailing_stmt else non_trailing_ctx
@@ -1900,13 +1902,9 @@ class Compiler:
                 unit.has_role_ddl = comp.has_role_ddl
                 unit.ddl_stmt_id = comp.ddl_stmt_id
                 if comp.user_schema is not None:
-                    if send_mutation:
-                        unit.user_schema_mut_log = \
-                            pickle.dumps(comp.user_schema.get_mutation_logger(), -1)
-                        comp.user_schema.refresh_mutation_logger()
-                    else:
-                        comp.user_schema.refresh_mutation_logger()
-                        unit.user_schema = pickle.dumps(comp.user_schema, -1)
+                    self.send_schema_change(
+                        comp.user_schema, send_mutation,
+                        unit, mutations, is_script, ctx.protocol_version)
                 if comp.cached_reflection is not None:
                     unit.cached_reflection = \
                         pickle.dumps(comp.cached_reflection, -1)
@@ -1919,13 +1917,9 @@ class Compiler:
                 unit.sql = comp.sql
                 unit.cacheable = comp.cacheable
                 if comp.user_schema is not None:
-                    if send_mutation:
-                        unit.user_schema_mut_log = \
-                            pickle.dumps(comp.user_schema.get_mutation_logger(), -1)
-                        comp.user_schema.refresh_mutation_logger()
-                    else:
-                        comp.user_schema.refresh_mutation_logger()
-                        unit.user_schema = pickle.dumps(comp.user_schema, -1)
+                    self.send_schema_change(
+                        comp.user_schema, send_mutation,
+                        unit, mutations, is_script, ctx.protocol_version)
                 if comp.cached_reflection is not None:
                     unit.cached_reflection = \
                         pickle.dumps(comp.cached_reflection, -1)
@@ -1954,13 +1948,9 @@ class Compiler:
                 unit.sql = comp.sql
                 unit.cacheable = comp.cacheable
                 if comp.user_schema is not None:
-                    if send_mutation:
-                        unit.user_schema_mut_log = \
-                            pickle.dumps(comp.user_schema.get_mutation_logger(), -1)
-                        comp.user_schema.refresh_mutation_logger()
-                    else:
-                        comp.user_schema.refresh_mutation_logger()
-                        unit.user_schema = pickle.dumps(comp.user_schema, -1)
+                    self.send_schema_change(
+                        comp.user_schema, send_mutation,
+                        unit, mutations, is_script, ctx.protocol_version)
                 if comp.cached_reflection is not None:
                     unit.cached_reflection = \
                         pickle.dumps(comp.cached_reflection, -1)
@@ -2075,7 +2065,32 @@ class Compiler:
                 raise errors.InternalServerError(
                     f'unit has invalid "cardinality": {unit!r}')
 
+        if mutations:
+            rv.user_schema_mutation = pickle.dumps(
+                s_schema.SchemaMutationLogger.merge(mutations), -1)
+
         return rv
+
+    @staticmethod
+    def send_schema_change(
+        user_schema: s_schema.FlatSchema,
+        send_mutation: bool,
+        unit: dbstate.QueryUnit,
+        mutations: List,
+        is_script: bool,
+        protocol_version: Tuple[int, int],
+    ):
+        if not send_mutation:
+            user_schema.rebase_mutation()
+            unit.user_schema = pickle.dumps(user_schema, -1)
+            return
+
+        if is_script and protocol_version > (0, 13):
+            mutations.append(user_schema.get_mutation())
+        else:
+            unit.user_schema_mutation = pickle.dumps(
+                user_schema.get_mutation(), -1)
+        user_schema.rebase_mutation()
 
     # API
 

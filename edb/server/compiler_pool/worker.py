@@ -215,8 +215,7 @@ def apply_schema_mutation(
 
     base_user_schema = db.user_schema
 
-    with util.disable_gc():
-        mutation: s_schema.SchemaMutationLogger = pickle.loads(schema_mutation)
+    mutation: s_schema.SchemaMutationLogger = pickle.loads(schema_mutation)
 
     try:
         user_schema = mutation.apply(base_user_schema)
@@ -240,7 +239,6 @@ def set_user_schema(
 
     with util.disable_gc():
         user_schema: s_schema.FlatSchema = pickle.loads(schema)
-        user_schema.refresh_mutation_logger()
 
     db = db._replace(user_schema=user_schema)
     DBS = DBS.set(dbname, db)

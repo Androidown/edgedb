@@ -667,7 +667,6 @@ class Server(ha_base.ClusterProtocol):
             data=json_data,
             schema_class_layout=self._schema_class_layout,
         )
-        user_schema.refresh_mutation_logger()
         return user_schema
 
     async def _acquire_intro_pgcon(self, dbname):

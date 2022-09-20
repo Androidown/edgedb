@@ -291,7 +291,7 @@ class QueryUnit:
     user_schema: Optional[bytes] = None
     cached_reflection: Optional[bytes] = None
     # The pickled user_shema mutation log, aim to replace user_schema
-    user_schema_mut_log: Optional[bytes] = None
+    user_schema_mutation: Optional[bytes] = None
 
     # If present, represents the future global schema state
     # after the command is run. The schema is pickled.
@@ -302,8 +302,8 @@ class QueryUnit:
         return bool(self.capabilities & enums.Capability.DDL)
 
     def update_user_schema(self, base_schema: s_schema.FlatSchema):
-        if self.user_schema_mut_log is not None:
-            mut: s_schema.SchemaMutationLogger = pickle.loads(self.user_schema_mut_log)
+        if self.user_schema_mutation is not None:
+            mut: s_schema.SchemaMutationLogger = pickle.loads(self.user_schema_mutation)
             return mut.apply(base_schema)
         else:
             return base_schema
@@ -342,6 +342,8 @@ class QueryUnitGroup:
     in_type_id: bytes = sertypes.NULL_TYPE_ID.bytes
     in_type_args: Optional[List[Param]] = None
     globals: Optional[List[str]] = None
+    # The pickled user_shema mutation log, aim to replace user_schema
+    user_schema_mutation: Optional[bytes] = None
 
     units: List[QueryUnit] = dataclasses.field(default_factory=list)
 

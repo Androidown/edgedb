@@ -811,7 +811,7 @@ cdef class DatabaseConnectionView:
             side_effects = self._on_success(query_unit, new_types)
 
         if not self._in_tx and side_effects and (side_effects & SideEffects.SchemaChanges):
-            await self.update_compiler_user_schema(query_unit)
+            await self.update_compiler_user_schema(query_unit.user_schema_mutation)
         return side_effects
 
     def _on_success(self, query_unit, new_types):
@@ -825,7 +825,7 @@ cdef class DatabaseConnectionView:
         if not self._in_tx:
             if new_types:
                 self._db._update_backend_ids(new_types)
-            if query_unit.user_schema_mut_log is not None:
+            if query_unit.user_schema_mutation is not None:
                 self._in_tx_dbver = next_dbver()
                 self._state_serializer = None
                 self._db._set_and_signal_new_user_schema(
@@ -900,7 +900,8 @@ cdef class DatabaseConnectionView:
         return side_effects
 
     cdef commit_implicit_tx(
-        self, user_schema, user_schema_unpacked, global_schema, cached_reflection
+        self, user_schema, user_schema_unpacked,
+        user_schema_mutation, global_schema, cached_reflection
     ):
         assert self._in_tx
         side_effects = 0
@@ -911,12 +912,24 @@ cdef class DatabaseConnectionView:
 
         if self._in_tx_new_types:
             self._db._update_backend_ids(self._in_tx_new_types)
-        if user_schema is not None or user_schema_unpacked is not None:
-            if user_schema is not None:
-                user_schema_unpacked = pickle.loads(user_schema)
+
+        if (
+            user_schema is not None
+            or user_schema_mutation is not None
+            or user_schema_unpacked is not None
+        ):
+            if user_schema_unpacked is not None:
+                user_schema = user_schema_unpacked
+            elif user_schema_mutation is not None:
+                base_user_schema = self._db.user_schema
+                mut = pickle.loads(user_schema_mutation)
+                user_schema = mut.apply(base_user_schema)
+            else:
+                user_schema = pickle.loads(user_schema)
+
             self._state_serializer = None
             self._db._set_and_signal_new_user_schema(
-                user_schema_unpacked,
+                user_schema,
                 pickle.loads(cached_reflection)
                     if cached_reflection is not None
                     else None
@@ -1027,12 +1040,12 @@ cdef class DatabaseConnectionView:
             extra_blobs=source.extra_blobs(),
         )
 
-    async def update_compiler_user_schema(self, query_unit: dbstate.QueryUnit):
+    async def update_compiler_user_schema(self, mutation):
         compiler_pool = self._db._index._server.get_compiler_pool()
 
         await compiler_pool.apply_user_schema_mutation_for_all(
             self.dbname,
-            query_unit.user_schema_mut_log,
+            mutation,
             self.get_user_schema(),
             self.get_global_schema(),
             self.reflection_cache,

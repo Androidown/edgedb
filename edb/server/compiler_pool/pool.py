@@ -100,6 +100,16 @@ class BaseWorker:
         self._last_used = time.monotonic()
         self._closed = False
 
+    def get_store_user_schema_id(self, dbname: str) -> int:
+        if dbname not in self._dbs:
+            return -1
+
+        return self._dbs[dbname].user_schema_version
+
+    @functools.cached_property
+    def identifier(self):
+        return id(self)
+
     async def call(self, method_name, *args, sync_state=None):
         assert not self._closed
 
@@ -154,6 +164,10 @@ class Worker(BaseWorker):
             '__init_worker__',
             init_args_pickled,
         )
+
+    @functools.cached_property
+    def identifier(self):
+        return self._pid
 
     def get_pid(self):
         return self._pid
@@ -324,10 +338,12 @@ class AbstractPool:
                         worker_db._replace(user_schema_version=user_schema.version_id)
                     )
                     logger.info(
+                        f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
                         f"Initialize db <{dbname}> schema version to: {user_schema.version_id}"
                     )
                 else:
                     logger.warning(
+                        f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
                         f"Stored schema version: {worker_db.user_schema_version} "
                         f"is not consistent with server schema version: {user_schema.version_id}"
                     )
@@ -398,9 +414,19 @@ class AbstractPool:
         worker = await self._acquire_worker(condition=lambda w: w.get_pid() == pid)
         try:
             status, ver_id = await worker.call('apply_schema_mutation', dbname, mutation_pickled)
-            logger.info(f"DB<{dbname}> user schema version updated to {ver_id}, is success: {status}")
+
             if status is True:
+                logger.info(
+                    f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
+                    f"user schema version updated from "
+                    f"{worker.get_store_user_schema_id(dbname)} to {ver_id}"
+                )
                 self._update_user_schema_ver_id(worker, dbname, ver_id)
+            else:
+                logger.info(
+                    f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
+                    f"Cannot update user schema for version {worker.get_store_user_schema_id(dbname)}, "
+                )
             return pid, status
         finally:
             self._release_worker(worker)
@@ -409,7 +435,10 @@ class AbstractPool:
         worker = await self._acquire_worker(condition=lambda w: w.get_pid() == pid)
         try:
             status, ver_id = await worker.call('set_user_schema', dbname, schema_pickled)
-            logger.info(f"DB<{dbname}> user schema version set to {ver_id}, is success: {status}")
+            logger.info(
+                f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
+                f"DB<{dbname}> user schema version set to {ver_id}, is success: {status}"
+            )
             if status is True:
                 self._update_user_schema_ver_id(worker, dbname, ver_id)
             return pid, status
@@ -427,6 +456,10 @@ class AbstractPool:
         system_config,
     ):
         worker = await self._acquire_worker(condition=lambda w: w.get_pid() == pid)
+        logger.info(
+            f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
+            f"Initialize user_schema as version: {user_schema.version_id}, "
+        )
         try:
             await worker.call(
                 '__sync__',
@@ -438,13 +471,16 @@ class AbstractPool:
                 _pickle_memoized(system_config),
                 False
             )
-            worker._dbs = worker._dbs.set(dbname, state.DatabaseState(
-                name=dbname,
-                user_schema=user_schema,
-                user_schema_version=user_schema.version_id,
-                reflection_cache=reflection_cache,
-                database_config=database_config,
-            ))
+            worker._dbs = worker._dbs.set(
+                dbname,
+                state.DatabaseState(
+                    name=dbname,
+                    user_schema=user_schema,
+                    user_schema_version=user_schema.version_id,
+                    reflection_cache=reflection_cache,
+                    database_config=database_config,
+                )
+            )
         finally:
             self._release_worker(worker)
 
@@ -467,7 +503,10 @@ class AbstractPool:
         for pid, worker in self._workers.items():
             if dbname not in worker._dbs:
                 db_init_pids.append(pid)
-            elif mutation is not None:
+            elif (
+                mutation is not None
+                and worker.get_store_user_schema_id(dbname) is not None
+            ):
                 mutation_tasks.append(
                     self._apply_user_schema_mutation(pid, dbname, mutation))
             else:
@@ -989,6 +1028,9 @@ class DebugWorker:
     _last_pickled_state = None
     connected = False
 
+    def get_store_user_schema_id(self, dbname):
+        return BaseWorker.get_store_user_schema_id(self, dbname)  # noqa
+
     async def call(self, method_name, *args, sync_state=None):
         from . import worker
 
@@ -997,6 +1039,10 @@ class DebugWorker:
         if sync_state is not None:
             sync_state()
         return r
+
+    @functools.cached_property
+    def identifier(self):
+        return os.getpid()
 
 
 @srvargs.CompilerPoolMode.Solo.assign_implementation

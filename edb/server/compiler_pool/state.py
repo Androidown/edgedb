@@ -32,7 +32,7 @@ ReflectionCache = typing.Mapping[str, typing.Tuple[str, ...]]
 class DatabaseState(typing.NamedTuple):
     name: str
     user_schema: typing.Optional[schema.FlatSchema]
-    user_schema_version: uuid.UUID
+    user_schema_version: typing.Optional[int]
     reflection_cache: ReflectionCache
     database_config: immutables.Map[str, config.SettingValue]
 

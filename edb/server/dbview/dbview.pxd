@@ -179,7 +179,8 @@ cdef class DatabaseConnectionView:
     cdef start_implicit(self, query_unit)
     cdef on_error(self)
     cdef commit_implicit_tx(
-        self, user_schema, user_schema_unpacked, global_schema, cached_reflection
+        self, user_schema, user_schema_unpacked,
+        user_schema_mutation, global_schema, cached_reflection
     )
 
     cpdef get_session_config(self)

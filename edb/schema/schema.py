@@ -183,7 +183,7 @@ class SchemaMutationLogger:
     def set_parent(self, parent: SchemaMutationLogger):
         self.parent = parent
 
-    def set_id(self, ver_id: uuid.UUID):
+    def set_id(self, ver_id: int):
         self.id = ver_id
 
     def set_generation(self, n: int):
@@ -247,7 +247,7 @@ class SchemaMutationLogger:
 
         new = schema._replace(**replace_dict)
         new._generation = self.generation
-        new.refresh_mutation_logger()
+        new.rebase_mutation()
         return new
 
     def reduce(self) -> SchemaMutationLogger:
@@ -262,19 +262,18 @@ class SchemaMutationLogger:
             return self
 
         mut_history.append(self)
+        return self.merge(mut_history)
 
-        mut = functools.reduce(lambda x, y: x._merge(y), mut_history)
-        mut.id = mut_history[0].id
-        mut.generation = self.generation
+    @staticmethod
+    def merge(mutations: Sequence[SchemaMutationLogger]):
+        mut = functools.reduce(lambda x, y: x._merge(y), mutations)
+        mut.id = mutations[0].id
+        mut.generation = mutations[-1].generation
         mut.parent = None
         return mut
 
 
 class Schema(abc.ABC):
-    @abc.abstractmethod
-    def reset_mutation(self: Schema_T) -> Schema_T:
-        raise NotImplementedError
-
     @abc.abstractmethod
     def add_raw(
         self: Schema_T,
@@ -700,18 +699,18 @@ class FlatSchema(Schema):
 
     @functools.cached_property
     def version_id(self):
-        return self.get_global(s_ver.SchemaVersion, '__schema_version__').get_version(self)
+        return self._generation % 100_000_000
 
-    def refresh_mutation_logger(self):
-        self.reset_mutation()
-        self._mut.set_id(self.version_id)
-
-    def reset_mutation(self: Schema_T) -> Schema_T:
+    def rebase_mutation(self):
         self._mut = SchemaMutationLogger()
         self._mut_next = SchemaMutationLogger()
-        return self
+        self._mut.set_id(self.version_id)
 
-    def get_mutation_logger(self):
+    def __reduce_ex__(self, protocol):
+        self.rebase_mutation()
+        return super().__reduce_ex__(protocol)
+
+    def get_mutation(self):
         return self._mut.reduce()
 
     def _replace(
@@ -1766,12 +1765,6 @@ class ChainedSchema(Schema):
         self._base_schema = base_schema
         self._top_schema = top_schema
         self._global_schema = global_schema
-
-    def reset_mutation(self: ChainedSchema) -> ChainedSchema:
-        self._base_schema.reset_mutation()
-        self._top_schema.reset_mutation()
-        self._global_schema.reset_mutation()
-        return self
 
     def get_top_schema(self) -> FlatSchema:
         return self._top_schema
