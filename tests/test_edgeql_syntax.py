@@ -4761,6 +4761,11 @@ aa';
         };
         """
 
+    def test_edgeql_syntax_ddl_function_55(self):
+        """
+        ALTER FUNCTION foo() {};
+        """
+
     def test_edgeql_syntax_ddl_operator_01(self):
         """
         CREATE INFIX OPERATOR

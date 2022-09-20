@@ -945,7 +945,8 @@ class EdgeQLSourceGenerator(codegen.SourceGenerator):
         unqualified: bool = False,
         named: bool = True,
         ignored_cmds: Optional[AbstractSet[qlast.DDLOperation]] = None,
-        group_by_system_comment: bool = False
+        group_by_system_comment: bool = False,
+        ensure_endswith_block: bool = True
     ) -> None:
         self._visit_aliases(node)
         if self.sdlmode:
@@ -974,7 +975,8 @@ class EdgeQLSourceGenerator(codegen.SourceGenerator):
                 allow_short=allow_short,
             )
         else:
-            self._write_empty_block()
+            if ensure_endswith_block and not node.commands:
+                self._write_empty_block()
 
     def _write_empty_block(self):
         self.write(' {}')
@@ -1941,10 +1943,18 @@ class EdgeQLSourceGenerator(codegen.SourceGenerator):
             self.visit_list(node.params, newlines=False)
             self.write(')')
 
+        has_using = not (
+            node.code.language is qlast.Language.EdgeQL
+            and not node.nativecode
+            and not node.code.code
+        )
+
         self._visit_AlterObject(
             node, 'FUNCTION',
             after_name=lambda: self._function_after_name(node),
-            ignored_cmds=set(node.commands))
+            ignored_cmds=set(node.commands),
+            ensure_endswith_block=not has_using
+        )
 
     def visit_DropFunction(self, node: qlast.DropFunction) -> None:
         def after_name() -> None:
