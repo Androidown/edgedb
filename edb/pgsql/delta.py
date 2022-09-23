@@ -4352,6 +4352,22 @@ class PointerMetaCommand(MetaCommand):
 
 class LinkMetaCommand(CompositeMetaCommand, PointerMetaCommand):
 
+    @staticmethod
+    def _resolve_col_type(prop, schema):
+        if prop is None:
+            return 'uuid'
+
+        target = prop.get_target(schema)
+        if target.is_sequence(schema):
+            return 'int8'
+
+        col_tuple = types.pg_type_from_object(schema, target)
+
+        if len(col_tuple) == 2:
+            return f"{col_tuple[0]}.{common.quote_ident(col_tuple[1])}"
+        else:
+            return '.'.join(col_tuple)
+
     @classmethod
     def _create_table(
             cls, link, schema, context, conditional=False, create_bases=True,
@@ -4366,12 +4382,21 @@ class LinkMetaCommand(CompositeMetaCommand, PointerMetaCommand):
         src_col = 'source'
         tgt_col = 'target'
 
+        src_col_type = cls._resolve_col_type(
+            link.get_source_property(schema),
+            schema
+        )
+        tgt_col_type = cls._resolve_col_type(
+            link.get_target_property(schema),
+            schema
+        )
+
         columns.append(
             dbops.Column(
-                name=src_col, type='uuid', required=True))
+                name=src_col, type=src_col_type, required=True))
         columns.append(
             dbops.Column(
-                name=tgt_col, type='uuid', required=True))
+                name=tgt_col, type=tgt_col_type, required=True))
 
         constraints.append(
             dbops.UniqueConstraint(

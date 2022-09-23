@@ -542,3 +542,17 @@ class OptExtensionVersion(Nonterm):
 
     def reduce_empty(self, *kids):
         self.val = None
+
+
+class SetLinkPath(Nonterm):
+    def reduce_ON_ShortNodeName(self, *kids):
+        self.val = qlast.SetLinkPath(
+            source=None,
+            target=kids[1].val
+        )
+
+    def reduce_ON_ShortNodeName_TO_ShortNodeName(self, *kids):
+        self.val = qlast.SetLinkPath(
+            source=kids[1].val,
+            target=kids[3].val
+        )

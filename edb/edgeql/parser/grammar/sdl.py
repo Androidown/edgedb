@@ -788,6 +788,7 @@ sdl_commands_block(
     IndexDeclarationShort,
     commondl.OnTargetDeleteStmt,
     commondl.OnSourceDeleteStmt,
+    SetLinkPath
 )
 
 

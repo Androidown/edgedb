@@ -1229,6 +1229,14 @@ class EdgeQLSourceGenerator(codegen.SourceGenerator):
             self._write_keywords('RESET ')
             self.write(node.name)
 
+    def visit_SetLinkPath(self, node: qlast.SetLinkPath) -> None:
+        self._write_keywords('ON ')
+
+        if node.source is not None:
+            self.visit(node.source)
+            self._write_keywords(' TO ')
+        self.visit(node.target)
+
     def _eval_bool_expr(
         self,
         expr: Union[qlast.Expr, qlast.TypeExpr],

@@ -427,6 +427,8 @@ ALTER TYPE schema::Link {
     CREATE MULTI LINK properties := .pointers[IS schema::Property];
     CREATE PROPERTY on_target_delete -> schema::TargetDeleteAction;
     CREATE PROPERTY on_source_delete -> schema::SourceDeleteAction;
+    CREATE LINK source_property -> schema::Property;
+    CREATE LINK target_property -> schema::Property;
 };
 
 

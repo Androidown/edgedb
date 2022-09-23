@@ -1083,7 +1083,10 @@ def process_set_as_path(
                 source_rptr.ptrref, resolve_type=False, link_bias=False,
                 allow_missing=True)
             is_id_ref_to_inline_source = bool(
-                source_ptr_info and source_ptr_info.table_type == 'ObjectType')
+                source_ptr_info
+                and source_ptr_info.table_type == 'ObjectType'
+                and source_rptr.ptrref.target_property is None
+            )
 
     if semi_join:
         with ctx.subrel() as srcctx:

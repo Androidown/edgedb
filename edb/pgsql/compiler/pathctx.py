@@ -45,6 +45,7 @@ class PathAspect(s_enum.StrEnum):
     VALUE = 'value'
     SOURCE = 'source'
     SERIALIZED = 'serialized'
+    LINK = 'link'
 
 
 # A mapping of more specific aspect -> less specific aspect for objects
@@ -52,6 +53,7 @@ OBJECT_ASPECT_SPECIFICITY_MAP = {
     PathAspect.IDENTITY: PathAspect.VALUE,
     PathAspect.VALUE: PathAspect.SOURCE,
     PathAspect.SERIALIZED: PathAspect.SOURCE,
+    PathAspect.LINK: PathAspect.VALUE
 }
 
 # A mapping of more specific aspect -> less specific aspect for primitives
@@ -735,6 +737,12 @@ def get_rvar_path_var(
                 ptr_si = pg_types.get_ptrref_storage_info(actual_rptr)
             else:
                 ptr_si = None
+        elif (
+            (rptr := path_id.rptr()) is not None
+            and rptr.target_property is not None
+            and aspect == 'link'
+        ):
+            ptr_si = pg_types.get_ptrref_storage_info(rptr.target_property)
         else:
             ptr_si = None
 
@@ -770,6 +778,12 @@ def get_rvar_path_identity_var(
         rvar: pgast.PathRangeVar, path_id: irast.PathId, *,
         env: context.Environment) -> pgast.OutputVar:
     return get_rvar_path_var(rvar, path_id, aspect='identity', env=env)
+
+
+def get_rvar_path_link_var(
+        rvar: pgast.PathRangeVar, path_id: irast.PathId, *,
+        env: context.Environment) -> pgast.OutputVar:
+    return get_rvar_path_var(rvar, path_id, aspect='link', env=env)
 
 
 def get_rvar_path_value_var(
@@ -971,7 +985,7 @@ def _get_rel_path_output(
         ptr_info: Optional[pg_types.PointerStorageInfo]=None,
         env: context.Environment) -> pgast.OutputVar:
 
-    if path_id.is_objtype_path():
+    if path_id.is_objtype_path() and aspect != 'link':
         if aspect == 'identity':
             aspect = 'value'
 

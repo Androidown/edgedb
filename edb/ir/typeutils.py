@@ -660,6 +660,30 @@ def ptrref_from_ptrcls(  # NoQA: F811
     else:
         children = frozenset()
 
+    if isinstance(ptrcls, s_links.Link):
+        link_src_prop = ptrcls.get_source_property(schema)
+        link_tgt_prop = ptrcls.get_target_property(schema)
+        if link_src_prop is not None:
+            source_prop = ptrref_from_ptrcls(
+                ptrcls=link_src_prop,
+                schema=schema,
+                cache=cache,
+                typeref_cache=typeref_cache,
+            )
+        else:
+            source_prop = None
+        if link_tgt_prop is not None:
+            target_prop = ptrref_from_ptrcls(
+                ptrcls=link_tgt_prop,
+                schema=schema,
+                cache=cache,
+                typeref_cache=typeref_cache,
+            )
+        else:
+            target_prop = None
+    else:
+        source_prop = target_prop = None
+
     kwargs.update(dict(
         out_source=out_source,
         out_target=out_target,
@@ -678,6 +702,8 @@ def ptrref_from_ptrcls(  # NoQA: F811
         has_properties=ptrcls.has_user_defined_properties(schema),
         in_cardinality=in_cardinality,
         out_cardinality=out_cardinality,
+        source_property=source_prop,
+        target_property=target_prop
     ))
 
     ptrref = ircls(**kwargs)

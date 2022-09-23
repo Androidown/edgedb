@@ -689,8 +689,12 @@ def semi_join(
             ctx.rel, map_rvar,
             path_id=ir_set.path_id.ptr_path(), ctx=ctx)
 
-    tgt_ref = pathctx.get_rvar_path_identity_var(
-        set_rvar, far_pid, env=ctx.env)
+    if ptrref.target_property is not None:
+        tgt_ref = pathctx.get_rvar_path_link_var(
+            set_rvar, far_pid, env=ctx.env)
+    else:
+        tgt_ref = pathctx.get_rvar_path_identity_var(
+            set_rvar, far_pid, env=ctx.env)
 
     pathctx.get_path_identity_output(
         ctx.rel, far_pid, env=ctx.env)
@@ -1261,14 +1265,22 @@ def _plain_join(
     condition = None
 
     for path_id in right_rvar.query.path_scope:
-        lref = maybe_get_path_var(query, path_id, aspect='identity', ctx=ctx)
+        aspect = 'identity'
+        lref = maybe_get_path_var(query, path_id, aspect=aspect, ctx=ctx)
         if lref is None:
             lref = maybe_get_path_var(query, path_id, aspect='value', ctx=ctx)
         if lref is None:
             continue
 
-        rref = pathctx.get_rvar_path_identity_var(
-            right_rvar, path_id, env=ctx.env)
+        if (
+            (rptr := path_id.rptr()) is not None
+            and rptr.target_property is not None
+        ):
+            rref = pathctx.get_rvar_path_link_var(
+                right_rvar, path_id, env=ctx.env)
+        else:
+            rref = pathctx.get_rvar_path_identity_var(
+                right_rvar, path_id, env=ctx.env)
 
         assert isinstance(lref, pgast.ColumnRef)
         assert isinstance(rref, pgast.ColumnRef)
