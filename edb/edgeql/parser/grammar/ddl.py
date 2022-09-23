@@ -1638,6 +1638,7 @@ commands_block(
     CreateIndexStmt,
     commondl.OnTargetDeleteStmt,
     commondl.OnSourceDeleteStmt,
+    SetLinkPath
 )
 
 
@@ -1734,6 +1735,7 @@ commands_block(
     commondl.OnSourceDeleteStmt,
     OnTargetDeleteResetStmt,
     OnSourceDeleteResetStmt,
+    SetLinkPath,
     opt=False
 )
 

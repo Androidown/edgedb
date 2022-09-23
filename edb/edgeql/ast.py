@@ -683,6 +683,11 @@ class SetField(DDLOperation):
     special_syntax: bool = False
 
 
+class SetLinkPath(DDLOperation):
+    source: typing.Optional[ObjectRef]
+    target: typing.Optional[ObjectRef]
+
+
 class SetPointerType(SetField):
     name: str = 'target'
     special_syntax: bool = True

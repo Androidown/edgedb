@@ -223,6 +223,9 @@ class BasePointerRef(ImmutableBase):
     # Inbound cardinality of the pointer.
     in_cardinality: qltypes.Cardinality = qltypes.Cardinality.MANY
     defined_here: bool = False
+    #: link field of current pointer (only valid in schema::Link object.)
+    source_property: typing.Optional[BasePointerRef] = None
+    target_property: typing.Optional[BasePointerRef] = None
 
     def dir_target(self, direction: s_pointers.PointerDirection) -> TypeRef:
         if direction is s_pointers.PointerDirection.Outbound:

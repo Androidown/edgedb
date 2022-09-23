@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from . import objtypes as s_objtypes
     from . import types as s_types
     from . import schema as s_schema
+    from edb.common import parsing
 
 
 LinkTargetDeleteAction = qltypes.LinkTargetDeleteAction
@@ -123,6 +124,20 @@ class Link(
         coerce=True,
         compcoef=0.9,
         merge_fn=merge_actions)
+
+    source_property = so.SchemaField(
+        properties.Property,
+        default=None,
+        compcoef=None,
+        inheritable=False
+    )
+
+    target_property = so.SchemaField(
+        properties.Property,
+        default=None,
+        compcoef=None,
+        inheritable=False
+    )
 
     def get_target(self, schema: s_schema.Schema) -> s_objtypes.ObjectType:
         return self.get_field_value(  # type: ignore[no-any-return]
@@ -211,6 +226,84 @@ class LinkCommand(
     context_class=LinkCommandContext,
     referrer_context_class=LinkSourceCommandContext,
 ):
+
+    def canonicalize_attributes(
+        self,
+        schema: s_schema.Schema,
+        context: sd.CommandContext,
+    ) -> s_schema.Schema:
+        schema = super().canonicalize_attributes(schema, context)
+
+        # canonicalize linkpath attributes
+        cmd_target_prop = self._get_attribute_set_cmd('target_property')
+        cmd_source_prop = self._get_attribute_set_cmd('source_property')
+
+        if cmd_target_prop is not None:
+            target = self.get_local_attribute_value('target').resolve(schema)
+
+            if target.is_compound_type(schema):
+                raise errors.UnsupportedFeatureError(
+                    'Setting link path on compound type is not yet supported.',
+                    # context=  # todo
+                )
+
+            self.set_attribute_value(
+                'target_property',
+                self._get_ref_property_shell(
+                    name=cmd_target_prop.new_value,
+                    source=target,
+                    schema=schema,
+                    modaliases=context.modaliases,
+                    sourcectx=cmd_target_prop.source_context
+                ),
+                source_context=cmd_target_prop.source_context
+            )
+        if cmd_source_prop is not None:
+            source = self.get_local_attribute_value('source').resolve(schema)
+            self.set_attribute_value(
+                'source_property',
+                self._get_ref_property_shell(
+                    name=cmd_source_prop.new_value,
+                    source=source,
+                    schema=schema,
+                    modaliases=context.modaliases,
+                    sourcectx=cmd_source_prop.source_context
+                ),
+                source_context=cmd_source_prop.source_context
+            )
+
+        return schema
+
+    @staticmethod
+    def _get_ref_property_shell(
+        name: str,
+        source: s_objtypes.ObjectType,
+        schema: s_schema.Schema,
+        modaliases: Mapping[Optional[str], str],
+        sourcectx: Optional[parsing.ParserContext] = None,
+    ) -> Optional[so.ObjectShell]:
+        if name == 'id':
+            return
+
+        uq_name = sn.UnqualName(name)
+        ptr = source.maybe_get_ptr(schema, uq_name)
+        if ptr is not None:
+            return ptr.as_shell(schema)
+
+        vname = source.get_verbosename(schema, with_parent=True)
+        err = errors.InvalidReferenceError(
+            f'{vname} has no property {name!r}',
+            context=sourcectx
+        )
+        utils.enrich_schema_lookup_error(
+            err,
+            uq_name,
+            modaliases=modaliases,
+            item_type=properties.Property,
+            collection=source.get_pointers(schema).objects(schema),
+            schema=schema,
+        )
+        raise err
 
     def _append_subcmd_ast(
         self,
@@ -413,6 +506,20 @@ class CreateLink(
             node.commands.append(qlast.OnTargetDelete(cascade=op.new_value))
         elif op.property == 'on_source_delete':
             node.commands.append(qlast.OnSourceDelete(cascade=op.new_value))
+        elif op.property == 'target_property':
+            ref = qlast.ObjectRef(name=op.new_value.get_displayname(schema))
+            link_path_op = qlast.get_ddl_subcommand(node, qlast.SetLinkPath)
+            if link_path_op is not None:
+                link_path_op.target = ref
+            else:
+                node.commands.append(qlast.SetLinkPath(target=ref))
+        elif op.property == 'source_property':
+            ref = qlast.ObjectRef(name=op.new_value.get_displayname(schema))
+            link_path_op = qlast.get_ddl_subcommand(node, qlast.SetLinkPath)
+            if link_path_op is not None:
+                link_path_op.source = ref
+            else:
+                node.commands.append(qlast.SetLinkPath(source=ref))
         else:
             super()._apply_field_ast(schema, context, node, op)
 
@@ -706,3 +813,32 @@ class DeleteLink(
             return None
         else:
             return super()._get_ast(schema, context, parent_node=parent_node)
+
+
+class SetLinkPath(sd.Command):
+    astnode = qlast.SetLinkPath
+
+    @classmethod
+    def _cmd_from_ast(
+        cls,
+        schema: s_schema.Schema,
+        astnode: qlast.SetLinkPath,
+        context: sd.CommandContext,
+    ) -> sd.Command:
+        cmd = sd.CommandGroup()
+        cmd.add(
+            sd.AlterObjectProperty(
+                property='target_property',
+                new_value=astnode.target.name,
+                source_context=astnode.target.context
+            )
+        )
+
+        if astnode.source is not None:
+            cmd.add(sd.AlterObjectProperty(
+                property='source_property',
+                new_value=astnode.source.name,
+                source_context=astnode.source.context
+            ))
+
+        return cmd

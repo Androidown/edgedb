@@ -34,6 +34,7 @@ from edb.schema import name as sn
 from edb.schema import objects as s_obj
 from edb.schema import schema as s_schema
 from edb.schema import types as s_types
+from edb.schema import links as s_links
 from edb.common.util import simple_lru
 
 from . import common
@@ -346,7 +347,18 @@ class _PointerStorageInfo:
     @classmethod
     def _resolve_type(cls, schema, pointer):
         pointer_target = pointer.get_target(schema)
-        if pointer_target is not None:
+
+        if isinstance(pointer, s_links.Link):
+            tgt_prop = pointer.get_target_property(schema)  # noqa
+        else:
+            tgt_prop = None
+
+        if tgt_prop is not None:
+            column_type = pg_type_from_object(
+                schema, tgt_prop.get_target(schema),
+                persistent_tuples=True
+            )
+        elif pointer_target is not None:
             if pointer_target.is_object_type():
                 column_type = ('uuid',)
             elif pointer_target.is_tuple(schema):
