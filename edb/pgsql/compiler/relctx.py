@@ -403,7 +403,14 @@ def maybe_get_path_var(
 def new_empty_rvar(
         ir_set: irast.EmptySet, *,
         ctx: context.CompilerContextLevel) -> pgast.PathRangeVar:
-    nullrel = pgast.NullRelation(path_id=ir_set.path_id)
+    if (
+        (ptr := ir_set.path_id.rptr()) is not None
+        and (tgt_prop := ptr.material_ptr.target_property) is not None
+    ):
+        id_type = pg_types.pg_type_from_ir_typeref(tgt_prop.out_target, persistent_tuples=True)
+    else:
+        id_type = None
+    nullrel = pgast.NullRelation(path_id=ir_set.path_id, id_type=id_type)
     rvar = rvar_for_rel(nullrel, ctx=ctx)
     pathctx.put_rvar_path_bond(rvar, ir_set.path_id)
     return rvar
@@ -488,7 +495,8 @@ def new_primitive_rvar(
     set_rvar = range_for_typeref(
         typeref, path_id, lateral=lateral, dml_source=dml_source,
         include_descendants=not ir_set.skip_subtypes,
-        ignore_rewrites=ir_set.ignore_rewrites, ctx=ctx)
+        ignore_rewrites=ir_set.ignore_rewrites, ctx=ctx,
+        id_as_link=ir_set.identity_path)
     pathctx.put_rvar_path_bond(set_rvar, path_id)
 
     rptr = ir_set.rptr
@@ -1358,6 +1366,7 @@ def range_for_material_objtype(
     ignore_rewrites: bool=False,
     dml_source: Optional[irast.MutatingStmt]=None,
     ctx: context.CompilerContextLevel,
+    id_as_link: Optional[irast.PathId]=None,
 ) -> pgast.PathRangeVar:
 
     env = ctx.env
@@ -1426,6 +1435,7 @@ def range_for_material_objtype(
             schemaname=table_schema_name,
             name=table_name,
             path_id=path_id,
+            id_as_link=id_as_link
         )
 
         rvar = pgast.RelRangeVar(
@@ -1510,6 +1520,7 @@ def range_for_typeref(
     ignore_rewrites: bool=False,
     dml_source: Optional[irast.MutatingStmt]=None,
     ctx: context.CompilerContextLevel,
+    id_as_link: Optional[irast.PathId] = None,
 ) -> pgast.PathRangeVar:
 
     if typeref.union:
@@ -1568,6 +1579,7 @@ def range_for_typeref(
                 for_mutation=for_mutation,
                 dml_source=dml_source,
                 ctx=ctx,
+                id_as_link=id_as_link,
             )
             pathctx.put_rvar_path_bond(component_rvar, path_id)
             component_rvars.append(component_rvar)
@@ -1592,6 +1604,7 @@ def range_for_typeref(
             for_mutation=for_mutation,
             dml_source=dml_source,
             ctx=ctx,
+            id_as_link=id_as_link,
         )
 
     rvar.query.path_id = path_id

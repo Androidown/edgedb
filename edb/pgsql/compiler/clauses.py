@@ -209,7 +209,7 @@ def compile_output(
     with ctx.new() as newctx:
         dispatch.visit(ir_set, ctx=newctx)
 
-        path_id = ir_set.path_id
+        path_id = ir_set.identity_path or ir_set.path_id
 
         if (output.in_serialization_ctx(ctx) and
                 newctx.stmt is newctx.toplevel_stmt):

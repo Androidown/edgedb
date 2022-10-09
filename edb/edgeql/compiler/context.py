@@ -50,6 +50,7 @@ from .options import GlobalCompilerOptions
 if TYPE_CHECKING:
     from edb.schema import objtypes as s_objtypes
     from edb.schema import sources as s_sources
+    from edb.schema import links as s_links
 
 
 class Exposure(enum.IntEnum):
@@ -544,6 +545,9 @@ class ContextLevel(compiler.ContextLevel):
     """A set of schema objects for which the shadowing rewrite should be
        disabled."""
 
+    inserting_links: Dict[irast.Set, s_links.Link]
+    """A set of link objects currently being inserted"""
+
     def __init__(
         self,
         prevlevel: Optional[ContextLevel],
@@ -580,6 +584,7 @@ class ContextLevel(compiler.ContextLevel):
             self.pending_stmt_own_path_id_namespace = frozenset()
             self.pending_stmt_full_path_id_namespace = frozenset()
             self.inserting_paths = {}
+            self.inserting_links = {}
             self.view_map = collections.ChainMap()
             self.path_scope = env.path_scope
             self.path_scope_map = {}
@@ -626,6 +631,7 @@ class ContextLevel(compiler.ContextLevel):
             self.pending_stmt_full_path_id_namespace = \
                 prevlevel.pending_stmt_full_path_id_namespace
             self.inserting_paths = prevlevel.inserting_paths
+            self.inserting_links = prevlevel.inserting_links
             self.view_map = prevlevel.view_map
             if prevlevel.path_scope is None:
                 prevlevel.path_scope = self.env.path_scope
@@ -683,6 +689,7 @@ class ContextLevel(compiler.ContextLevel):
                 self.pending_stmt_own_path_id_namespace = frozenset()
                 self.pending_stmt_full_path_id_namespace = frozenset()
                 self.inserting_paths = {}
+                self.inserting_links = {}
 
                 self.iterator_path_ids = frozenset()
 

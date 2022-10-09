@@ -127,7 +127,7 @@ class EdgeQLPathInfo(Base):
     __ast_meta__ = {
         'path_scope', 'path_outputs', 'path_id', 'is_distinct',
         'path_id_mask', 'path_namespace',
-        'packed_path_outputs', 'packed_path_namespace',
+        'packed_path_outputs', 'packed_path_namespace', 'id_as_link'
     }
 
     # The path id represented by the node.
@@ -149,6 +149,8 @@ class EdgeQLPathInfo(Base):
         typing.Tuple[irast.PathId, str],
         OutputVar,
     ]] = None
+    # 'real' id when current relation is used as link target
+    id_as_link: typing.Optional[irast.PathId] = None
 
     def get_path_outputs(self, flavor: str) -> typing.Dict[
             typing.Tuple[irast.PathId, str], OutputVar]:
@@ -449,6 +451,7 @@ class NullRelation(ReturningQuery):
     """Special relation that produces nulls for all its attributes."""
 
     where_clause: typing.Optional[BaseExpr] = None
+    id_type: typing.Optional[typing.Tuple[str]] = None
 
 
 @dataclasses.dataclass
