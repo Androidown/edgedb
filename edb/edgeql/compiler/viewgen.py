@@ -59,7 +59,7 @@ if TYPE_CHECKING:
     from edb.schema import sources as s_sources
 
     ShapePtr = Tuple[
-        irast.Set, s_pointers.Pointer, qlast.ShapeOp, Optional[irast.Set]
+        irast.Set, s_pointers.Pointer, qlast.ShapeOp, Optional[irast.Set], bool
     ]
 
 
@@ -335,7 +335,7 @@ def _process_view(
             continue
 
         ctx.env.view_shapes[source].append((ptrcls, shape_op))
-        shape_ptrs.append((ir_set, ptrcls, shape_op, ptr_set))
+        shape_ptrs.append((ir_set, ptrcls, shape_op, ptr_set, False))
 
     rptrcls = view_rptr.ptrcls if view_rptr else None
     shape_ptrs = _get_early_shape_configuration(
@@ -343,7 +343,7 @@ def _process_view(
 
     # Produce the shape. The main thing here is that we need to fixup
     # all of the rptrs to properly point back at ir_set.
-    for _, ptrcls, shape_op, ptr_set in shape_ptrs:
+    for _, ptrcls, shape_op, ptr_set, _ in shape_ptrs:
         srcctx = None
         if ptrcls in ctx.env.pointer_specified_info:
             _, _, srcctx = ctx.env.pointer_specified_info[ptrcls]
@@ -369,6 +369,11 @@ def _process_view(
             ptr_set.context = srcctx
 
             _setup_shape_source(ptr_set, ctx=ctx)
+
+            if isinstance(ptrcls, s_links.Link) and exprtype.is_insert():
+                eq_ptr_set = _get_innermost_equivalent_set(ptr_set, ctx)
+                _, material_prtcls = ptrcls.material_type(ctx.env.schema)
+                ctx.inserting_links[eq_ptr_set] = cast(s_links.Link, material_prtcls)
 
         else:
             # The set must be something pretty trivial, so just do it
@@ -1306,7 +1311,7 @@ def _inline_type_computable(
         )
 
         view_shape.insert(0, (ptr, qlast.ShapeOp.ASSIGN))
-        shape_ptrs.insert(0, (ir_set, ptr, qlast.ShapeOp.ASSIGN, ptr_set))
+        shape_ptrs.insert(0, (ir_set, ptr, qlast.ShapeOp.ASSIGN, ptr_set, False))
 
 
 def _get_shape_configuration_inner(
@@ -1316,10 +1321,12 @@ def _get_shape_configuration_inner(
     *,
     parent_view_type: Optional[s_types.ExprType]=None,
     ctx: context.ContextLevel
-) -> None:
+) -> bool:
     is_objtype = ir_set.path_id.is_objtype_path()
     all_materialize = all(
-        op == qlast.ShapeOp.MATERIALIZE for _, _, op, _ in shape_ptrs)
+        op == qlast.ShapeOp.MATERIALIZE for _, _, op, _, _ in shape_ptrs)
+
+    implicit_link_target = False
 
     if is_objtype:
         assert isinstance(stype, s_objtypes.ObjectType)
@@ -1357,8 +1364,36 @@ def _get_shape_configuration_inner(
                     shape_metadata = ctx.env.view_shapes_metadata[stype]
                     view_shape.insert(0, (ptr, implicit_op))
                     shape_metadata.has_implicit_id = True
-                    shape_ptrs.insert(0, (ir_set, ptr, implicit_op, None))
+                    shape_ptrs.insert(0, (ir_set, ptr, implicit_op, None, False))
                 break
+
+        if (
+            parent_view_type is s_types.ExprType.Insert
+            and ir_set in ctx.inserting_links
+        ):
+            insert_link = ctx.inserting_links[ir_set]
+            tgt_prop = insert_link.get_target_property(ctx.env.schema)
+            if tgt_prop is not None:
+                for ptr in pointers:
+                    _, material_ptr = ptr.material_type(ctx.env.schema)
+                    if tgt_prop == material_ptr:
+                        idx_tp_replace = None
+                        if ptr in view_shape_ptrs:
+                            for idx, sptr in enumerate(shape_ptrs):
+                                if sptr[1] == ptr:
+                                    idx_tp_replace = idx
+                                    break
+
+                        shape_ptr = (ir_set, ptr, qlast.ShapeOp.ASSIGN, None, True)
+                        if idx_tp_replace is not None:
+                            shape_ptrs[idx_tp_replace] = shape_ptr
+                        else:
+                            shape_ptrs.insert(0, shape_ptr)
+                        implicit_link_target = True
+                        break
+                else:
+                    raise errors.InvalidReferenceError(
+                        f'No such property {tgt_prop}')
 
     is_mutation = parent_view_type in {
         s_types.ExprType.Insert,
@@ -1380,6 +1415,7 @@ def _get_shape_configuration_inner(
         assert isinstance(stype, s_objtypes.ObjectType)
         _inline_type_computable(
             ir_set, stype, '__tname__', 'name', ctx=ctx, shape_ptrs=shape_ptrs)
+    return implicit_link_target
 
 
 def _get_early_shape_configuration(
@@ -1414,7 +1450,7 @@ def _get_late_shape_configuration(
     rptr: Optional[irast.Pointer]=None,
     parent_view_type: Optional[s_types.ExprType]=None,
     ctx: context.ContextLevel
-) -> List[ShapePtr]:
+) -> Tuple[List[ShapePtr], bool]:
 
     """Return a list of (source_set, ptrcls) pairs as a shape for a given set.
     """
@@ -1451,12 +1487,12 @@ def _get_late_shape_configuration(
 
     for source in sources:
         for ptr, shape_op in ctx.env.view_shapes[source]:
-            shape_ptrs.append((ir_set, ptr, shape_op, None))
+            shape_ptrs.append((ir_set, ptr, shape_op, None, False))
 
-    _get_shape_configuration_inner(
+    any_update = _get_shape_configuration_inner(
         ir_set, shape_ptrs, stype, parent_view_type=parent_view_type, ctx=ctx)
 
-    return shape_ptrs
+    return shape_ptrs, any_update
 
 
 @functools.singledispatch
@@ -1482,7 +1518,7 @@ def _late_compile_view_shapes_in_set(
         parent_view_type: Optional[s_types.ExprType]=None,
         ctx: context.ContextLevel) -> None:
 
-    shape_ptrs = _get_late_shape_configuration(
+    shape_ptrs, any_update = _get_late_shape_configuration(
         ir_set, rptr=rptr, parent_view_type=parent_view_type, ctx=ctx)
 
     # We want to push down the shape to better correspond with where it
@@ -1521,7 +1557,7 @@ def _late_compile_view_shapes_in_set(
 
         # If the shape has already been populated (because the set is
         # referenced multiple times), then we've got nothing to do.
-        if ir_set.shape:
+        if ir_set.shape and not any_update:
             # We want to make sure anything inside of the shape gets
             # processed, though, so we do need to look through the
             # internals.
@@ -1538,7 +1574,7 @@ def _late_compile_view_shapes_in_set(
             return
 
         shape = []
-        for path_tip, ptr, shape_op, _ in shape_ptrs:
+        for path_tip, ptr, shape_op, _, is_link_id in shape_ptrs:
             srcctx = None
             if ptr in ctx.env.pointer_specified_info:
                 _, _, srcctx = ctx.env.pointer_specified_info[ptr]
@@ -1569,6 +1605,13 @@ def _late_compile_view_shapes_in_set(
                     element,
                     parent_view_type=stype.get_expr_type(ctx.env.schema),
                     ctx=scopectx)
+
+            if is_link_id:
+                if ir_set.identity_path is not None:
+                    raise errors.EdgeDBError(
+                        "Setting multiple identity_path in one ir.Set is prohibited.")
+
+                ir_set.identity_path = element.path_id
 
             shape.append((element, shape_op))
 
@@ -1634,3 +1677,20 @@ def _late_compile_view_shapes_in_array(
         ctx: context.ContextLevel) -> None:
     for element in expr.elements:
         late_compile_view_shapes(element, ctx=ctx)
+
+
+def _get_innermost_equivalent_set(
+    ir_set: irast.Set,
+    ctx: context.ContextLevel
+) -> irast.Set:
+    if (
+        isinstance(ir_set.expr, (irast.SelectStmt, irast.GroupStmt))
+        and not (ir_set.rptr and not ir_set.rptr.is_definition)
+        and (
+            setgen.get_set_type(ir_set, ctx=ctx) ==
+            setgen.get_set_type(ir_set.expr.result, ctx=ctx)
+        )
+    ):
+        return _get_innermost_equivalent_set(ir_set.expr.result, ctx)
+    else:
+        return ir_set

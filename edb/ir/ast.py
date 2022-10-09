@@ -506,6 +506,10 @@ class Set(Base):
     # Currently only used for preventing duplicate explicit .id
     # insertions to BaseObject.
     ignore_rewrites: bool = False
+    # If current Set is an element of insert subject, and link's
+    # target_property is not None, this will be the PathId pointing
+    # to link target property.
+    identity_path: typing.Optional[PathId] = None
 
     def __repr__(self) -> str:
         return f'<ir.Set \'{self.path_id}\' at 0x{id(self):x}>'
