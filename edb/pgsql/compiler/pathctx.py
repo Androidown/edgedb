@@ -957,24 +957,21 @@ def _get_rel_object_id_output(
     if var is not None:
         return var
 
-    if (id_path := rel.id_as_link) is not None:
-        result = get_path_output(rel, id_path, aspect='value', env=env)
-    else:
-        if isinstance(rel, pgast.NullRelation):
-            name = env.aliases.get('id')
+    if isinstance(rel, pgast.NullRelation):
+        name = env.aliases.get('id')
 
-            val = pgast.TypeCast(
-                arg=pgast.NullConstant(),
-                type_name=pgast.TypeName(
-                    name=rel.id_type or ('uuid',),
-                )
+        val = pgast.TypeCast(
+            arg=pgast.NullConstant(),
+            type_name=pgast.TypeName(
+                name=rel.id_type or ('uuid',),
             )
+        )
 
-            rel.target_list.append(pgast.ResTarget(name=name, val=val))
-            result = pgast.ColumnRef(name=[name], nullable=True)
+        rel.target_list.append(pgast.ResTarget(name=name, val=val))
+        result = pgast.ColumnRef(name=[name], nullable=True)
 
-        else:
-            result = pgast.ColumnRef(name=['id'], nullable=False)
+    else:
+        result = pgast.ColumnRef(name=['id'], nullable=False)
 
     _put_path_output_var(rel, path_id, aspect, result, env=env)
 
