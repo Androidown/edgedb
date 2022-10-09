@@ -209,15 +209,27 @@ def compile_output(
     with ctx.new() as newctx:
         dispatch.visit(ir_set, ctx=newctx)
 
-        path_id = ir_set.identity_path or ir_set.path_id
+        if ir_set.identity_path is not None:
+            rewrite_output = True
+            path_id = ir_set.identity_path
+        else:
+            rewrite_output = True
+            path_id = ir_set.path_id
 
         if (output.in_serialization_ctx(ctx) and
                 newctx.stmt is newctx.toplevel_stmt):
             val = pathctx.get_path_serialized_output(
                 ctx.rel, path_id, env=ctx.env)
+            aspect = 'serialized'
         else:
             val = pathctx.get_path_value_output(
                 ctx.rel, path_id, env=ctx.env)
+            aspect = 'value'
+
+        if rewrite_output:
+            pathctx._put_path_output_var(
+                ctx.rel, ir_set.path_id,
+                aspect, val, env=ctx.env)
 
     return val
 
