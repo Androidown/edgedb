@@ -244,6 +244,7 @@ def safe_array_expr(
 def find_column_in_subselect_rvar(
     rvar: pgast.RangeSubselect,
     name: str,
+    recursive: bool = False
 ) -> Tuple[int, str]:
     # Range over a subquery, we can inspect the output list
     # of the subquery.  If the subquery is a UNION (or EXCEPT),
@@ -256,14 +257,24 @@ def find_column_in_subselect_rvar(
             if rt.val.name[-1] == name:
                 return i, rt.name
 
+    if recursive and isinstance(subquery, pgast.SelectStmt):
+        for rvar in subquery.from_clause:
+            if isinstance(rvar, pgast.RangeSubselect):
+                try:
+                    return find_column_in_subselect_rvar(rvar, name, recursive=True)
+                except RuntimeError:
+                    pass
+
     raise RuntimeError(f'cannot find {name!r} in {rvar} output')
 
 
 def get_column(
-        rvar: pgast.BaseRangeVar,
-        colspec: Union[str, pgast.ColumnRef], *,
-        is_packed_multi: bool=True,
-        nullable: Optional[bool]=None) -> pgast.ColumnRef:
+    rvar: pgast.BaseRangeVar,
+    colspec: Union[str, pgast.ColumnRef], *,
+    is_packed_multi: bool=True,
+    nullable: Optional[bool]=None,
+    recursive: bool = False
+) -> pgast.ColumnRef:
 
     if isinstance(colspec, pgast.ColumnRef):
         colname = colspec.name[-1]
@@ -285,7 +296,7 @@ def get_column(
                 nullable = True
 
         elif isinstance(rvar, pgast.RangeSubselect):
-            col_idx, colname = find_column_in_subselect_rvar(rvar, colname)
+            col_idx, colname = find_column_in_subselect_rvar(rvar, colname, recursive=recursive)
             if is_set_op_query(rvar.subquery):
                 nullables = []
                 ser_safes = []
@@ -319,8 +330,10 @@ def get_column(
 
 
 def get_rvar_var(
-        rvar: pgast.BaseRangeVar,
-        var: pgast.OutputVar) -> pgast.OutputVar:
+    rvar: pgast.BaseRangeVar,
+    var: pgast.OutputVar,
+    recursive: bool = False
+) -> pgast.OutputVar:
 
     fieldref: pgast.OutputVar
 
@@ -329,7 +342,7 @@ def get_rvar_var(
 
         for el in var.elements:
             assert isinstance(el.name, pgast.OutputVar)
-            val = get_rvar_var(rvar, el.name)
+            val = get_rvar_var(rvar, el.name, recursive=recursive)
             elements.append(
                 pgast.TupleElement(
                     path_id=el.path_id, name=el.name, val=val))
@@ -342,7 +355,9 @@ def get_rvar_var(
         )
 
     elif isinstance(var, pgast.ColumnRef):
-        fieldref = get_column(rvar, var, is_packed_multi=var.is_packed_multi)
+        fieldref = get_column(
+            rvar, var, is_packed_multi=var.is_packed_multi,
+            recursive=recursive)
 
     else:
         raise AssertionError(f'unexpected OutputVar subclass: {var!r}')

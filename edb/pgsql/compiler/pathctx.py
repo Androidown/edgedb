@@ -803,7 +803,7 @@ def maybe_get_rvar_path_link_var(
         flavor='normal', ptr_info=ptr_si, env=env,
         respect_ptrinfo=True
     )
-    return astutils.get_rvar_var(rvar, outvar)
+    return astutils.get_rvar_var(rvar, outvar, recursive=True)
 
 
 def get_rvar_path_value_var(
