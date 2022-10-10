@@ -334,6 +334,7 @@ def type_to_typeref(
             intersection=intersection,
             element_name=_name,
             is_scalar=t.is_scalar(),
+            is_sequence=t.is_sequence(schema),
             is_abstract=t.get_abstract(schema),
             is_view=t.is_view(schema),
             is_opaque_union=t.get_is_opaque_union(schema),

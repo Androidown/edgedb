@@ -213,7 +213,7 @@ def compile_output(
             rewrite_output = True
             path_id = ir_set.identity_path
         else:
-            rewrite_output = True
+            rewrite_output = False
             path_id = ir_set.path_id
 
         if (output.in_serialization_ctx(ctx) and

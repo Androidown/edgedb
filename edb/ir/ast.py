@@ -159,6 +159,8 @@ class TypeRef(ImmutableBase):
     in_schema: bool = False
     # True, if this describes an opaque union type
     is_opaque_union: bool = False
+    # True, if this describes an sequnce type
+    is_sequence: bool = False
 
     def __repr__(self) -> str:
         return f'<ir.TypeRef \'{self.name_hint}\' at 0x{id(self):x}>'

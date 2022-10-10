@@ -45,7 +45,6 @@ class PathAspect(s_enum.StrEnum):
     VALUE = 'value'
     SOURCE = 'source'
     SERIALIZED = 'serialized'
-    LINK = 'link'
 
 
 # A mapping of more specific aspect -> less specific aspect for objects
@@ -53,7 +52,6 @@ OBJECT_ASPECT_SPECIFICITY_MAP = {
     PathAspect.IDENTITY: PathAspect.VALUE,
     PathAspect.VALUE: PathAspect.SOURCE,
     PathAspect.SERIALIZED: PathAspect.SOURCE,
-    PathAspect.LINK: PathAspect.VALUE
 }
 
 # A mapping of more specific aspect -> less specific aspect for primitives
@@ -195,9 +193,12 @@ def get_path_var(
                     else:
                         break
 
-                if (src_rptr is not None
-                        and not irtyputils.is_computable_ptrref(src_rptr)
-                        and env.ptrref_source_visibility.get(src_rptr)):
+                if (
+                    src_rptr is not None
+                    and not irtyputils.is_computable_ptrref(src_rptr)
+                    and env.ptrref_source_visibility.get(src_rptr)
+                    and src_rptr.target_property is None
+                ):
                     src_ptr_info = pg_types.get_ptrref_storage_info(
                         src_rptr, resolve_type=False, link_bias=False,
                         allow_missing=True)
@@ -737,12 +738,6 @@ def get_rvar_path_var(
                 ptr_si = pg_types.get_ptrref_storage_info(actual_rptr)
             else:
                 ptr_si = None
-        elif (
-            (rptr := path_id.rptr()) is not None
-            and rptr.target_property is not None
-            and aspect == 'link'
-        ):
-            ptr_si = pg_types.get_ptrref_storage_info(rptr.target_property)
         else:
             ptr_si = None
 
@@ -780,10 +775,35 @@ def get_rvar_path_identity_var(
     return get_rvar_path_var(rvar, path_id, aspect='identity', env=env)
 
 
-def get_rvar_path_link_var(
-        rvar: pgast.PathRangeVar, path_id: irast.PathId, *,
-        env: context.Environment) -> pgast.OutputVar:
-    return get_rvar_path_var(rvar, path_id, aspect='link', env=env)
+def maybe_get_rvar_path_link_var(
+    rvar: pgast.PathRangeVar,
+    path_id: irast.PathId,
+    *,
+    env: context.Environment,
+    aspect: str
+) -> Optional[pgast.OutputVar]:
+    rptr = path_id.rptr()
+
+    if rptr is None:
+        return None
+
+    if aspect == 'target':
+        prop = rptr.target_property
+    elif aspect == 'source':
+        prop = rptr.source_property
+    else:
+        prop = None
+
+    if prop is None:
+        return None
+
+    ptr_si = pg_types.get_ptrref_storage_info(prop)
+    outvar = _get_rel_path_output(
+        rvar.query, path_id, aspect='value',
+        flavor='normal', ptr_info=ptr_si, env=env,
+        respect_ptrinfo=True
+    )
+    return astutils.get_rvar_var(rvar, outvar)
 
 
 def get_rvar_path_value_var(
@@ -979,13 +999,15 @@ def _get_rel_object_id_output(
 
 
 def _get_rel_path_output(
-        rel: pgast.BaseRelation, path_id: irast.PathId, *,
-        aspect: str,
-        flavor: str,
-        ptr_info: Optional[pg_types.PointerStorageInfo]=None,
-        env: context.Environment) -> pgast.OutputVar:
+    rel: pgast.BaseRelation, path_id: irast.PathId, *,
+    aspect: str,
+    flavor: str,
+    ptr_info: Optional[pg_types.PointerStorageInfo] = None,
+    env: context.Environment,
+    respect_ptrinfo: bool = False
+) -> pgast.OutputVar:
 
-    if path_id.is_objtype_path() and aspect != 'link':
+    if path_id.is_objtype_path() and not respect_ptrinfo:
         if aspect == 'identity':
             aspect = 'value'
 
@@ -1126,6 +1148,7 @@ def _get_path_output(
         and (
             src_rptr.real_material_ptr.out_cardinality.is_multi()
             and not irtyputils.is_free_object(src_path_id.target)
+            or src_rptr.target_property is not None
         )
     ):
         # A value reference to Object.id is the same as a value
