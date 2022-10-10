@@ -405,7 +405,7 @@ def new_empty_rvar(
         ctx: context.CompilerContextLevel) -> pgast.PathRangeVar:
     if (
         (ptr := ir_set.path_id.rptr()) is not None
-        and (tgt_prop := ptr.material_ptr.target_property) is not None
+        and (tgt_prop := ptr.real_material_ptr.target_property) is not None
     ):
         id_type = pg_types.pg_type_from_ir_typeref(tgt_prop.out_target, persistent_tuples=True)
     else:
@@ -697,8 +697,8 @@ def semi_join(
             path_id=ir_set.path_id.ptr_path(), ctx=ctx)
 
     if ptrref.target_property is not None:
-        tgt_ref = pathctx.get_rvar_path_link_var(
-            set_rvar, far_pid, env=ctx.env)
+        tgt_ref = pathctx.maybe_get_rvar_path_link_var(
+            set_rvar, far_pid, env=ctx.env, aspect='target')
     else:
         tgt_ref = pathctx.get_rvar_path_identity_var(
             set_rvar, far_pid, env=ctx.env)
@@ -1271,21 +1271,27 @@ def _plain_join(
 ) -> None:
     condition = None
 
+    link_src = _find_link_source(right_rvar.query.path_scope)
+
     for path_id in right_rvar.query.path_scope:
-        aspect = 'identity'
-        lref = maybe_get_path_var(query, path_id, aspect=aspect, ctx=ctx)
-        if lref is None:
-            lref = maybe_get_path_var(query, path_id, aspect='value', ctx=ctx)
+        if link_src is not None and link_src.src_path() == path_id:
+            rvar = maybe_get_path_rvar(query, path_id, aspect='value', ctx=ctx)
+            if rvar is not None:
+                lref = pathctx.maybe_get_rvar_path_link_var(
+                    rvar, link_src, env=ctx.env, aspect='source')
+            else:
+                lref = None
+        else:
+            lref = maybe_get_path_var(query, path_id, aspect='identity', ctx=ctx)
+            if lref is None:
+                lref = maybe_get_path_var(query, path_id, aspect='value', ctx=ctx)
+
         if lref is None:
             continue
 
-        if (
-            (rptr := path_id.rptr()) is not None
-            and rptr.target_property is not None
-        ):
-            rref = pathctx.get_rvar_path_link_var(
-                right_rvar, path_id, env=ctx.env)
-        else:
+        rref = pathctx.maybe_get_rvar_path_link_var(
+            right_rvar, path_id, env=ctx.env, aspect='target')
+        if rref is None:
             rref = pathctx.get_rvar_path_identity_var(
                 right_rvar, path_id, env=ctx.env)
 
@@ -2081,3 +2087,12 @@ def clone_ptr_rel_overlays(
         ctx.ptr_rel_overlays[k] = v.copy()
         for k2, v2 in v.items():
             v[k2] = list(v2)
+
+
+def _find_link_source(paths: Iterable[irast.PathId]) -> Optional[irast.PathId]:
+    for path_id in paths:
+        if (
+            (rptr := path_id.rptr()) is not None
+            and rptr.source_property is not None
+        ):
+            return path_id

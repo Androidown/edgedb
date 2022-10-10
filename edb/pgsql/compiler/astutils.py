@@ -244,14 +244,17 @@ def safe_array_expr(
 def find_column_in_subselect_rvar(
     rvar: pgast.RangeSubselect,
     name: str,
-) -> int:
+) -> Tuple[int, str]:
     # Range over a subquery, we can inspect the output list
     # of the subquery.  If the subquery is a UNION (or EXCEPT),
     # we take the leftmost non-setop query.
     subquery = get_leftmost_query(rvar.subquery)
     for i, rt in enumerate(subquery.target_list):
         if rt.name == name:
-            return i
+            return i, name
+        if isinstance(rt.val, pgast.ColumnRef):
+            if rt.val.name[-1] == name:
+                return i, rt.name
 
     raise RuntimeError(f'cannot find {name!r} in {rvar} output')
 
@@ -282,7 +285,7 @@ def get_column(
                 nullable = True
 
         elif isinstance(rvar, pgast.RangeSubselect):
-            col_idx = find_column_in_subselect_rvar(rvar, colname)
+            col_idx, colname = find_column_in_subselect_rvar(rvar, colname)
             if is_set_op_query(rvar.subquery):
                 nullables = []
                 ser_safes = []
