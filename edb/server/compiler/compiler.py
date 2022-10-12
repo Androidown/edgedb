@@ -125,6 +125,8 @@ class CompileContext:
     # this var will be the module name. None means all modules are provided.
     module: Optional[str] = None
     module_is_implicit: Optional[bool] = False
+    # True, if in transaction context.
+    in_tx: Optional[bool] = False
 
 
 DEFAULT_MODULE_ALIASES_MAP = immutables.Map(
@@ -1391,6 +1393,7 @@ class Compiler:
             )
 
             current_tx.update_schema(mstate.initial_schema)
+            ctx.state.sync_mutation(mstate.initial_savepoint)
             current_tx.update_migration_state(None)
 
             ddl_query = self._compile_and_apply_ddl_stmt(
@@ -1754,7 +1757,6 @@ class Compiler:
         *,
         ctx: CompileContext,
         source: edgeql.Source,
-        send_mutation: bool = True
     ) -> dbstate.QueryUnitGroup:
         current_tx = ctx.state.current_tx()
         if current_tx.get_migration_state() is not None:
@@ -1764,10 +1766,10 @@ class Compiler:
                 source=original,
                 implicit_limit=0,
             )
-            return self._try_compile(ctx=ctx, source=original, send_mutation=send_mutation)
+            return self._try_compile(ctx=ctx, source=original)
 
         try:
-            return self._try_compile(ctx=ctx, source=source, send_mutation=send_mutation)
+            return self._try_compile(ctx=ctx, source=source)
         except errors.EdgeQLSyntaxError as original_err:
             if isinstance(source, edgeql.NormalizedSource):
                 # try non-normalized source
@@ -1790,7 +1792,6 @@ class Compiler:
         *,
         ctx: CompileContext,
         source: edgeql.Source,
-        send_mutation: bool = True
     ) -> dbstate.QueryUnitGroup:
 
         default_cardinality = enums.Cardinality.NO_RESULT
@@ -1903,8 +1904,8 @@ class Compiler:
                 unit.ddl_stmt_id = comp.ddl_stmt_id
                 if comp.user_schema is not None:
                     self.send_schema_change(
-                        comp.user_schema, send_mutation,
-                        unit, mutations, is_script, ctx.protocol_version)
+                        comp.user_schema,
+                        unit, mutations, is_script, ctx)
                 if comp.cached_reflection is not None:
                     unit.cached_reflection = \
                         pickle.dumps(comp.cached_reflection, -1)
@@ -1918,8 +1919,8 @@ class Compiler:
                 unit.cacheable = comp.cacheable
                 if comp.user_schema is not None:
                     self.send_schema_change(
-                        comp.user_schema, send_mutation,
-                        unit, mutations, is_script, ctx.protocol_version)
+                        comp.user_schema,
+                        unit, mutations, is_script, ctx)
                 if comp.cached_reflection is not None:
                     unit.cached_reflection = \
                         pickle.dumps(comp.cached_reflection, -1)
@@ -1949,8 +1950,8 @@ class Compiler:
                 unit.cacheable = comp.cacheable
                 if comp.user_schema is not None:
                     self.send_schema_change(
-                        comp.user_schema, send_mutation,
-                        unit, mutations, is_script, ctx.protocol_version)
+                        comp.user_schema,
+                        unit, mutations, is_script, ctx)
                 if comp.cached_reflection is not None:
                     unit.cached_reflection = \
                         pickle.dumps(comp.cached_reflection, -1)
@@ -2074,18 +2075,15 @@ class Compiler:
     @staticmethod
     def send_schema_change(
         user_schema: s_schema.FlatSchema,
-        send_mutation: bool,
         unit: dbstate.QueryUnit,
-        mutations: List,
+        mutations: List[s_schema.SchemaMutationLogger],
         is_script: bool,
-        protocol_version: Tuple[int, int],
+        ctx: CompileContext,
     ):
-        if not send_mutation:
-            user_schema.rebase_mutation()
-            unit.user_schema = pickle.dumps(user_schema, -1)
-            return
-
-        if is_script and protocol_version > (0, 13):
+        if ctx.in_tx:
+            ctx.state.record_mutation(user_schema.get_mutation())
+            unit.user_schema_mutation = pickle.dumps(ctx.state.get_mutation(), -1)
+        elif is_script and ctx.protocol_version > (0, 13):
             mutations.append(user_schema.get_mutation())
         else:
             unit.user_schema_mutation = pickle.dumps(
@@ -2330,10 +2328,11 @@ class Compiler:
             protocol_version=protocol_version,
             json_parameters=json_parameters,
             expect_rollback=expect_rollback,
-            module=module
+            module=module,
+            in_tx=True
         )
 
-        return self._compile(ctx=ctx, source=source, send_mutation=False), ctx.state
+        return self._compile(ctx=ctx, source=source), ctx.state
 
     def describe_database_dump(
         self,

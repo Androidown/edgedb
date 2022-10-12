@@ -435,7 +435,39 @@ class TransactionState(NamedTuple):
     system_config: immutables.Map
     cached_reflection: immutables.Map[str, Tuple[str, ...]]
     tx: Transaction
+    mutation_idx: int
     migration_state: Optional[MigrationState] = None
+
+
+def _clear_savepoints_user_schema(
+    state: CompilerConnectionState,
+    savepoints: Dict[int, TransactionState],
+    tx_memo: Dict[Transaction, Transaction]
+):
+    new_sp = {}
+    for spid, sp in savepoints.items():
+        new_sp[spid] = sp._replace(
+            user_schema=None,  # noqa
+            tx=sp.tx.clear_user_schema(state, tx_memo)
+        )
+    return new_sp
+
+
+def _restore_savepoints_user_schema(
+    base_schema: s_schema.FlatSchema,
+    savepoints: Dict[int, TransactionState],
+    state: CompilerConnectionState,
+    tx_memo: Dict[Transaction, Transaction]
+):
+    mutations = state._mutations  # noqa
+    new_sp = {}
+    for spid, sp in savepoints.items():
+        mut = s_schema.SchemaMutationLogger.merge(mutations[:sp.mutation_idx])
+        new_sp[spid] = sp._replace(
+            user_schema=mut.apply(base_schema),
+            tx=sp.tx.restore_user_schema(base_schema, state, tx_memo)
+        )
+    return new_sp
 
 
 class Transaction:
@@ -445,7 +477,7 @@ class Transaction:
 
     def __init__(
         self,
-        constate,
+        constate: CompilerConnectionState,
         *,
         user_schema: s_schema.FlatSchema,
         global_schema: s_schema.FlatSchema,
@@ -475,10 +507,63 @@ class Transaction:
             system_config=system_config,
             cached_reflection=cached_reflection,
             tx=self,
+            mutation_idx=len(constate._mutations)
         )
 
         self._state0 = self._current
         self._savepoints = {}
+
+    def _create_template(self, constate: CompilerConnectionState):
+        new = Transaction.__new__(Transaction)
+        new._constate = constate
+        new._id = self._id
+        new._implicit = self._implicit
+        return new
+
+    def restore_user_schema(
+        self,
+        user_schema,
+        state: CompilerConnectionState,
+        tx_memo: Dict[Transaction, Transaction]
+    ) -> Transaction:
+        if self in tx_memo:
+            return tx_memo[self]
+
+        tx_memo[self] = new = self._create_template(state)
+        curr_schema = s_schema.SchemaMutationLogger.merge(state._mutations).apply(user_schema)
+        new._current = self._current._replace(
+            user_schema=curr_schema,
+            tx=self._current.tx.restore_user_schema(user_schema, state, tx_memo)
+        )
+        new._state0 = self._state0._replace(
+            user_schema=user_schema,
+            tx=self._state0.tx.restore_user_schema(user_schema, state, tx_memo)
+        )
+        new._savepoints = _restore_savepoints_user_schema(
+            user_schema, self._savepoints, state, tx_memo
+        )
+        return new
+
+    def clear_user_schema(
+        self,
+        state: CompilerConnectionState,
+        tx_memo: Dict[Transaction, Transaction]
+    ) -> Transaction:
+        if self in tx_memo:
+            return tx_memo[self]
+
+        tx_memo[self] = new = self._create_template(state)
+
+        new._current = self._current._replace(
+            user_schema=None,
+            tx=self._current.tx.clear_user_schema(state, tx_memo)
+        )
+        new._state0 = self._state0._replace(
+            user_schema=None,
+            tx=self._state0.tx.clear_user_schema(state, tx_memo)
+        )
+        new._savepoints = _clear_savepoints_user_schema(state, self._savepoints, tx_memo)
+        return new
 
     @property
     def id(self):
@@ -507,7 +592,10 @@ class Transaction:
 
     def _declare_savepoint(self, name: str):
         sp_id = self._constate._new_txid()
-        sp_state = self._current._replace(id=sp_id, name=name)
+        sp_state = self._current._replace(
+            id=sp_id, name=name,
+            mutation_idx=len(self._constate._mutations)
+        )
         self._savepoints[sp_id] = sp_state
         self._constate._savepoints_log[sp_id] = sp_state
         return sp_id
@@ -641,7 +729,7 @@ class Transaction:
 
 class CompilerConnectionState:
 
-    __slots__ = ('_savepoints_log', '_current_tx', '_tx_count',)
+    __slots__ = ('_savepoints_log', '_current_tx', '_tx_count', '_mutations')
 
     _savepoints_log: Dict[int, TransactionState]
 
@@ -668,6 +756,55 @@ class CompilerConnectionState:
         )
         self._savepoints_log = {}
 
+    def _create_template(self) -> CompilerConnectionState:
+        new = CompilerConnectionState.__new__(CompilerConnectionState)
+        new._mutations = self._mutations
+        new._tx_count = self._tx_count
+        return new
+
+    def get_mutation(self) -> Optional[s_schema.SchemaMutationLogger]:
+        valid_mutations = self._mutations[1:]
+        if valid_mutations:
+            return s_schema.SchemaMutationLogger.merge(valid_mutations)
+
+    @property
+    def base_user_schema_id(self):
+        return self._mutations[0].id
+
+    def sync_mutation(self, sp_name):
+        if sp_name is None:
+            return
+
+        target_sp = None
+        for sp in self._savepoints_log.values():
+            if sp.name == sp_name:
+                target_sp = sp
+
+        if target_sp is None:
+            raise ValueError(f'Failed to find any savepoint with name: {sp_name}.')
+        self._mutations = self._mutations[: target_sp.mutation_idx]
+
+    def record_mutation(self, mut: s_schema.SchemaMutationLogger):
+        if mut.ops:
+            self._mutations.append(mut)
+
+    def restore(self, user_schema: s_schema.FlatSchema) -> CompilerConnectionState:
+        new = self._create_template()
+        tx_memo = {}
+        new._current_tx = self._current_tx.restore_user_schema(
+            user_schema, new, tx_memo)
+        new._savepoints_log = _restore_savepoints_user_schema(
+            user_schema, self._savepoints_log, new, tx_memo)
+        return new
+
+    def compress(self) -> CompilerConnectionState:
+        new = self._create_template()
+        tx_memo = {}
+        new._current_tx = self._current_tx.clear_user_schema(new, tx_memo)
+        new._savepoints_log = _clear_savepoints_user_schema(
+            new, self._savepoints_log, tx_memo)
+        return new
+
     def _new_txid(self):
         self._tx_count += 1
         return self._tx_count
@@ -681,9 +818,12 @@ class CompilerConnectionState:
         session_config,
         database_config,
         system_config,
-        cached_reflection
+        cached_reflection,
+        reset_mutation=True,
     ):
         assert isinstance(user_schema, s_schema.FlatSchema)
+        if reset_mutation:
+            self._mutations = [user_schema.get_mutation()]
         self._current_tx = Transaction(
             self,
             user_schema=user_schema,
@@ -705,6 +845,7 @@ class CompilerConnectionState:
             raise RuntimeError(f'failed to lookup savepoint with id={spid}')
 
         sp = self._savepoints_log[spid]
+        self._mutations = self._mutations[:sp.mutation_idx]
         self._current_tx = sp.tx
         self._current_tx._current = sp
         self._current_tx._id = spid
@@ -762,6 +903,7 @@ class CompilerConnectionState:
             database_config=latest_state.database_config,
             system_config=latest_state.system_config,
             cached_reflection=latest_state.cached_reflection,
+            reset_mutation=False
         )
 
         return latest_state

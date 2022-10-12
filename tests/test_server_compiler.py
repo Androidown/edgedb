@@ -412,9 +412,11 @@ class TestCompilerPool(tbs.TestCase):
                     modaliases={None: 'default'},
                 )
                 await asyncio.gather(*(pool_.compile_in_tx(
+                    self.dbname,
                     context.state.current_tx().id,
                     pickle.dumps(context.state),
                     0,
+                    self._refl_schema,
                     edgeql.Source.from_string('SELECT 123'),
                     edbcompiler.OutputFormat.BINARY,
                     False, 101, False, True, False, (0, 12), True
