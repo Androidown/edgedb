@@ -135,8 +135,9 @@ cdef class DatabaseConnectionView:
         object _txid
         object _in_tx_db_config
         object _in_tx_savepoints
-        object _in_tx_user_schema_pickled
         object _in_tx_user_schema
+        object _in_tx_base_user_schema
+        object _in_tx_user_schema_mut_pickled
         object _in_tx_global_schema_pickled
         object _in_tx_global_schema
         object _in_tx_new_types

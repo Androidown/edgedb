@@ -37,6 +37,7 @@ import immutables
 from edb.common import debug
 from edb.common import taskgroup
 from edb.common import util
+from edb import errors
 
 from edb.pgsql import params as pgparams
 
@@ -585,7 +586,13 @@ class AbstractPool:
             self._release_worker(worker)
 
     async def compile_in_tx(
-        self, txid, pickled_state, state_id, *compile_args
+        self,
+        dbname,
+        txid,
+        pickled_state,
+        state_id,
+        base_user_schema: s_schema.FlatSchema,
+        *compile_args
     ):
         # When we compile a query, the compiler returns a tuple:
         # a QueryUnit and the state the compiler is in if it's in a
@@ -618,16 +625,38 @@ class AbstractPool:
             # state over the network. So we replace the state with a marker,
             # that the compiler process will recognize.
             pickled_state = state.REUSE_LAST_STATE_MARKER
+            user_schema = None
+        else:
+            usid = worker.get_store_user_schema_id(dbname)
+            if state_id == 0:
+                if base_user_schema.version_id != usid:
+                    user_schema = _pickle_memoized(base_user_schema)
+                else:
+                    user_schema = None
+            else:
+                if base_user_schema.version_id != state_id:
+                    raise errors.TransactionError(
+                        'Transaction aborted. '
+                        f'Base schema version: {base_user_schema.version_id} '
+                        f'is not consistent with current version: {state_id}, '
+                        f'which indicates another DDL might have been '
+                        f'executed outside this transaction.')
+                elif state_id != usid:
+                    user_schema = _pickle_memoized(base_user_schema)
+                else:
+                    user_schema = None
 
         try:
-            units, new_pickled_state = await worker.call(
+            units, new_pickled_state, new_state_id = await worker.call(
                 'compile_in_tx',
                 pickled_state,
+                dbname,
+                user_schema,
                 txid,
                 *compile_args
             )
             worker._last_pickled_state = new_pickled_state
-            return units, new_pickled_state, 0
+            return units, new_pickled_state, new_state_id
 
         finally:
             # Put the worker at the end of the queue so that the chance

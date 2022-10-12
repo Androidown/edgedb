@@ -245,15 +245,29 @@ def set_user_schema(
     return True, user_schema.version_id
 
 
-def compile_in_tx(cstate, *args, **kwargs):
+def compile_in_tx(cstate, dbname, user_schema_pickled, *args, **kwargs):
     global LAST_STATE
+    global DBS
+
     if cstate == state.REUSE_LAST_STATE_MARKER:
         cstate = LAST_STATE
     else:
         cstate = pickle.loads(cstate)
+
+        if user_schema_pickled is not None:
+            with util.disable_gc():
+                user_schema: s_schema.FlatSchema = pickle.loads(user_schema_pickled)
+            db = DBS.get(dbname)
+            db = db._replace(user_schema=user_schema)
+            DBS = DBS.set(dbname, db)
+        else:
+            user_schema = DBS.get(dbname).user_schema
+
+        cstate = cstate.restore(user_schema)
+
     units, cstate = COMPILER.compile_in_tx(cstate, *args, **kwargs)
     LAST_STATE = cstate
-    return units, pickle.dumps(cstate, -1)
+    return units, pickle.dumps(cstate.compress(), -1), cstate.base_user_schema_id
 
 
 def compile_notebook(
