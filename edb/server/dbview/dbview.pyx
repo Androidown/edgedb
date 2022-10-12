@@ -326,8 +326,9 @@ cdef class DatabaseConnectionView:
         self._in_tx_with_sysconfig = False
         self._in_tx_with_dbconfig = False
         self._in_tx_with_set = False
+        self._in_tx_base_user_schema = None
         self._in_tx_user_schema = None
-        self._in_tx_user_schema_pickled = None
+        self._in_tx_user_schema_mut_pickled = None
         self._in_tx_global_schema = None
         self._in_tx_global_schema_pickled = None
         self._in_tx_new_types = {}
@@ -489,11 +490,10 @@ cdef class DatabaseConnectionView:
 
     def get_user_schema(self):
         if self._in_tx:
-            if self._in_tx_user_schema_pickled:
-                with util.disable_gc():
-                    self._in_tx_user_schema = pickle.loads(
-                        self._in_tx_user_schema_pickled)
-                self._in_tx_user_schema_pickled = None
+            if self._in_tx_user_schema_mut_pickled:
+                mutation = pickle.loads(self._in_tx_user_schema_mut_pickled)
+                self._in_tx_user_schema = mutation.apply(self._in_tx_base_user_schema)
+                self._in_tx_user_schema_mut_pickled = None
             return self._in_tx_user_schema
         else:
             return self._db.user_schema
@@ -771,6 +771,7 @@ cdef class DatabaseConnectionView:
         self._in_tx_globals = self._globals
         self._in_tx_db_config = self._db.db_config
         self._in_tx_modaliases = self._modaliases
+        self._in_tx_base_user_schema = self._db.user_schema
         self._in_tx_user_schema = self._db.user_schema
         self._in_tx_global_schema = self._db._index._global_schema
         self._in_tx_state_serializer = self._state_serializer
@@ -786,8 +787,8 @@ cdef class DatabaseConnectionView:
             self._in_tx_with_set = True
         if query_unit.has_role_ddl:
             self._in_tx_with_role_ddl = True
-        if query_unit.user_schema is not None:
-            self._in_tx_user_schema_pickled = query_unit.user_schema
+        if query_unit.user_schema_mutation is not None:
+            self._in_tx_user_schema_mut_pickled = query_unit.user_schema_mutation
             self._in_tx_user_schema = None
             self._in_tx_state_serializer = None
         if query_unit.global_schema is not None:
@@ -866,10 +867,10 @@ cdef class DatabaseConnectionView:
 
             if self._in_tx_new_types:
                 self._db._update_backend_ids(self._in_tx_new_types)
-            if query_unit.user_schema is not None:
+            if query_unit.user_schema_mutation is not None:
                 self._state_serializer = None
                 self._db._set_and_signal_new_user_schema(
-                    pickle.loads(query_unit.user_schema),
+                    query_unit.update_user_schema(self._in_tx_base_user_schema),
                     pickle.loads(query_unit.cached_reflection)
                         if query_unit.cached_reflection is not None
                         else None
@@ -1064,9 +1065,11 @@ cdef class DatabaseConnectionView:
         try:
             if self.in_tx():
                 result = await compiler_pool.compile_in_tx(
+                    self.dbname,
                     self.txid,
                     self._last_comp_state,
                     self._last_comp_state_id,
+                    self._in_tx_base_user_schema,
                     query_req.source,
                     query_req.output_format,
                     query_req.expect_one,

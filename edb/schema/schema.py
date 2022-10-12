@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import contextlib
 import enum
+import time
 from typing import *
 
 import abc
@@ -216,6 +217,8 @@ class SchemaMutationLogger:
                 f'schema version is supposed to be: {self.id}')
 
         ops = self.ops
+        if not ops:
+            return schema
 
         replace_dict = dict(
             name_to_id=None,
@@ -265,7 +268,7 @@ class SchemaMutationLogger:
         return self.merge(mut_history)
 
     @staticmethod
-    def merge(mutations: Sequence[SchemaMutationLogger]):
+    def merge(mutations: Sequence[SchemaMutationLogger]) -> SchemaMutationLogger:
         mut = functools.reduce(lambda x, y: x._merge(y), mutations)
         mut.id = mutations[0].id
         mut.generation = mutations[-1].generation
@@ -694,12 +697,13 @@ class FlatSchema(Schema):
         self._globalname_to_id = immu.Map()
         self._refs_to = immu.Map()
         self._generation = 0
-        self._mut_next = SchemaMutationLogger()
-        self._mut = SchemaMutationLogger()
+        self.rebase_mutation()
 
     @functools.cached_property
     def version_id(self):
-        return self._generation % 100_000_000
+        if self._generation == 1:
+            return max(time.monotonic_ns() % 100_000_000, 1)
+        return max(self._generation % 100_000_000, 1)
 
     def rebase_mutation(self):
         self._mut = SchemaMutationLogger()

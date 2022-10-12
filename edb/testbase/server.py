@@ -89,6 +89,40 @@ def get_test_cases(tests):
     return result
 
 
+def get_ca_file():
+    max_mtime = 0
+    target_folder = None
+
+    for item in os.listdir('/tmp'):
+        if item.startswith('edbrun'):
+            cur_folder = os.path.join('/tmp', item)
+            mtime = os.path.getmtime(cur_folder)
+            if mtime > max_mtime:
+                target_folder = cur_folder
+                max_mtime = mtime
+
+    assert target_folder is not None, 'Failed to locate ca_file.'
+
+    subfolders = list(filter(lambda p: not p.startswith('.'), os.listdir(target_folder)))
+    assert len(subfolders) == 1, f'More than 1 folder found in {target_folder}'
+
+    subfolder = subfolders[0]
+    ca_file = os.path.join(target_folder, subfolder, 'edbtlscert.pem')
+
+    assert os.path.isfile(ca_file), f'File {ca_file} does not exist.'
+    return ca_file
+
+
+def get_local_running_cluster():
+    return dict(
+        user='edgedb',
+        password=None,
+        host='localhost',
+        port=5656,
+        tls_ca_file=get_ca_file(),
+    )
+
+
 bag = assert_data_shape.bag
 
 generate_jwk = edgedb_main.generate_jwk
@@ -466,8 +500,12 @@ def _start_cluster(
     global _default_cluster
 
     if _default_cluster is None:
+        connect_local = os.environ.get('EDGEDB_TEST_CONNECT_LOCAL_CLUSTER')
         cluster_addr = os.environ.get('EDGEDB_TEST_CLUSTER_ADDR')
-        if cluster_addr:
+        if connect_local and connect_local.lower() == 'on':
+            conn_spec = get_local_running_cluster()
+            _default_cluster = edgedb_cluster.RunningCluster(**conn_spec)
+        elif cluster_addr:
             conn_spec = json.loads(cluster_addr)
             _default_cluster = edgedb_cluster.RunningCluster(**conn_spec)
         else:

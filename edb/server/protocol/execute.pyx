@@ -265,7 +265,11 @@ async def execute_script(
                                 fe_conn=fe_conn,
                             )
 
-                if not query_unit.user_schema and query_unit.user_schema_mutation:
+                if (
+                    not in_tx
+                    and not query_unit.user_schema
+                    and query_unit.user_schema_mutation
+                ):
                     if user_schema_unpacked is None:
                         base_user_schema = user_schema or dbv.get_user_schema()
                     else:
