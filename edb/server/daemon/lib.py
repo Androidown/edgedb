@@ -135,7 +135,7 @@ def detach_process_context():
     becomes the process group leader of a new process group and it
     doesn't have a controlling terminal.
 
-    3. Form and exit parent again.
+    3. Fork and exit parent again.
     This guarantees that the daemon is not a session leader, which
     prevents it from acquiring a controlling terminal.
 
