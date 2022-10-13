@@ -1423,8 +1423,18 @@ def process_set_as_subquery(
 
         if semi_join:
             set_rvar = relctx.new_root_rvar(ir_set, ctx=newctx)
-            tgt_ref = pathctx.get_rvar_path_identity_var(
-                set_rvar, ir_set.path_id, env=ctx.env)
+
+            if (
+                (rptr := ir_set.path_id.rptr()) is not None
+                and (tgr_prop := rptr.real_material_ptr.target_property) is not None
+            ):
+
+                tgt_ref = pathctx.get_rvar_path_var(
+                    set_rvar, ir_set.path_id.extend(ptrref=tgr_prop),
+                    'value', env=ctx.env)
+            else:
+                tgt_ref = pathctx.get_rvar_path_identity_var(
+                    set_rvar, ir_set.path_id, env=ctx.env)
 
             pathctx.get_path_identity_output(
                 stmt, ir_set.path_id, env=ctx.env)
