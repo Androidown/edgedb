@@ -229,6 +229,31 @@ GraphQLDecimal = GraphQLScalarType(
 )
 
 
+GraphQLDatetime = GraphQLScalarType(
+    name="Datetime",
+    description="The `Datetime` scalar type represents Datetime value.",
+    serialize=GraphQLString.serialize,
+    parse_value=GraphQLString.parse_value,
+    parse_literal=GraphQLString.parse_literal,
+)
+
+GraphQLDate = GraphQLScalarType(
+    name="Date",
+    description="The `Date` scalar type represents Date value.",
+    serialize=GraphQLString.serialize,
+    parse_value=GraphQLString.parse_value,
+    parse_literal=GraphQLString.parse_literal,
+)
+
+GraphQLTime = GraphQLScalarType(
+    name="Time",
+    description="The `Time` scalar type represents Time value.",
+    serialize=GraphQLString.serialize,
+    parse_value=GraphQLString.parse_value,
+    parse_literal=GraphQLString.parse_literal,
+)
+
+
 EDB_TO_GQL_SCALARS_MAP = {
     # For compatibility with GraphQL we cast json into a String, since
     # GraphQL doesn't have an equivalent type with arbitrary fields.
@@ -246,13 +271,13 @@ EDB_TO_GQL_SCALARS_MAP = {
     'std::decimal': GraphQLDecimal,
     'std::bool': GraphQLBoolean,
     'std::uuid': GraphQLID,
-    'std::datetime': GraphQLString,
+    'std::datetime': GraphQLDatetime,
     'std::duration': GraphQLString,
     'std::bytes': None,
 
-    'cal::local_datetime': GraphQLString,
-    'cal::local_date': GraphQLString,
-    'cal::local_time': GraphQLString,
+    'cal::local_datetime': GraphQLDatetime,
+    'cal::local_date': GraphQLDate,
+    'cal::local_time': GraphQLTime,
     'cal::relative_duration': GraphQLString,
     'cal::date_duration': GraphQLString,
 }
@@ -269,6 +294,9 @@ GQL_TO_EDB_SCALARS_MAP = {
     'Boolean': 'bool',
     'ID': 'uuid',
     'JSON': 'json',
+    'Date': 'cal::local_date',
+    'Datetime': 'cal::local_datetime',
+    'Time': 'cal::local_time'
 }
 
 
@@ -1132,6 +1160,9 @@ class GQLCoreSchema:
         self._make_generic_filter_type(GraphQLFloat, comp)
         self._make_generic_filter_type(GraphQLDecimal, comp)
         self._make_generic_filter_type(GraphQLString, string)
+        self._make_generic_filter_type(GraphQLDate, comp)
+        self._make_generic_filter_type(GraphQLDatetime, comp)
+        self._make_generic_filter_type(GraphQLTime, comp)
         self._make_generic_filter_type(GraphQLJSON, comp)
 
         for name, etype in self._gql_enums.items():
@@ -1161,7 +1192,8 @@ class GQLCoreSchema:
     def define_generic_insert_types(self) -> None:
         for itype in [GraphQLBoolean, GraphQLID, GraphQLInt, GraphQLInt64,
                       GraphQLBigint, GraphQLFloat, GraphQLDecimal,
-                      GraphQLString, GraphQLJSON]:
+                      GraphQLString, GraphQLJSON,
+                      GraphQLDate, GraphQLDatetime, GraphQLTime]:
             self._gql_inobjtypes[f'Insert{itype.name}'] = itype
 
     def define_generic_order_types(self) -> None:
