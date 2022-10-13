@@ -319,6 +319,10 @@ def compile_operator(
 
     args = []
 
+    # A  dictionary of ptrref souce & target property info in operation compile
+    # for maybe extend typeref to be ptrref with related property info.
+    additional_typeref_to_ptrref = {}
+
     for ai, qlarg in enumerate(qlargs):
         arg_ir = compile_arg(
             qlarg,
@@ -326,6 +330,12 @@ def compile_operator(
             in_conditional=bool(conditional_args and ai in conditional_args),
             ctx=ctx,
         )
+        # Record source_property & target_property in ptrref in args to ctx
+        # in case of extending related ObjectType path
+        if arg_ir.rptr and (source := arg_ir.rptr.ptrref.source_property):
+            additional_typeref_to_ptrref[source.out_target] = ('source', source)
+        elif arg_ir.rptr and (target := arg_ir.rptr.ptrref.target_property):
+            additional_typeref_to_ptrref[target.out_source] = ('target', target)
 
         arg_type = inference.infer_type(arg_ir, ctx.env)
         if arg_type is None:
@@ -335,6 +345,31 @@ def compile_operator(
                 context=qlarg.context)
 
         args.append((arg_type, arg_ir))
+
+    # Extending related ObjectType path
+    if additional_typeref_to_ptrref:
+        new_args = []
+        for (arg_type, arg_ir) in args:
+            if arg_ir.rptr:
+                new_args.append((arg_type, arg_ir))
+            elif arg_ir.typeref.real_material_ptr in additional_typeref_to_ptrref:
+                relate_type, related_ptrref = additional_typeref_to_ptrref[arg_ir.typeref]
+                direction = s_pointers.PointerDirection.Inbound
+
+                if relate_type == 'target':
+                    direction = s_pointers.PointerDirection.Outbound
+
+                new_args.append(
+                    (arg_type, setgen.extend_path(
+                        arg_ir,
+                        typegen.ptrcls_from_ptrref(related_ptrref, ctx=ctx),
+                        direction,
+                        ctx=ctx
+                    ))
+                )
+            else:
+                new_args.append((arg_type, arg_ir))
+        args = new_args
 
     # Check if the operator is a derived operator, and if so,
     # find the origins.
