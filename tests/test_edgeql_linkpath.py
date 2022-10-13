@@ -28,6 +28,103 @@ class TestEdgeQLLinkPath(TestEdgeQLSelect):
 
     SETUP = os.path.join(os.path.dirname(__file__), 'schemas',
                          'issues_setup.edgeql')
+    async def test_edgeql_select_computable_03(self):
+        await self.assert_query_result(
+            r'''
+            SELECT
+                User {
+                    name,
+                    shortest_own_text := (
+                        SELECT
+                            Text {
+                                body
+                            }
+                        FILTER
+                            Text[IS Issue].owner = User
+                        ORDER BY
+                            len(Text.body) ASC
+                        LIMIT 1
+                    ),
+                }
+            FILTER User.name = 'Elvis';
+            ''',
+            [{
+                'name': 'Elvis',
+                'shortest_own_text': {
+                    'body': 'Initial public release of EdgeDB.',
+                },
+            }]
+        )
+
+    async def test_edgeql_select_computable_05(self):
+        await self.assert_query_result(
+            r'''
+            WITH
+                # we aren't referencing User in any way, so this works
+                # best as a subquery, than inline computable
+                sub := (
+                    SELECT
+                        Text
+                    ORDER BY
+                        len(Text.body) ASC
+                    LIMIT
+                        1
+                )
+            SELECT
+                User {
+                    name,
+                    shortest_own_text := (
+                        SELECT
+                            Text {body}
+                        FILTER
+                            Text[IS Issue].owner = User
+                        ORDER BY
+                            len(Text.body) ASC
+                        LIMIT
+                            1
+                    ),
+                    shortest_text := sub {
+                        body
+                    },
+                }
+            FILTER User.name = 'Elvis';
+            ''',
+            [{
+                'name': 'Elvis',
+                'shortest_own_text': {
+                    'body': 'Initial public release of EdgeDB.',
+                },
+                'shortest_text': {
+                    'body': 'Minor lexer tweaks.',
+                },
+            }]
+        )
+
+    async def test_edgeql_select_computable_07(self):
+        await self.assert_query_result(
+            r'''
+            SELECT
+                User {
+                    name,
+                    # ad-hoc computable with many results
+                    special_texts := (
+                        SELECT Text {body}
+                        FILTER Text[IS Issue].owner != User
+                        ORDER BY len(Text.body) DESC
+                    ),
+                }
+            FILTER User.name = 'Elvis';
+            ''',
+            [{
+                'name': 'Elvis',
+                'special_texts': [
+                    {'body': 'We need to be able to render data in '
+                             'tabular format.'},
+                    {'body': 'Minor lexer tweaks.'}
+                ],
+            }]
+        )
+
 
 
 class TestEdgeQLLinkPathDDL(tb.QueryTestCase, borrows=TestEdgeQLSelect):
