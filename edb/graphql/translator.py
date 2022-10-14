@@ -82,6 +82,10 @@ INT_FLOAT_ERROR = re.compile(
     r"Variable '\$[^']+' of type 'Int!?'"
     r" used in position expecting type 'Float!?'"
 )
+STRING_DATELIKE_ERROR = re.compile(
+    r"Variable '\$[^']+' of type 'String!?'"
+    r" used in position expecting type '(?:Datetime!?|Date!?|Time!?)'"
+)
 
 
 class GraphQLTranslatorContext:
@@ -1421,6 +1425,15 @@ class GraphQLTranslator:
                     expr=value,
                     type=self._context.right_cast,
                 )
+            if (
+                isinstance(value, qlast.TypeCast)
+                and value.type.maintype.name == 'str'
+                and not isinstance(left, qlast.TypeCast)
+            ):
+                left = qlast.TypeCast(
+                    expr=left,
+                    type=value.type,
+                )
 
             return qlast.BinOp(
                 left=left, op=op, right=value)
@@ -1790,6 +1803,9 @@ def convert_errors(
             # we allow conversion from Int to Float, and that is allowed by
             # graphql spec. It's unclear why graphql-core chokes on this
             if INT_FLOAT_ERROR.match(err.message):
+                continue
+            # Allow conversion from String to Datetime, Date, Time
+            if STRING_DATELIKE_ERROR.match(err.message):
                 continue
 
             result.append(err)

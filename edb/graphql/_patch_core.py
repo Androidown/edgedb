@@ -23,6 +23,7 @@ from __future__ import annotations
 def patch_graphql_core():
     import graphql
     import graphql.utilities.type_comparators as type_comparators
+    from edb.graphql.types import GraphQLDatetime, GraphQLDate, GraphQLTime
 
     old_is_type_sub_type_of = type_comparators.is_type_sub_type_of
 
@@ -30,6 +31,10 @@ def patch_graphql_core():
         # allow coercing ints to floats
         if super_type is graphql.GraphQLFloat:
             if maybe_subtype is graphql.GraphQLInt:
+                return True
+        # allow coercing string to datetime, date, time
+        if super_type is graphql.GraphQLString:
+            if maybe_subtype in [GraphQLDatetime, GraphQLDate, GraphQLTime]:
                 return True
         return old_is_type_sub_type_of(schema, maybe_subtype, super_type)
 
