@@ -239,7 +239,14 @@ class LinkCommand(
         cmd_source_prop = self._get_attribute_set_cmd('source_property')
 
         if cmd_target_prop is not None:
-            target = self.get_local_attribute_value('target').resolve(schema)
+            if isinstance(self, AlterLink):
+                target_ref = self.get_local_attribute_value('target')
+                if target_ref is None:
+                    target = self.scls.get_target(schema)
+                else:
+                    target = target_ref.resolve(schema)
+            else:
+                target = self.get_local_attribute_value('target').resolve(schema)
 
             if target.is_compound_type(schema):
                 raise errors.UnsupportedFeatureError(
@@ -247,63 +254,69 @@ class LinkCommand(
                     # context=  # todo
                 )
 
-            self.set_attribute_value(
+            self._finalize_alter_attr(
+                cmd_target_prop,
                 'target_property',
-                self._get_ref_property_shell(
-                    name=cmd_target_prop.new_value,
-                    source=target,
-                    schema=schema,
-                    modaliases=context.modaliases,
-                    sourcectx=cmd_target_prop.source_context
-                ),
-                source_context=cmd_target_prop.source_context
-            )
-        if cmd_source_prop is not None:
-            source = self.get_local_attribute_value('source').resolve(schema)
-            self.set_attribute_value(
-                'source_property',
-                self._get_ref_property_shell(
-                    name=cmd_source_prop.new_value,
-                    source=source,
-                    schema=schema,
-                    modaliases=context.modaliases,
-                    sourcectx=cmd_source_prop.source_context
-                ),
-                source_context=cmd_source_prop.source_context
+                source=target,
+                schema=schema,
+                modaliases=context.modaliases,
             )
 
+        if cmd_source_prop is not None:
+            if isinstance(self, AlterLink):
+                source = self.scls.get_source_type(schema)
+            else:
+                source = self.get_local_attribute_value('source').resolve(schema)
+
+            self._finalize_alter_attr(
+                cmd_source_prop,
+                'source_property',
+                source=source,
+                schema=schema,
+                modaliases=context.modaliases,
+            )
         return schema
 
-    @staticmethod
-    def _get_ref_property_shell(
-        name: str,
+    def _finalize_alter_attr(
+        self,
+        command,
+        attrname: str,
         source: s_objtypes.ObjectType,
         schema: s_schema.Schema,
         modaliases: Mapping[Optional[str], str],
-        sourcectx: Optional[parsing.ParserContext] = None,
-    ) -> Optional[so.ObjectShell]:
+    ):
+        name = command.new_value
+        old_value = command.old_value
+        sourcectx = command.source_context
+
         if name == 'id':
-            return
+            new_val, discard = None, old_value is None
+        else:
+            uq_name = sn.UnqualName(name)
+            ptr = source.maybe_get_ptr(schema, uq_name)
+            if ptr is not None:
+                new_val, discard = ptr.as_shell(schema), ptr == old_value
+            else:
+                vname = source.get_verbosename(schema, with_parent=True)
+                err = errors.InvalidReferenceError(
+                    f'{vname} has no property {name!r}',
+                    context=sourcectx
+                )
+                utils.enrich_schema_lookup_error(
+                    err,
+                    uq_name,
+                    modaliases=modaliases,
+                    item_type=properties.Property,
+                    collection=source.get_pointers(schema).objects(schema),
+                    schema=schema,
+                )
+                raise err
 
-        uq_name = sn.UnqualName(name)
-        ptr = source.maybe_get_ptr(schema, uq_name)
-        if ptr is not None:
-            return ptr.as_shell(schema)
-
-        vname = source.get_verbosename(schema, with_parent=True)
-        err = errors.InvalidReferenceError(
-            f'{vname} has no property {name!r}',
-            context=sourcectx
-        )
-        utils.enrich_schema_lookup_error(
-            err,
-            uq_name,
-            modaliases=modaliases,
-            item_type=properties.Property,
-            collection=source.get_pointers(schema).objects(schema),
-            schema=schema,
-        )
-        raise err
+        if discard:
+            self.discard(command)
+        else:
+            self.set_attribute_value(
+                attrname, new_val, source_context=sourcectx)
 
     def _append_subcmd_ast(
         self,
