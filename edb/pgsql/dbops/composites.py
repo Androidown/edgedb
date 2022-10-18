@@ -129,6 +129,17 @@ class AlterCompositeDropAttribute(CompositeAttributeCommand):
         return f'DROP {self.get_attribute_term()} {attrname}'  # type: ignore
 
 
+class AlterCompositeRenameAttribute:
+    def __init__(self, old_column, new_column):
+        self.old = old_column
+        self.new = new_column
+
+    def code(self, block: base.PLBlock) -> str:
+        old = common.qname(self.old.name)
+        new = common.qname(self.new.name)
+        return f'RENAME {self.get_attribute_term()} {old} TO {new}'  # type: ignore
+
+
 class AlterCompositeAlterAttributeType:
     def __init__(self, attribute_name, new_type, *, using_expr=None):
         self.attribute_name = attribute_name

@@ -188,17 +188,46 @@ class TestCaseMeta(type(unittest.TestCase)):
                 else:
                     break
 
+        wrapper.__wcoro__ = meth
+        return wrapper
+
+    @staticmethod
+    def _iter_inner_methods(base):
+        for methname in dir(base):
+            if not methname.startswith('test_'):
+                continue
+
+            meth = getattr(base, methname)
+            coro = getattr(meth, '__wcoro__', None)
+
+            if not inspect.iscoroutinefunction(coro):
+                continue
+
+            yield methname, coro
+
+    @classmethod
+    def wrap_as_sub(mcls, meth, methname):
+        @functools.wraps(meth)
+        async def wrapper(self, *args, **kwargs):
+            with self.subTest(methname):
+                await meth(self, *args, **kwargs)
+
         return wrapper
 
     @classmethod
     def add_method(mcls, methname, ns, meth):
         ns[methname] = mcls.wrap(meth)
 
-    def __new__(mcls, name, bases, ns):
+    def __new__(mcls, name, bases, ns, borrows=None):
         for methname, meth in mcls._iter_methods(bases, ns.copy()):
             if methname in ns:
                 del ns[methname]
             mcls.add_method(methname, ns, meth)
+
+        if borrows is not None:
+            for methname, meth in mcls._iter_inner_methods(borrows):
+                methname = f"raw{methname[4:]}"
+                ns[methname] = mcls.wrap_as_sub(meth, methname)
 
         cls = super().__new__(mcls, name, bases, ns)
         if not ns.get('BASE_TEST_CLASS') and hasattr(cls, 'get_database_name'):

@@ -838,8 +838,9 @@ class SetLinkPath(sd.Command):
         astnode: qlast.SetLinkPath,
         context: sd.CommandContext,
     ) -> sd.Command:
-        cmd = sd.CommandGroup()
-        cmd.add(
+        this_op = cls.get_parent_op(context)
+        cmd = super()._cmd_from_ast(schema, astnode, context)
+        this_op.add(
             sd.AlterObjectProperty(
                 property='target_property',
                 new_value=astnode.target.name,
@@ -848,10 +849,20 @@ class SetLinkPath(sd.Command):
         )
 
         if astnode.source is not None:
-            cmd.add(sd.AlterObjectProperty(
+            this_op.add(sd.AlterObjectProperty(
                 property='source_property',
                 new_value=astnode.source.name,
                 source_context=astnode.source.context
             ))
 
         return cmd
+
+    @classmethod
+    def get_parent_op(
+        cls,
+        context: sd.CommandContext,
+    ) -> LinkCommand:
+        op = context.current().op
+        assert isinstance(op, LinkCommand)
+        return op
+

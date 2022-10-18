@@ -410,6 +410,11 @@ class AlterTableDropColumn(
     pass
 
 
+class AlterTableRenameColumn(
+        composites.AlterCompositeRenameAttribute, AlterTableFragment):
+    pass
+
+
 class AlterTableAlterColumnType(
         composites.AlterCompositeAlterAttributeType, AlterTableFragment):
     pass

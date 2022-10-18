@@ -998,17 +998,23 @@ def _source_path_needs_semi_join(
 
 
 def _maybe_pull_link_source(
-    link_source: Optional[irast.PointerRef],
+    rptr: Optional[irast.Pointer],
     ir_source: irast.Set,
     rel: pgast.SelectStmt,
     *,
     env: context.Environment,
 ):
-    if link_source is None:
+    ptr_src = rptr.ptrref.source_property
+
+    if (
+        ptr_src is None
+        or rptr.dir_cardinality.is_single()
+    ):
         return
+
     var = pathctx.get_path_value_var(
         rel,
-        path_id=ir_source.path_id.extend(ptrref=link_source),
+        path_id=ir_source.path_id.extend(ptrref=ptr_src),
         env=env
     )
     rel.target_list.append(pgast.ResTarget(val=var))
@@ -1112,9 +1118,6 @@ def process_set_as_path(
             # semi_join needs a source rvar, so make sure we have one.
             # (The returned one won't be a source rvar if it comes
             # from a function, for example)
-            _maybe_pull_link_source(
-                ptrref.source_property, ir_source, srcctx.rel,
-                env=ctx.env)
 
             if not ir_source.path_id.is_type_intersection_path():
                 src_rvar = ensure_source_rvar(ir_source, ctx.rel, ctx=srcctx)
@@ -1127,9 +1130,7 @@ def process_set_as_path(
         ir_source = ir_source.rptr.source
         src_rvar = get_set_rvar(ir_source, ctx=ctx)
         _maybe_pull_link_source(
-            ptrref.source_property, ir_source, ctx.rel,
-            env=ctx.env
-        )
+            rptr, ir_source, ctx.rel, env=ctx.env)
 
     elif not source_is_visible:
         with ctx.subrel() as srcctx:
@@ -1148,8 +1149,7 @@ def process_set_as_path(
                         pgast.NullTest(arg=var, negated=True))
 
             _maybe_pull_link_source(
-                ptrref.source_property, ir_source, srcctx.rel,
-                env=ctx.env)
+                rptr, ir_source, srcctx.rel, env=ctx.env)
 
         srcrel = srcctx.rel
         src_rvar = relctx.rvar_for_rel(srcrel, lateral=True, ctx=srcctx)
@@ -1192,8 +1192,7 @@ def process_set_as_path(
             aspects = ['value', 'source']
             src_rvar = get_set_rvar(ir_source, ctx=ctx)
             _maybe_pull_link_source(
-                ptrref.source_property, ir_source, ctx.rel,
-                env=ctx.env)
+                rptr, ir_source, ctx.rel, env=ctx.env)
 
         assert ir_set.rptr is not None
         map_rvar = SetRVar(
