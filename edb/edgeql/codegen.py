@@ -1235,7 +1235,11 @@ class EdgeQLSourceGenerator(codegen.SourceGenerator):
         if node.source is not None:
             self.visit(node.source)
             self._write_keywords(' TO ')
-        self.visit(node.target)
+
+        if node.target is not None:
+            self.visit(node.target)
+        else:
+            self.write('id')
 
     def _eval_bool_expr(
         self,

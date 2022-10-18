@@ -244,7 +244,12 @@ def safe_array_expr(
 def find_column_in_subselect_rvar(
     rvar: pgast.RangeSubselect,
     name: str,
-    recursive: bool = False
+    is_packed_multi: bool,
+    recursive: bool = False,
+    env: Optional[context.Environment] = None,
+    create_on_absent: bool = False,
+    nullable: bool = None,
+    ser_safe: bool = None,
 ) -> Tuple[int, str]:
     # Range over a subquery, we can inspect the output list
     # of the subquery.  If the subquery is a UNION (or EXCEPT),
@@ -255,13 +260,37 @@ def find_column_in_subselect_rvar(
             return i, name
         if isinstance(rt.val, pgast.ColumnRef):
             if rt.val.name[-1] == name:
-                return i, rt.name
+                return i, rt.name or name
+
+    if create_on_absent:
+        assert env is not None
+        colname = [rvar.alias.aliasname, name]
+        colref = pgast.ColumnRef(
+            name=colname, nullable=nullable, ser_safe=ser_safe,
+            is_packed_multi=is_packed_multi
+        )
+        alias = env.aliases.get(name)
+        subquery.target_list.append(pgast.ResTarget(
+            val=colref, name=alias
+        ))
+        return len(subquery.target_list) - 1, alias
 
     if recursive and isinstance(subquery, pgast.SelectStmt):
-        for rvar in subquery.from_clause:
-            if isinstance(rvar, pgast.RangeSubselect):
+        for sub_rvar in subquery.from_clause:
+            if isinstance(sub_rvar, pgast.RangeSubselect):
                 try:
-                    return find_column_in_subselect_rvar(rvar, name, recursive=True)
+                    col_idx, colname = find_column_in_subselect_rvar(
+                        sub_rvar, name, is_packed_multi, recursive=True, env=env)
+                    nullable, ser_safe = _resolve_colref_extra_info(col_idx, sub_rvar)
+                    return find_column_in_subselect_rvar(
+                        rvar, colname,
+                        is_packed_multi,
+                        recursive=False,
+                        env=env,
+                        create_on_absent=True,
+                        nullable=nullable,
+                        ser_safe=ser_safe
+                    )
                 except RuntimeError:
                     pass
 
@@ -273,7 +302,8 @@ def get_column(
     colspec: Union[str, pgast.ColumnRef], *,
     is_packed_multi: bool=True,
     nullable: Optional[bool]=None,
-    recursive: bool = False
+    recursive: bool = False,
+    env: Optional[context.Environment] = None,
 ) -> pgast.ColumnRef:
 
     if isinstance(colspec, pgast.ColumnRef):
@@ -296,22 +326,10 @@ def get_column(
                 nullable = True
 
         elif isinstance(rvar, pgast.RangeSubselect):
-            col_idx, colname = find_column_in_subselect_rvar(rvar, colname, recursive=recursive)
-            if is_set_op_query(rvar.subquery):
-                nullables = []
-                ser_safes = []
-
-                def _cb(q: pgast.Query) -> None:
-                    nullables.append(q.target_list[col_idx].nullable)
-                    ser_safes.append(q.target_list[col_idx].ser_safe)
-
-                for_each_query_in_set(rvar.subquery, _cb)
-                nullable = any(nullables)
-                ser_safe = all(ser_safes)
-            else:
-                rt = rvar.subquery.target_list[col_idx]
-                nullable = rt.nullable
-                ser_safe = rt.ser_safe
+            col_idx, colname = find_column_in_subselect_rvar(
+                rvar, colname, is_packed_multi,
+                recursive=recursive, env=env)
+            nullable, ser_safe = _resolve_colref_extra_info(col_idx, rvar)
 
         elif isinstance(rvar, pgast.RangeFunction):
             # Range over a function.
@@ -329,10 +347,30 @@ def get_column(
         is_packed_multi=is_packed_multi)
 
 
+def _resolve_colref_extra_info(col_idx, rvar):
+    if is_set_op_query(rvar.subquery):
+        nullables = []
+        ser_safes = []
+
+        def _cb(q: pgast.Query) -> None:
+            nullables.append(q.target_list[col_idx].nullable)
+            ser_safes.append(q.target_list[col_idx].ser_safe)
+
+        for_each_query_in_set(rvar.subquery, _cb)
+        nullable = any(nullables)
+        ser_safe = all(ser_safes)
+    else:
+        rt = rvar.subquery.target_list[col_idx]
+        nullable = rt.nullable
+        ser_safe = rt.ser_safe
+    return nullable, ser_safe
+
+
 def get_rvar_var(
     rvar: pgast.BaseRangeVar,
     var: pgast.OutputVar,
-    recursive: bool = False
+    recursive: bool = False,
+    env: Optional[context.Environment] = None,
 ) -> pgast.OutputVar:
 
     fieldref: pgast.OutputVar
@@ -357,7 +395,7 @@ def get_rvar_var(
     elif isinstance(var, pgast.ColumnRef):
         fieldref = get_column(
             rvar, var, is_packed_multi=var.is_packed_multi,
-            recursive=recursive)
+            recursive=recursive, env=env)
 
     else:
         raise AssertionError(f'unexpected OutputVar subclass: {var!r}')

@@ -2361,22 +2361,14 @@ def process_link_values(
 
     source_data['target'] = (path_id, target_ref)
 
-    source_val = pathctx.get_rvar_path_identity_var(
-        dml_rvar,
-        ir_stmt.subject.path_id,
-        env=ctx.env,
-    )
-
     if (
-        (lrptr := ir_expr.path_id.rptr()) is not None
+        (lrptr := path_id.rptr()) is not None
         and (src_prop := lrptr.real_material_ptr.source_property) is not None
-        and isinstance(source_val, pgast.ColumnRef)
     ):
-        assert isinstance(source_val.name, List)
-        seq_backend_name = pgast.StringConstant(
-            val=f'"edgedbpub"."{src_prop.out_target.id}_sequence"'
-        )
         if src_prop.out_target.is_sequence:
+            seq_backend_name = pgast.StringConstant(
+                val=f'"edgedbpub"."{src_prop.out_target.id}_sequence"'
+            )
             source_val = pgast.FuncCall(
                 name=('currval', ),
                 args=[pgast.TypeCast(
@@ -2385,7 +2377,17 @@ def process_link_values(
                 )]
             )
         else:
-            source_val.name[-1] = str(src_prop.id)
+            source_val = pathctx.get_rvar_path_value_var(
+                dml_rvar,
+                ir_stmt.subject.path_id.extend(ptrref=src_prop),
+                env=ctx.env
+            )
+    else:
+        source_val = pathctx.get_rvar_path_identity_var(
+            dml_rvar,
+            ir_stmt.subject.path_id,
+            env=ctx.env,
+        )
 
     row_query.target_list.append(
         pgast.ResTarget(

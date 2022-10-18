@@ -36,6 +36,7 @@ from edb.schema import referencing as s_ref
 from edb.schema import scalars as s_scalars
 from edb.schema import schema as s_schema
 from edb.schema import types as s_types
+from edb.schema import links as s_links
 
 from edb.schema.reflection import structure as sr_struct
 
@@ -1044,6 +1045,20 @@ def write_meta_nop(
 @write_meta.register
 def write_meta_query(
     cmd: sd.Query,
+    *,
+    classlayout: Dict[Type[so.Object], sr_struct.SchemaTypeLayout],
+    schema: s_schema.Schema,
+    context: sd.CommandContext,
+    blocks: List[Tuple[str, Dict[str, Any]]],
+    internal_schema_mode: bool,
+    stdmode: bool,
+) -> None:
+    pass
+
+
+@write_meta.register
+def write_meta_query(
+    cmd: s_links.SetLinkPath,
     *,
     classlayout: Dict[Type[so.Object], sr_struct.SchemaTypeLayout],
     schema: s_schema.Schema,
