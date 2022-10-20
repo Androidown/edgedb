@@ -20,6 +20,8 @@
 
 
 from __future__ import annotations
+
+import enum
 from typing import *
 
 import collections.abc
@@ -114,6 +116,24 @@ def has_table(obj, schema):
             ptr_stor_info is not None
             and ptr_stor_info.table_type == 'link'
         )
+
+
+class GB(enum.Flag):
+    SOURCE_T = enum.auto()
+    TARGET_T = enum.auto()
+    SOURCE_F = enum.auto()
+    TARGET_F = enum.auto()
+
+    @classmethod
+    def get_flag(
+        cls,
+        disposition: Literal['source', 'target'],
+        aspect: Literal['type', 'field'] = 'field'
+    ):
+        return {
+            'source': {'field': cls.SOURCE_F, 'type': cls.SOURCE_T},
+            'target': {'field': cls.TARGET_F, 'type': cls.TARGET_T},
+        }[disposition][aspect]
 
 
 class CommandMeta(sd.CommandMeta):
@@ -4353,7 +4373,7 @@ class PointerMetaCommand(MetaCommand):
 class LinkMetaCommand(CompositeMetaCommand, PointerMetaCommand):
 
     @staticmethod
-    def _resolve_col_type(prop, schema):
+    def resolve_col_type(prop, schema):
         if prop is None:
             return 'uuid'
 
@@ -4382,11 +4402,11 @@ class LinkMetaCommand(CompositeMetaCommand, PointerMetaCommand):
         src_col = 'source'
         tgt_col = 'target'
 
-        src_col_type = cls._resolve_col_type(
+        src_col_type = cls.resolve_col_type(
             link.get_source_property(schema),
             schema
         )
-        tgt_col_type = cls._resolve_col_type(
+        tgt_col_type = cls.resolve_col_type(
             link.get_target_property(schema),
             schema
         )
@@ -4708,10 +4728,12 @@ class SetLinkPath(LinkMetaCommand, adapts=s_links.SetLinkPath):
         context: sd.CommandContext,
     ) -> s_schema.Schema:
         pop = cast(s_links.LinkCommand, self.get_parent_op(context))
+        orig_schema = schema
+        schema = super().apply(schema, context)
         if isinstance(pop, s_links.AlterLink):
             self._alter_link_path(
-                pop, schema=schema, context=context)
-        schema = super().apply(schema, context)
+                pop, orig_schema=orig_schema,
+                schema=schema, context=context)
         return schema
 
     def _get_link_path_alter_info(
@@ -4737,6 +4759,7 @@ class SetLinkPath(LinkMetaCommand, adapts=s_links.SetLinkPath):
     def _alter_link_path(
         self,
         link_op: s_links.LinkCommand,
+        orig_schema: s_schema.Schema,
         schema: s_schema.Schema,
         context: sd.CommandContext,
     ):
@@ -4800,6 +4823,7 @@ class SetLinkPath(LinkMetaCommand, adapts=s_links.SetLinkPath):
                 alter_table_rename_col.add_operation(dbops.AlterTableRenameColumn(tmp_col, tgt_col))
 
             self.create_inhview(schema, context, link_main, alter_ancestors=False)
+            self.schedule_endpoint_delete_action_update(link, orig_schema, schema, context)
 
     def _create_temp_column(
         self,
@@ -4869,7 +4893,7 @@ class SetLinkPath(LinkMetaCommand, adapts=s_links.SetLinkPath):
         comment: Optional[str] = None
     ):
         col_prefix = self._get_id_or_property_id(ptr, qualified=False)
-        col_type = self._resolve_col_type(ptr, schema)
+        col_type = self.resolve_col_type(ptr, schema)
         temp_column = dbops.Column(
             name=f'??{col_prefix}_{common.get_unique_random_name()}',
             type=col_type,
@@ -5694,6 +5718,7 @@ class UpdateEndpointDeleteActions(MetaCommand):
             groups = itertools.groupby(
                 links, lambda l: l.get_on_target_delete(schema))
             near_endpoint, far_endpoint = 'target', 'source'
+            resolve_target = target
         else:
             groups = itertools.groupby(
                 links, lambda l: (
@@ -5701,114 +5726,153 @@ class UpdateEndpointDeleteActions(MetaCommand):
                     if isinstance(l, s_links.Link)
                     else s_links.LinkSourceDeleteAction.Allow))
             near_endpoint, far_endpoint = 'source', 'target'
+            resolve_target = None
+        defined_vars = {}
+
+        def _declare_var(var_prefix, index, var_type):
+            var_name = f'{var_prefix}_{index}'
+            if var_name not in defined_vars:
+                defined_vars[var_name] = f"{var_name} {var_type};"
+
+            return var_name
 
         for action, links in groups:
             if action is DA.Restrict or action is DA.DeferredRestrict:
-                # Inherited link targets with restrict actions are
-                # elided by apply() to enable us to use inhviews here
-                # when looking for live references.
-                tables = self._get_link_table_union(
-                    schema, links, include_children=True)
-
-                text = textwrap.dedent('''\
-                    SELECT
-                        q.__sobj_id__, q.source, q.target
-                        INTO link_type_id, srcid, tgtid
-                    FROM
-                        {tables}
-                    WHERE
-                        q.{near_endpoint} = OLD.{id}
-                    LIMIT 1;
-
-                    IF FOUND THEN
-                        SELECT
-                            edgedb.shortname_from_fullname(link.name),
-                            edgedb._get_schema_object_name(link.{far_endpoint})
-                            INTO linkname, endname
-                        FROM
-                            edgedb."_SchemaLink" AS link
-                        WHERE
-                            link.id = link_type_id;
-                        RAISE foreign_key_violation
-                            USING
-                                TABLE = TG_TABLE_NAME,
-                                SCHEMA = TG_TABLE_SCHEMA,
-                                MESSAGE = 'deletion of {tgtname} (' || tgtid
-                                    || ') is prohibited by link target policy',
-                                DETAIL = 'Object is still referenced in link '
-                                    || linkname || ' of ' || endname || ' ('
-                                    || srcid || ').';
-                    END IF;
-                ''').format(
-                    tables=tables,
-                    id='id',
-                    tgtname=target.get_displayname(schema),
-                    near_endpoint=near_endpoint,
-                    far_endpoint=far_endpoint,
+                group_key = lambda l: self._resolve_link_group(
+                    l, schema,
+                    GB.TARGET_T | GB.SOURCE_T | GB.get_flag(near_endpoint),
+                    resolve_target=resolve_target
                 )
+                for idx, ((tgt_type, src_type, ne_field), links) in enumerate(
+                    itertools.groupby(links, group_key)
+                ):
+                    # Inherited link targets with restrict actions are
+                    # elided by apply() to enable us to use inhviews here
+                    # when looking for live references.
+                    srcid = _declare_var('srcid', idx, src_type)
+                    tgtid = _declare_var('tgtid', idx, tgt_type)
 
-                chunks.append(text)
+                    tables = self._get_link_table_union(
+                        schema, links, include_children=True)
+
+                    text = textwrap.dedent('''\
+                        SELECT
+                            q.__sobj_id__, q.source, q.target
+                            INTO link_type_id, {srcid}, {tgtid}
+                        FROM
+                            {tables}
+                        WHERE
+                            q.{near_endpoint} = OLD.{id}
+                        LIMIT 1;
+
+                        IF FOUND THEN
+                            SELECT
+                                edgedb.shortname_from_fullname(link.name),
+                                edgedb._get_schema_object_name(link.{far_endpoint})
+                                INTO linkname, endname
+                            FROM
+                                edgedb."_SchemaLink" AS link
+                            WHERE
+                                link.id = link_type_id;
+                            RAISE foreign_key_violation
+                                USING
+                                    TABLE = TG_TABLE_NAME,
+                                    SCHEMA = TG_TABLE_SCHEMA,
+                                    MESSAGE = 'deletion of {tgtname} (' || {tgtid}
+                                        || ') is prohibited by link target policy',
+                                    DETAIL = 'Object is still referenced in link '
+                                        || linkname || ' of ' || endname || ' ('
+                                        || {srcid} || ').';
+                        END IF;
+                    ''').format(
+                        srcid=srcid,
+                        tgtid=tgtid,
+                        tables=tables,
+                        id=ne_field,
+                        tgtname=target.get_displayname(schema),
+                        near_endpoint=near_endpoint,
+                        far_endpoint=far_endpoint,
+                    )
+
+                    chunks.append(text)
 
             elif (
                 action == s_links.LinkTargetDeleteAction.Allow
                 or action == s_links.LinkSourceDeleteAction.Allow
             ):
-                for link in links:
-                    link_table = common.get_backend_name(
-                        schema, link)
+                group_key = lambda l: self._resolve_link_group(
+                    l, schema,
+                    GB.SOURCE_T | GB.get_flag(near_endpoint),
+                    resolve_target=resolve_target
+                )
+                for idx, ((src_type, ne_field), links) in enumerate(
+                    itertools.groupby(links, group_key)
+                ):
+                    for link in links:
+                        link_table = common.get_backend_name(
+                            schema, link)
 
-                    # Since enforcement of 'required' on multi links
-                    # is enforced manually on the query side and (not
-                    # through constraints/triggers of its own), we
-                    # also need to do manual enforcement of it when
-                    # deleting a required multi link.
-                    if link.get_required(schema) and disposition == 'target':
-                        required_text = textwrap.dedent('''\
-                            SELECT q.source INTO srcid
-                            FROM {link_table} as q
-                                WHERE q.target = OLD.{id}
-                                AND NOT EXISTS (
-                                    SELECT FROM {link_table} as q2
-                                    WHERE q.source = q2.source
-                                          AND q2.target != OLD.{id}
-                                );
+                        # Since enforcement of 'required' on multi links
+                        # is enforced manually on the query side and (not
+                        # through constraints/triggers of its own), we
+                        # also need to do manual enforcement of it when
+                        # deleting a required multi link.
+                        if link.get_required(schema) and disposition == 'target':
+                            srcid = _declare_var('srcid', idx, src_type)
+                            required_text = textwrap.dedent('''\
+                                SELECT q.source INTO {srcid}
+                                FROM {link_table} as q
+                                    WHERE q.target = OLD.{id}
+                                    AND NOT EXISTS (
+                                        SELECT FROM {link_table} as q2
+                                        WHERE q.source = q2.source
+                                              AND q2.target != OLD.{id}
+                                    );
 
-                            IF FOUND THEN
-                                RAISE not_null_violation
-                                    USING
-                                        TABLE = TG_TABLE_NAME,
-                                        SCHEMA = TG_TABLE_SCHEMA,
-                                        MESSAGE = 'missing value',
-                                        COLUMN = '{link_id}';
-                            END IF;
+                                IF FOUND THEN
+                                    RAISE not_null_violation
+                                        USING
+                                            TABLE = TG_TABLE_NAME,
+                                            SCHEMA = TG_TABLE_SCHEMA,
+                                            MESSAGE = 'missing value',
+                                            COLUMN = '{link_id}';
+                                END IF;
+                            ''').format(
+                                srcid=srcid,
+                                link_table=link_table,
+                                link_id=str(link.id),
+                                id=ne_field
+                            )
+
+                            chunks.append(required_text)
+
+                        # Otherwise just delete it from the link table.
+                        text = textwrap.dedent('''\
+                            DELETE FROM
+                                {link_table}
+                            WHERE
+                                {endpoint} = OLD.{id};
                         ''').format(
                             link_table=link_table,
-                            link_id=str(link.id),
-                            id='id'
+                            endpoint=common.quote_ident(near_endpoint),
+                            id=ne_field
                         )
 
-                        chunks.append(required_text)
-
-                    # Otherwise just delete it from the link table.
-                    text = textwrap.dedent('''\
-                        DELETE FROM
-                            {link_table}
-                        WHERE
-                            {endpoint} = OLD.{id};
-                    ''').format(
-                        link_table=link_table,
-                        endpoint=common.quote_ident(near_endpoint),
-                        id='id'
-                    )
-
-                    chunks.append(text)
+                        chunks.append(text)
 
             elif action == s_links.LinkTargetDeleteAction.DeleteSource:
                 sources = collections.defaultdict(list)
                 for link in links:
-                    sources[link.get_source(schema)].append(link)
+                    group_by = self._resolve_link_group(
+                        link, schema,
+                        GB.SOURCE_T | GB.TARGET_T | GB.SOURCE_F | GB.TARGET_F,
+                        resolve_target=resolve_target
+                    )
+                    sources[(group_by, link.get_source(schema))].append(link)
 
-                for source, source_links in sources.items():
+                for (group_by, source), source_links in sources.items():
+                    *_, src_field, tgt_field = group_by
+
                     tables = self._get_link_table_union(
                         schema, source_links, include_children=False)
 
@@ -5816,14 +5880,15 @@ class UpdateEndpointDeleteActions(MetaCommand):
                         DELETE FROM
                             {source_table}
                         WHERE
-                            {source_table}.{id} IN (
+                            {source_table}.{src_field} IN (
                                 SELECT source
                                 FROM {tables}
-                                WHERE target = OLD.{id}
+                                WHERE target = OLD.{tgt_field}
                             );
                     ''').format(
                         source_table=common.get_backend_name(schema, source),
-                        id='id',
+                        src_field=src_field,
+                        tgt_field=tgt_field,
                         tables=tables,
                     )
 
@@ -5837,6 +5902,10 @@ class UpdateEndpointDeleteActions(MetaCommand):
                 for link in links:
                     link_table = common.get_backend_name(schema, link)
                     objs = self.get_target_objs(link, schema)
+                    src_field, tgt_field = self._resolve_link_group(
+                        link, schema, GB.SOURCE_F | GB.TARGET_F,
+                        resolve_target=resolve_target
+                    )
 
                     # If the link is DELETE TARGET IF ORPHAN, build
                     # filters to ignore any objects that aren't
@@ -5846,11 +5915,12 @@ class UpdateEndpointDeleteActions(MetaCommand):
                             link, schema):
                         check_table = common.get_backend_name(
                             schema, orphan_check_root, aspect='inhview')
+
                         orphan_check += f'''\
                             AND NOT EXISTS (
                                 SELECT FROM {check_table} as q2
                                 WHERE q.target = q2.target
-                                      AND q2.source != OLD.id
+                                      AND q2.source != OLD.{src_field}
                             )
                         '''.strip()
 
@@ -5861,14 +5931,14 @@ class UpdateEndpointDeleteActions(MetaCommand):
                     prefix = textwrap.dedent(f'''\
                         WITH range AS (
                             SELECT target FROM {link_table} as q
-                            WHERE q.source = OLD.id
+                            WHERE q.source = OLD.{src_field}
                             {orphan_check}
                         ),
                         del AS (
                             DELETE FROM
                                 {link_table}
                             WHERE
-                                source = OLD.id
+                                source = OLD.{src_field}
                         )
                     ''').strip()
                     parts = [prefix]
@@ -5880,7 +5950,7 @@ class UpdateEndpointDeleteActions(MetaCommand):
                                 DELETE FROM
                                     {tgt_table}
                                 WHERE
-                                    {tgt_table}.id IN (
+                                    {tgt_table}.{tgt_field} IN (
                                         SELECT target
                                         FROM range
                                     )
@@ -5894,18 +5964,75 @@ class UpdateEndpointDeleteActions(MetaCommand):
         text = textwrap.dedent('''\
             DECLARE
                 link_type_id uuid;
-                srcid uuid;
-                tgtid uuid;
                 linkname text;
                 endname text;
                 _dummy_text text;
+            {variables}
             BEGIN
-                {chunks}
+            {chunks}
                 RETURN OLD;
             END;
-        ''').format(chunks='\n\n'.join(chunks))
+        ''').format(
+            variables=textwrap.indent('\n'.join(defined_vars.values()), ' ' * 4),
+            chunks='\n\n'.join(chunks)
+        )
 
         return text
+
+    def _get_link_field(self, link, disposition: str, schema, target=None):
+        if disposition == 'target':
+            prop = link.get_target_property(schema)
+            if (
+                prop is not None
+                and target is not None
+                and (src := prop.get_source(schema)) != target
+                and (target.issubclass(schema, src))
+            ):
+                prop_name = prop.get_local_name(schema)
+                prop = target.maybe_get_ptr(schema, prop_name)
+        else:
+            prop = link.get_source_property(schema)
+
+        return 'id' if prop is None else q(str(prop.id))
+
+    def _resolve_link_group(
+        self,
+        link,
+        schema: s_schema.Schema,
+        groupby: GB,
+        resolve_target: s_objtypes.ObjectType = None,
+    ):
+        is_link = isinstance(link, s_links.Link)
+        resolve_col = LinkMetaCommand.resolve_col_type
+
+        group_var = []
+        if groupby & GB.SOURCE_T:
+            if not is_link:
+                group_var.append('uuid')
+            else:
+                src_prop = link.get_source_property(schema)
+                group_var.append(resolve_col(src_prop, schema))
+
+        if groupby & GB.TARGET_T:
+            if not is_link:
+                group_var.append('uuid')
+            else:
+                tgt_prop = link.get_target_property(schema)
+                group_var.append(resolve_col(tgt_prop, schema))
+
+        if groupby & GB.SOURCE_F:
+            if not is_link:
+                group_var.append('id')
+            else:
+                group_var.append(self._get_link_field(link, 'source', schema))
+
+        if groupby & GB.TARGET_F:
+            if not is_link:
+                group_var.append('id')
+            else:
+                group_var.append(self._get_link_field(link, 'target', schema, target=resolve_target))
+
+        return tuple(group_var)
 
     def _get_inline_link_trigger_proc_text(
             self, target, links, *, disposition, schema):
@@ -5917,58 +6044,78 @@ class UpdateEndpointDeleteActions(MetaCommand):
         if disposition == 'target':
             groups = itertools.groupby(
                 links, lambda l: l.get_on_target_delete(schema))
+            resolve_target = target
         else:
             groups = itertools.groupby(
                 links, lambda l: l.get_on_source_delete(schema))
+            resolve_target = None
 
         near_endpoint, far_endpoint = 'target', 'source'
+        defined_vars = []
 
         for action, links in groups:
             if action is DA.Restrict or action is DA.DeferredRestrict:
-                # Inherited link targets with restrict actions are
-                # elided by apply() to enable us to use inhviews here
-                # when looking for live references.
-                tables = self._get_inline_link_table_union(
-                    schema, links, include_children=True)
-
-                text = textwrap.dedent('''\
-                    SELECT
-                        q.__sobj_id__, q.source, q.target
-                        INTO link_type_id, srcid, tgtid
-                    FROM
-                        {tables}
-                    WHERE
-                        q.{near_endpoint} = OLD.{id}
-                    LIMIT 1;
-
-                    IF FOUND THEN
-                        SELECT
-                            edgedb.shortname_from_fullname(link.name),
-                            edgedb._get_schema_object_name(link.{far_endpoint})
-                            INTO linkname, endname
-                        FROM
-                            edgedb."_SchemaLink" AS link
-                        WHERE
-                            link.id = link_type_id;
-                        RAISE foreign_key_violation
-                            USING
-                                TABLE = TG_TABLE_NAME,
-                                SCHEMA = TG_TABLE_SCHEMA,
-                                MESSAGE = 'deletion of {tgtname} (' || tgtid
-                                    || ') is prohibited by link target policy',
-                                DETAIL = 'Object is still referenced in link '
-                                    || linkname || ' of ' || endname || ' ('
-                                    || srcid || ').';
-                    END IF;
-                ''').format(
-                    tables=tables,
-                    id='id',
-                    tgtname=target.get_displayname(schema),
-                    near_endpoint=near_endpoint,
-                    far_endpoint=far_endpoint,
+                grp_key = lambda l: self._resolve_link_group(
+                    l, schema,
+                    groupby=GB.SOURCE_T | GB.TARGET_T | GB.get_flag(near_endpoint),
+                    resolve_target=resolve_target
                 )
 
-                chunks.append(text)
+                for idx, ((src_type, tgt_type, ne_field), links) in enumerate(
+                    itertools.groupby(links, grp_key)
+                ):
+                    # Inherited link targets with restrict actions are
+                    # elided by apply() to enable us to use inhviews here
+                    # when looking for live references.
+                    srcid_placeholder = f'srcid_{idx}'
+                    tgtid_placeholder = f'tgtid_{idx}'
+                    defined_vars.extend([
+                        f"{srcid_placeholder} {src_type};",
+                        f"{tgtid_placeholder} {tgt_type};"
+                    ])
+                    tables = self._get_inline_link_table_union(
+                        schema, links, include_children=True)
+
+                    text = textwrap.dedent('''\
+                        SELECT
+                            q.__sobj_id__, q.source, q.target
+                            INTO link_type_id, {srcid}, {tgtid}
+                        FROM
+                            {tables}
+                        WHERE
+                            q.{near_endpoint} = OLD.{id}
+                        LIMIT 1;
+
+                        IF FOUND THEN
+                            SELECT
+                                edgedb.shortname_from_fullname(link.name),
+                                edgedb._get_schema_object_name(link.{far_endpoint})
+                                INTO linkname, endname
+                            FROM
+                                edgedb."_SchemaLink" AS link
+                            WHERE
+                                link.id = link_type_id;
+                            RAISE foreign_key_violation
+                                USING
+                                    TABLE = TG_TABLE_NAME,
+                                    SCHEMA = TG_TABLE_SCHEMA,
+                                    MESSAGE = 'deletion of {tgtname} (' || {tgtid}
+                                        || ') is prohibited by link target policy',
+                                    DETAIL = 'Object is still referenced in link '
+                                        || linkname || ' of ' || endname || ' ('
+                                        || {srcid} || ').';
+                        END IF;
+                    ''').format(
+                        srcid=srcid_placeholder,
+                        tgtid=tgtid_placeholder,
+                        tables=tables,
+                        id=ne_field,
+                        tgtname=target.get_displayname(schema),
+                        near_endpoint=near_endpoint,
+                        far_endpoint=far_endpoint,
+                    )
+
+                    chunks.append(text)
 
             elif action == s_links.LinkTargetDeleteAction.Allow:
                 for link in links:
@@ -5978,13 +6125,15 @@ class UpdateEndpointDeleteActions(MetaCommand):
                     source_table = common.get_backend_name(
                         schema, link.get_source(schema))
 
+                    link_src_field = self._get_link_field(link, 'source', schema)
+
                     text = textwrap.dedent(f'''\
                         UPDATE
                             {source_table}
                         SET
                             {qi(link_col)} = NULL
                         WHERE
-                            {qi(link_col)} = OLD.id;
+                            {qi(link_col)} = OLD.{link_src_field};
                     ''')
 
                     chunks.append(text)
@@ -5992,9 +6141,10 @@ class UpdateEndpointDeleteActions(MetaCommand):
             elif action == s_links.LinkTargetDeleteAction.DeleteSource:
                 sources = collections.defaultdict(list)
                 for link in links:
-                    sources[link.get_source(schema)].append(link)
+                    link_tgt_field = self._get_link_field(link, 'target', schema)
+                    sources[(link_tgt_field, link.get_source(schema))].append(link)
 
-                for source, source_links in sources.items():
+                for (tgt_field, source), source_links in sources.items():
                     tables = self._get_inline_link_table_union(
                         schema, source_links, include_children=False)
 
@@ -6002,14 +6152,14 @@ class UpdateEndpointDeleteActions(MetaCommand):
                         DELETE FROM
                             {source_table}
                         WHERE
-                            {source_table}.{id} IN (
+                            {source_table}.id IN (
                                 SELECT source
                                 FROM {tables}
                                 WHERE target = OLD.{id}
                             );
                     ''').format(
                         source_table=common.get_backend_name(schema, source),
-                        id='id',
+                        id=tgt_field,
                         tables=tables,
                     )
 
@@ -6059,6 +6209,7 @@ class UpdateEndpointDeleteActions(MetaCommand):
                     ''').strip()
 
                     chunks.append(text)
+                    tgt_field = self._get_link_field(link, 'target', schema)
                     for obj in objs:
                         tgt_table = common.get_backend_name(schema, obj)
                         text = textwrap.dedent(f'''\
@@ -6066,7 +6217,7 @@ class UpdateEndpointDeleteActions(MetaCommand):
                                 DELETE FROM
                                     {tgt_table}
                                 WHERE
-                                    {tgt_table}.id = OLD.{link_col};
+                                    {tgt_table}.{tgt_field} = OLD.{link_col};
                             END IF;
                         ''')
                         chunks.append(text)
@@ -6074,17 +6225,19 @@ class UpdateEndpointDeleteActions(MetaCommand):
         text = textwrap.dedent('''\
             DECLARE
                 link_type_id uuid;
-                srcid uuid;
-                tgtid uuid;
                 linkname text;
                 endname text;
                 ok bool;
                 links text[];
+            {variables}
             BEGIN
-                {chunks}
+            {chunks}
                 RETURN OLD;
             END;
-        ''').format(chunks='\n\n'.join(chunks))
+        ''').format(
+            variables=textwrap.indent('\n'.join(defined_vars), ' '*4),
+            chunks='\n\n'.join(chunks)
+        )
 
         return text
 

@@ -226,8 +226,7 @@ class TestCaseMeta(type(unittest.TestCase)):
 
         if borrows is not None:
             for methname, meth in mcls._iter_inner_methods(borrows):
-                methname = f"raw{methname[4:]}"
-                ns[methname] = mcls.wrap_as_sub(meth, methname)
+                ns[f"raw{methname[4:]}"] = mcls.wrap_as_sub(meth, methname)
 
         cls = super().__new__(mcls, name, bases, ns)
         if not ns.get('BASE_TEST_CLASS') and hasattr(cls, 'get_database_name'):
