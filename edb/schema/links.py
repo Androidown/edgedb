@@ -103,6 +103,68 @@ def merge_actions(
         return ours
 
 
+def merge_target_property(
+    target: Link,
+    sources: List[Link],
+    field_name: str,
+    *,
+    ignore_local: bool = False,
+    schema: s_schema.Schema,
+):
+    tgt_prop = None
+    ours = target.get_explicit_field_value(schema, field_name, None)
+
+    for source in sources:
+        theirs = source.get_explicit_field_value(schema, field_name, None)
+        if theirs is not None:
+            if tgt_prop is not None and tgt_prop != theirs:
+                raise errors.UnsupportedFeatureError('')
+            else:
+                tgt_prop = theirs
+
+    if tgt_prop is not None:
+        if ours is not None and tgt_prop != ours:
+            raise errors.UnsupportedFeatureError('')
+
+    return tgt_prop
+
+
+def merge_source_property(
+    target: Link,
+    sources: List[Link],
+    field_name: str,
+    *,
+    ignore_local: bool = False,
+    schema: s_schema.Schema,
+):
+    source_field = None
+    ours = target.get_explicit_field_value(schema, field_name, None)
+    if ours is None:
+        our_field = None
+    else:
+        our_field = ours.get_local_name(schema)
+
+    for source in sources:
+        theirs = source.get_explicit_field_value(schema, field_name, None)
+        if theirs is not None:
+            their_field = theirs.get_local_name(schema)
+            if source_field is not None and source_field != their_field:
+                raise errors.UnsupportedFeatureError('')
+            else:
+                source_field = their_field
+
+    if source_field is not None:
+        if our_field is not None and source_field != our_field:
+            raise errors.UnsupportedFeatureError('')
+
+        link_source = target.get_source_type(schema)
+        src_prop = link_source.maybe_get_ptr(schema, source_field, type=properties.Property)
+    else:
+        src_prop = None
+
+    return src_prop
+
+
 class Link(
     sources.Source,
     pointers.Pointer,
@@ -129,14 +191,16 @@ class Link(
         properties.Property,
         default=None,
         compcoef=None,
-        inheritable=False
+        inheritable=True,
+        merge_fn=merge_source_property
     )
 
     target_property = so.SchemaField(
         properties.Property,
         default=None,
         compcoef=None,
-        inheritable=False
+        inheritable=True,
+        merge_fn=merge_target_property
     )
 
     def get_target(self, schema: s_schema.Schema) -> s_objtypes.ObjectType:
