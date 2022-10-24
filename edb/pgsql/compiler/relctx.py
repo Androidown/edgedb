@@ -716,7 +716,9 @@ def semi_join(
     target_typeref = set_rvar.typeref if set_rvar.typeref and not set_rvar.typeref.is_opaque_union else ir_set.typeref
 
     if (
-        src_rvar.typeref.id == far_pid.target.id
+        src_rvar.typeref
+        and far_pid.target
+        and src_rvar.typeref.id == far_pid.target.id
         and not subselect_to_known_type_rangevar
         and far_pid.rptr_dir() is None
         and (target_ref := ptrref.maybe_get_union_target_property(rptr.direction, target_typeref))
@@ -1792,7 +1794,8 @@ def range_for_ptrref(
     set_ops = []
 
     if ptrref.union_components:
-        src_known_refs = {ref for ref in ptrref.union_components if ref.out_source.id == src_rvar.typeref.id}
+        src_known_refs = {ref for ref in ptrref.union_components
+                          if src_rvar.typeref and ref.out_source and ref.out_source.id == src_rvar.typeref.id}
         if (
             not src_rvar
             or not src_rvar.typeref
