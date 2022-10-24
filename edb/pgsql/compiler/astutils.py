@@ -293,6 +293,23 @@ def find_column_in_subselect_rvar(
                     )
                 except RuntimeError:
                     pass
+            else:
+                if isinstance(sub_rvar, pgast.JoinExpr):
+                    sub_rvar = sub_rvar.larg
+                assert env is not None
+                colref = get_column(
+                    sub_rvar, name, is_packed_multi=is_packed_multi,
+                    recursive=True, env=env)
+                subquery.target_list.append(pgast.ResTarget(
+                    val=colref,
+                    name=env.aliases.get(colref.name[-1])
+                ))
+                return find_column_in_subselect_rvar(
+                    rvar, name,
+                    is_packed_multi,
+                    recursive=False,
+                    env=env,
+                )
 
     raise RuntimeError(f'cannot find {name!r} in {rvar} output')
 

@@ -576,7 +576,7 @@ def new_pointer_rvar(
             ir_ptr, ptr_info=ptr_info,
             src_rvar=src_rvar, ctx=ctx)
     else:
-        return _new_mapped_pointer_rvar(ir_ptr, ctx=ctx)
+        return _new_mapped_pointer_rvar(ir_ptr, src_rvar, ctx=ctx)
 
 
 def _new_inline_pointer_rvar(
@@ -606,11 +606,11 @@ def _new_inline_pointer_rvar(
 
 
 def _new_mapped_pointer_rvar(
-        ir_ptr: irast.Pointer, *,
+        ir_ptr: irast.Pointer, src_rvar: pgast.PathRangeVar, *,
         ctx: context.CompilerContextLevel) -> pgast.PathRangeVar:
     ptrref = ir_ptr.ptrref
     dml_source = irutils.get_nearest_dml_stmt(ir_ptr.source)
-    ptr_rvar = range_for_pointer(ir_ptr, dml_source=dml_source, ctx=ctx)
+    ptr_rvar = range_for_pointer(ir_ptr, src_rvar, dml_source=dml_source, ctx=ctx)
 
     src_col = 'source'
     source_ref = pgast.ColumnRef(name=[src_col], nullable=False)
@@ -696,15 +696,39 @@ def semi_join(
             ctx.rel, map_rvar,
             path_id=ir_set.path_id.ptr_path(), ctx=ctx)
 
-    if ptrref.target_property is not None:
+    if (
+        ptrref.target_property is not None
+        and far_pid.rptr_dir() == s_pointers.PointerDirection.Outbound
+    ):
         tgt_ref = pathctx.maybe_get_rvar_path_link_var(
-            set_rvar, far_pid, env=ctx.env, aspect='target')
+            set_rvar, far_pid, env=ctx.env, aspect='target', put_path_output=False
+        )
     else:
         tgt_ref = pathctx.get_rvar_path_identity_var(
             set_rvar, far_pid, env=ctx.env)
 
-    pathctx.get_path_identity_output(
-        ctx.rel, far_pid, env=ctx.env)
+    subselect_to_known_type_rangevar = (
+        isinstance(src_rvar, pgast.RangeSubselect)
+        and isinstance(set_rvar, pgast.RelRangeVar)
+        and set_rvar.typeref is not None
+    )
+
+    target_typeref = set_rvar.typeref if set_rvar.typeref and not set_rvar.typeref.is_opaque_union else ir_set.typeref
+
+    if (
+        src_rvar.typeref.id == far_pid.target.id
+        and not subselect_to_known_type_rangevar
+        and far_pid.rptr_dir() is None
+        and (target_ref := ptrref.maybe_get_union_target_property(rptr.direction, target_typeref))
+    ):
+        pathctx.get_path_value_output(
+            ctx.rel,
+            far_pid.extend(ptrref=target_ref),
+            env=ctx.env
+        )
+    else:
+        pathctx.get_path_identity_output(
+            ctx.rel, far_pid, env=ctx.env)
 
     cond = astutils.new_binop(tgt_ref, ctx.rel, 'IN')
     stmt.where_clause = astutils.extend_binop(
@@ -1271,7 +1295,7 @@ def _plain_join(
 ) -> None:
     condition = None
 
-    link_src = _find_link_source(right_rvar.query.path_scope)
+    link_src = _find_link_source(right_rvar.query.path_scope, right_rvar.typeref)
 
     for path_id in right_rvar.query.path_scope:
         if link_src is not None and link_src.src_path() == path_id:
@@ -1749,10 +1773,11 @@ def table_from_ptrref(
 
 def range_for_ptrref(
     ptrref: irast.BasePointerRef, *,
-    dml_source: Optional[irast.MutatingStmt]=None,
-    for_mutation: bool=False,
-    only_self: bool=False,
-    path_id: Optional[irast.PathId]=None,
+    src_rvar: pgast.PathRangeVar = None,
+    dml_source: Optional[irast.MutatingStmt] = None,
+    for_mutation: bool = False,
+    only_self: bool = False,
+    path_id: Optional[irast.PathId] = None,
     ctx: context.CompilerContextLevel,
 ) -> pgast.PathRangeVar:
     """"Return a Range subclass corresponding to a given ptr step.
@@ -1767,11 +1792,19 @@ def range_for_ptrref(
     set_ops = []
 
     if ptrref.union_components:
-        refs = ptrref.union_components
-        if only_self and len(refs) > 1:
-            raise errors.InternalServerError(
-                'unexpected union link'
-            )
+        src_known_refs = {ref for ref in ptrref.union_components if ref.out_source.id == src_rvar.typeref.id}
+        if (
+            not src_rvar
+            or not src_rvar.typeref
+            or len(src_known_refs) == 0
+        ):
+            refs = ptrref.union_components
+            if only_self and len(refs) > 1:
+                raise errors.InternalServerError(
+                    'unexpected union link'
+                )
+        else:
+            refs = src_known_refs
     elif ptrref.intersection_components:
         # This is a little funky, but in an intersection, the pointer
         # needs to appear in *all* of the tables, so we just pick any
@@ -1881,6 +1914,7 @@ def range_for_ptrref(
 
 def range_for_pointer(
     pointer: irast.Pointer,
+    src_rvar: pgast.PathRangeVar,
     *,
     dml_source: Optional[irast.MutatingStmt] = None,
     ctx: context.CompilerContextLevel,
@@ -1896,7 +1930,7 @@ def range_for_pointer(
         ptrref = ptrref.material_ptr
 
     return range_for_ptrref(
-        ptrref, dml_source=dml_source, path_id=path_id, ctx=ctx)
+        ptrref, src_rvar=src_rvar, dml_source=dml_source, path_id=path_id, ctx=ctx)
 
 
 def rvar_for_rel(
@@ -2089,10 +2123,17 @@ def clone_ptr_rel_overlays(
             v[k2] = list(v2)
 
 
-def _find_link_source(paths: Iterable[irast.PathId]) -> Optional[irast.PathId]:
+def _find_link_source(paths: Iterable[irast.PathId], typeref: irast.TypeRef) -> Optional[irast.PathId]:
     for path_id in paths:
         if (
             (rptr := path_id.rptr()) is not None
             and rptr.source_property is not None
+            and path_id.rptr_dir() == s_pointers.PointerDirection.Outbound
+        ):
+            return path_id
+        if (
+            (rptr := path_id.rptr()) is not None
+            and path_id.rptr_dir() == s_pointers.PointerDirection.Inbound
+            and rptr.maybe_get_union_target_property(path_id.rptr_dir(), typeref)
         ):
             return path_id

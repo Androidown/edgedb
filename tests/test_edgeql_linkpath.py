@@ -18,11 +18,13 @@
 
 
 import os.path
+
+from edgedb.errors import UnsupportedFeatureError
 from edb.testbase import server as tb
-from .test_edgeql_select import TestEdgeQLSelect
+from . import test_edgeql_select
 
 
-class TestEdgeQLLinkPath(TestEdgeQLSelect):
+class TestEdgeQLLinkPath(test_edgeql_select.TestEdgeQLSelect):
     SCHEMA = os.path.join(os.path.dirname(__file__), 'schemas',
                           'linkpath.esdl')
 
@@ -125,9 +127,77 @@ class TestEdgeQLLinkPath(TestEdgeQLSelect):
             }]
         )
 
+    async def test_edgeql_select_reverse_overload_01(self):
+        await self.con.execute(
+            '''
+                    CREATE TYPE Dummy {
+                        CREATE LINK owner -> User;
+                    }
+                '''
+        )
+        async with self.assertRaisesRegexTx(
+            UnsupportedFeatureError,
+            "Unsupported union pointer with different",
+        ):
+            await self.assert_query_result(
+                r'''
+                    SELECT User {
+                        z := (SELECT .<owner[IS Named] { name }
+                              ORDER BY .name)
+                    } FILTER .name = 'Elvis';
+                ''',
+                [{"z": [{"name": "Regression."}, {"name": "Release EdgeDB"}]}],
+            )
+
+    async def test_edgeql_select_reverse_overload_02(self):
+        await self.con.execute(
+            '''
+                    CREATE TYPE Dummy1 {
+                        CREATE MULTI LINK owner -> User;
+                    };
+                    CREATE TYPE Dummy2 {
+                        CREATE SINGLE LINK owner -> User;
+                    };
+                '''
+        )
+
+        async with self.assertRaisesRegexTx(
+            UnsupportedFeatureError,
+            "Unsupported union pointer with different",
+        ):
+            await self.assert_query_result(
+                r'''
+                    SELECT User {
+                        z := (SELECT .<owner[IS Named] { name }
+                              ORDER BY .name)
+                    } FILTER .name = 'Elvis';
+                ''',
+                [{"z": [{"name": "Regression."}, {"name": "Release EdgeDB"}]}],
+            )
+
+    async def test_edgeql_select_polymorphic_10(self):
+        await self.assert_query_result(
+            r'''
+            SELECT
+                count(Object[IS Named][IS Text])
+                != count(Object[IS Text]);
+            ''',
+            [True]
+        )
+        # Will find the exact link in type Owned for back link User.<owner[IS Named][IS Text]
+
+        # Since there is no data in Owned type view, the count will be 0
+        await self.assert_query_result(
+            r'''
+            SELECT
+                count(User.<owner[IS Named][IS Text])
+                = count(User.<owner[IS Text]);
+            ''',
+            [True]
+        )
 
 
-class TestEdgeQLLinkPathDDL(tb.QueryTestCase, borrows=TestEdgeQLSelect):
+class TestEdgeQLLinkPathDDL(tb.QueryTestCase, borrows=test_edgeql_select.TestEdgeQLSelect):
     SCHEMA = os.path.join(os.path.dirname(__file__), 'schemas',
                           'linkpath.esdl')
 
