@@ -780,7 +780,8 @@ def maybe_get_rvar_path_link_var(
     path_id: irast.PathId,
     *,
     env: context.Environment,
-    aspect: str
+    aspect: str,
+    put_path_output: bool = True
 ) -> Optional[pgast.OutputVar]:
     rptr = path_id.rptr()
 
@@ -789,8 +790,12 @@ def maybe_get_rvar_path_link_var(
 
     if aspect == 'target':
         prop = rptr.target_property
-    elif aspect == 'source':
+    elif aspect == 'source' and path_id.rptr_dir() == s_pointers.PointerDirection.Outbound:
         prop = rptr.source_property
+    elif aspect == 'source' and path_id.rptr_dir() == s_pointers.PointerDirection.Inbound:
+        prop = rptr.target_property
+        if prop:
+            path_id = path_id.extend(ptrref=prop)
     else:
         prop = None
 
@@ -801,7 +806,8 @@ def maybe_get_rvar_path_link_var(
     outvar = _get_rel_path_output(
         rvar.query, path_id, aspect='value',
         flavor='normal', ptr_info=ptr_si, env=env,
-        respect_ptrinfo=True
+        respect_ptrinfo=True,
+        put_path_output=put_path_output
     )
     return astutils.get_rvar_var(rvar, outvar, recursive=True, env=env)
 
@@ -1004,7 +1010,8 @@ def _get_rel_path_output(
     flavor: str,
     ptr_info: Optional[pg_types.PointerStorageInfo] = None,
     env: context.Environment,
-    respect_ptrinfo: bool = False
+    respect_ptrinfo: bool = False,
+    put_path_output: bool = True
 ) -> pgast.OutputVar:
 
     if path_id.is_objtype_path() and not respect_ptrinfo:
@@ -1088,7 +1095,9 @@ def _get_rel_path_output(
         result = pgast.ColumnRef(
             name=[ptr_info.column_name],
             nullable=not ptrref.required)
-    _put_path_output_var(rel, path_id, aspect, result, flavor=flavor, env=env)
+
+    if put_path_output:
+        _put_path_output_var(rel, path_id, aspect, result, flavor=flavor, env=env)
     return result
 
 

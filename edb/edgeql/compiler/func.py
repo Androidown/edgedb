@@ -333,7 +333,7 @@ def compile_operator(
         # Record source_property & target_property in ptrref in args to ctx
         # in case of extending related ObjectType path
         if arg_ir.rptr and (source := arg_ir.rptr.ptrref.source_property):
-            additional_typeref_to_ptrref[source.out_target] = ('source', source)
+            additional_typeref_to_ptrref[source.out_source] = ('source', source)
         elif arg_ir.rptr and (target := arg_ir.rptr.ptrref.target_property):
             additional_typeref_to_ptrref[target.out_source] = ('target', target)
 
@@ -350,23 +350,23 @@ def compile_operator(
     if additional_typeref_to_ptrref:
         new_args = []
         for (arg_type, arg_ir) in args:
-            if arg_ir.rptr:
+            if arg_ir.rptr and arg_ir.typeref.real_material_type not in additional_typeref_to_ptrref:
                 new_args.append((arg_type, arg_ir))
-            elif arg_ir.typeref.real_material_ptr in additional_typeref_to_ptrref:
-                relate_type, related_ptrref = additional_typeref_to_ptrref[arg_ir.typeref]
+            elif arg_ir.typeref.real_material_type in additional_typeref_to_ptrref:
+                relate_type, related_ptrref = additional_typeref_to_ptrref[arg_ir.typeref.real_material_type]
                 direction = s_pointers.PointerDirection.Inbound
 
                 if relate_type == 'target':
                     direction = s_pointers.PointerDirection.Outbound
 
-                new_args.append(
-                    (arg_type, setgen.extend_path(
-                        arg_ir,
-                        typegen.ptrcls_from_ptrref(related_ptrref, ctx=ctx),
-                        direction,
-                        ctx=ctx
-                    ))
+                arg_ir = setgen.extend_path(
+                    arg_ir,
+                    typegen.ptrcls_from_ptrref(related_ptrref, ctx=ctx),
+                    direction,
+                    ctx=ctx
                 )
+                new_arg_type = inference.infer_type(arg_ir, ctx.env)
+                new_args.append((new_arg_type, arg_ir))
             else:
                 new_args.append((arg_type, arg_ir))
         args = new_args

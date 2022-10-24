@@ -83,6 +83,7 @@ from edb.edgeql import qltypes
 
 from .pathid import PathId, Namespace  # noqa
 from .scopetree import ScopeTreeNode  # noqa
+from ..errors import UnsupportedFeatureError
 
 
 def new_scope_tree() -> ScopeTreeNode:
@@ -191,6 +192,32 @@ class AnyTupleRef(TypeRef):
     pass
 
 
+def unsupported_union_pointer_error(union_components, attr_name, direction):
+    msg = [f"Unsupported union pointer with different {attr_name}.",
+           f"{attr_name} for current pointers:"]
+
+    if direction == s_pointers.PointerDirection.Inbound:
+        direction = '<-'
+    else:
+        direction = '->'
+
+    for component in union_components:
+        source_cls = component.out_source
+        property_ref = getattr(component, attr_name)
+        property_source = None
+        if property_ref:
+            property_source = property_ref.out_source
+        if property_ref:
+            msg.append(f"<{source_cls.name_hint} {direction}"
+                       f" {component.std_parent_name.name} '{component.shortname.name}'>"
+                       f": <{property_ref.std_parent_name.name} '{property_ref.shortname.name}'"
+                       f" of {property_source.name_hint}>")
+        else:
+            msg.append(f"<{source_cls.name_hint} {direction}"
+                       f" {component.std_parent_name.name} '{component.shortname.name}'>: None.")
+    return "\n".join(msg)
+
+
 class BasePointerRef(ImmutableBase):
     __abstract_node__ = True
 
@@ -248,6 +275,29 @@ class BasePointerRef(ImmutableBase):
             return self.out_cardinality
         else:
             return self.in_cardinality
+
+    def maybe_get_union_target_property(self, direction: s_pointers.PointerDirection, typeref: TypeRef = None):
+        if not typeref:
+            return
+
+        if not self.union_components:
+            return
+
+        maybe_target = set()
+        to_union = typeref.union or [typeref]
+        map_ptrref = {p.dir_target(direction=direction).id: p.target_property
+                      for p in self.union_components if p.dir_target(direction=direction)}
+
+        for t in to_union:
+            if t.id in map_ptrref:
+                maybe_target.add(map_ptrref[t.id])
+
+        if len(maybe_target) > 1:
+            msg = unsupported_union_pointer_error(self.union_components, 'target_property', direction)
+            raise UnsupportedFeatureError(msg)
+
+        if maybe_target:
+            return list(maybe_target)[0]
 
     @property
     def required(self) -> bool:
