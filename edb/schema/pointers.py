@@ -71,6 +71,7 @@ def merge_cardinality(
     *,
     ignore_local: bool,
     schema: s_schema.Schema,
+    **kwargs
 ) -> Any:
     current: Optional[qltypes.SchemaCardinality] = None
     current_from = None
@@ -128,6 +129,7 @@ def merge_readonly(
     *,
     ignore_local: bool,
     schema: s_schema.Schema,
+    **kwargs,
 ) -> Any:
 
     current = None
@@ -179,6 +181,7 @@ def merge_required(
     *,
     ignore_local: bool = False,
     schema: s_schema.Schema,
+    **kwargs,
 ) -> Optional[bool]:
     """Merge function for the REQUIRED qualifier on links and properties."""
 
@@ -224,6 +227,7 @@ def merge_target(
     *,
     ignore_local: bool = False,
     schema: s_schema.Schema,
+    **kwargs,
 ) -> Optional[s_types.Type]:
 
     target = None

@@ -77,6 +77,7 @@ class InheritingObjectCommand(sd.ObjectCommand[so.InheritingObjectT]):
         *,
         fields: Optional[Iterable[str]] = None,
         ignore_local: bool = False,
+        is_propagated: bool = False,
     ) -> s_schema.Schema:
         from . import referencing as s_referencing
 
@@ -110,6 +111,7 @@ class InheritingObjectCommand(sd.ObjectCommand[so.InheritingObjectT]):
                     field_name,
                     ignore_local=ignore_local_field,
                     schema=schema,
+                    is_propagated=is_propagated
                 )
             except errors.SchemaDefinitionError as e:
                 if (srcctx := self.get_attribute_source_context(field_name)):
@@ -912,7 +914,7 @@ class AlterInheritingObjectOrFragment(
             with ctx_stack():
                 assert isinstance(d_alter_cmd, InheritingObjectCommand)
                 schema = d_alter_cmd.inherit_fields(
-                    schema, context, d_bases, fields=props)
+                    schema, context, d_bases, fields=props, is_propagated=True)
 
             self.add(d_root_cmd)
 

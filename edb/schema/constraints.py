@@ -65,6 +65,7 @@ def merge_constraint_params(
     *,
     ignore_local: bool,
     schema: s_schema.Schema,
+    **kwargs,
 ) -> Any:
     if constraint.get_subject(schema) is None:
         # consistency of abstract constraint params is checked

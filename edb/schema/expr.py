@@ -345,12 +345,15 @@ class ExpressionShell(so.Shell):
 class ExpressionList(checked.FrozenCheckedList[Expression]):
 
     @staticmethod
-    def merge_values(target: so.Object,
-                     sources: Sequence[so.Object],
-                     field_name: str,
-                     *,
-                     ignore_local: bool = False,
-                     schema: s_schema.Schema) -> Any:
+    def merge_values(
+        target: so.Object,
+        sources: Sequence[so.Object],
+        field_name: str,
+        *,
+        ignore_local: bool = False,
+        schema: s_schema.Schema,
+        **kwargs,
+    ) -> Any:
         if not ignore_local:
             result = target.get_explicit_field_value(schema, field_name, None)
         else:
