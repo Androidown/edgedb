@@ -45,9 +45,9 @@ class TestEdgeQLLinkPathDDL(tb.QueryTestCase, borrows=test_edgeql_select.TestEdg
 
     async def test_edgeql_linkpath_alter_single_link_src_prop_01(self):
         await self.con.execute("""
-            ALTER TYPE Issue {
+            ALTER TYPE Owned {
                 ALTER LINK owner {
-                    on number to id
+                    on identifier to id
                 }
             };
         """)
@@ -55,7 +55,7 @@ class TestEdgeQLLinkPathDDL(tb.QueryTestCase, borrows=test_edgeql_select.TestEdg
 
     async def test_edgeql_linkpath_alter_single_link_tgt_prop_01(self):
         await self.con.execute("""
-            ALTER TYPE Issue {
+            ALTER TYPE Owned {
                 ALTER LINK owner {
                     on id to name
                 }
@@ -65,9 +65,9 @@ class TestEdgeQLLinkPathDDL(tb.QueryTestCase, borrows=test_edgeql_select.TestEdg
 
     async def test_edgeql_linkpath_alter_single_link_both_01(self):
         await self.con.execute("""
-            ALTER TYPE Issue {
+            ALTER TYPE Owned {
                 ALTER LINK owner {
-                    on number to name
+                    on identifier to name
                 }
             };
         """)

@@ -17,6 +17,7 @@
 #
 
 scalar type PulicationCode extending sequence;
+scalar type Identifier extending sequence;
 
 abstract type Text {
     # This is an abstract object containing text.
@@ -53,6 +54,9 @@ abstract type Owned {
         property note -> str;
         on name;
     }
+    required property identifier -> Identifier {
+        constraint exclusive;
+    };
 }
 
 type Status extending Dictionary;

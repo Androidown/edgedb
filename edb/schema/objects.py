@@ -61,6 +61,7 @@ if TYPE_CHECKING:
             *,
             ignore_local: bool = False,
             schema: s_schema.Schema,
+            **kwargs,
         ) -> Any:
             ...
 
@@ -123,6 +124,7 @@ def default_field_merge(
     *,
     ignore_local: bool = False,
     schema: s_schema.Schema,
+    **kwargs,
 ) -> Any:
     """The default `MergeFunction`."""
     if not ignore_local:
@@ -2823,6 +2825,7 @@ class ObjectSet(
         *,
         ignore_local: bool = False,
         schema: s_schema.Schema,
+        **kwargs,
     ) -> ObjectSet[Object_T]:
         if not ignore_local:
             result = target.get_explicit_field_value(schema, field_name, None)

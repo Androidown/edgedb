@@ -57,6 +57,7 @@ def merge_actions(
     *,
     ignore_local: bool = False,
     schema: s_schema.Schema,
+    **kwargs,
 ) -> Any:
     if not ignore_local:
         ours = target.get_explicit_local_field_value(schema, field_name, None)
@@ -103,6 +104,51 @@ def merge_actions(
         return ours
 
 
+def raise_link_path_conflict(
+    path0, path1,
+    aspect: str,
+    schema: s_schema.Schema
+):
+    link0, prop0 = path0
+    link1, prop1 = path1
+
+    source0 = link0.get_source(schema)
+    source1 = link1.get_source(schema)
+
+    src0_name = source0.get_displayname(schema)
+    src1_name = source1.get_displayname(schema)
+
+    prop0_name = 'id' if prop0 is None else prop0.get_displayname(schema)
+    prop1_name = 'id' if prop1 is None else prop1.get_displayname(schema)
+
+    msg = f"Cannot inherit from {src0_name} and {src1_name} " \
+          f"because they have different {aspect} at link '{link0.get_displayname(schema)}': " \
+          f"'{prop0_name}' for {src0_name} but '{prop1_name}' for {src1_name}."
+    raise errors.UnsupportedFeatureError(msg)
+
+
+def raise_linkpath_overload_prohibited(
+    ours,
+    theirs,
+    aspect: str,
+    schema: s_schema.Schema,
+):
+    our_link, _ = ours
+    _, their_prop = theirs
+    our_src = our_link.get_source(schema)
+    our_src_name = our_src.get_displayname(schema)
+
+    if their_prop is None:
+        their_prop_name = 'id'
+    else:
+        their_prop_name = their_prop.get_displayname(schema)
+
+    msg = f"Overload link while changing its {aspect} is prohibited, " \
+          f"{aspect} of '{our_src_name}.{our_link.get_displayname(schema)}' " \
+          f"must be '{their_prop_name}'."
+    raise errors.UnsupportedFeatureError(msg)
+
+
 def merge_target_property(
     target: Link,
     sources: List[Link],
@@ -110,23 +156,38 @@ def merge_target_property(
     *,
     ignore_local: bool = False,
     schema: s_schema.Schema,
+    is_propagated: bool = False,
+    **kwargs,
 ):
-    tgt_prop = None
-    ours = target.get_explicit_field_value(schema, field_name, None)
+    last = None
+    ours = (target, target.get_explicit_field_value(schema, field_name, None))
+    std_link = schema.get('std::link')
+    inherit_from_std = len(sources) == 1 and sources[0] == std_link
+
+    if inherit_from_std:
+        return ours[1]
 
     for source in sources:
-        theirs = source.get_explicit_field_value(schema, field_name, None)
-        if theirs is not None:
-            if tgt_prop is not None and tgt_prop != theirs:
-                raise errors.UnsupportedFeatureError('')
-            else:
-                tgt_prop = theirs
+        theirs = (source, source.get_explicit_field_value(schema, field_name, None))
 
-    if tgt_prop is not None:
-        if ours is not None and tgt_prop != ours:
-            raise errors.UnsupportedFeatureError('')
+        if last is not None and last[1] != theirs[1]:
+            raise_link_path_conflict(
+                last, theirs, field_name, schema)
+        else:
+            last = theirs
 
-    return tgt_prop
+    if is_propagated:
+        return last[1]
+
+    if ours[1] is None:
+        if last is not None:
+            return last[1]
+        else:
+            return None
+    elif last is not None and last[1] != ours[1]:
+        raise_linkpath_overload_prohibited(ours, last, field_name, schema)
+    else:
+        return ours[1]
 
 
 def merge_source_property(
@@ -136,29 +197,45 @@ def merge_source_property(
     *,
     ignore_local: bool = False,
     schema: s_schema.Schema,
+    is_propagated: bool = False,
+    **kwargs,
 ):
+    last = None
     source_field = None
-    ours = target.get_explicit_field_value(schema, field_name, None)
-    if ours is None:
-        our_field = None
-    else:
-        our_field = ours.get_local_name(schema)
+    ours_prop = target.get_explicit_field_value(schema, field_name, None)
+    std_link = schema.get('std::link')
+    inherit_from_std = len(sources) == 1 and sources[0] == std_link
+
+    if inherit_from_std:
+        return ours_prop
+
+    our_field = None if ours_prop is None else ours_prop.get_local_name(schema)
+    ours = (target, ours_prop)
 
     for source in sources:
         theirs = source.get_explicit_field_value(schema, field_name, None)
-        if theirs is not None:
-            their_field = theirs.get_local_name(schema)
-            if source_field is not None and source_field != their_field:
-                raise errors.UnsupportedFeatureError('')
-            else:
-                source_field = their_field
+        their_field = 'id' if theirs is None else theirs.get_local_name(schema)
+        current = (source, theirs)
+
+        if source_field is not None and source_field != their_field:
+            raise_link_path_conflict(
+                last, current, field_name, schema)
+
+        source_field = their_field
+        last = current
 
     if source_field is not None:
-        if our_field is not None and source_field != our_field:
-            raise errors.UnsupportedFeatureError('')
+        if (
+            not is_propagated
+            and our_field is not None
+            and source_field != our_field
+        ):
+            raise_linkpath_overload_prohibited(
+                ours, last, field_name, schema)
 
         link_source = target.get_source_type(schema)
-        src_prop = link_source.maybe_get_ptr(schema, source_field, type=properties.Property)
+        src_prop = link_source.maybe_get_ptr(
+            schema, source_field, type=properties.Property)
     else:
         src_prop = None
 
@@ -302,8 +379,10 @@ class LinkCommand(
         cmd_target_prop = self._get_attribute_set_cmd('target_property')
         cmd_source_prop = self._get_attribute_set_cmd('source_property')
 
+        is_alter_link = isinstance(self, AlterLink)
+
         if cmd_target_prop is not None:
-            if isinstance(self, AlterLink):
+            if is_alter_link:
                 target_ref = self.get_local_attribute_value('target')
                 if target_ref is None:
                     target = self.scls.get_target(schema)
@@ -315,7 +394,7 @@ class LinkCommand(
             if target.is_compound_type(schema):
                 raise errors.UnsupportedFeatureError(
                     'Setting link path on compound type is not yet supported.',
-                    # context=  # todo
+                    context=self.get_attribute_source_context('target')
                 )
 
             self._finalize_alter_attr(
@@ -327,7 +406,7 @@ class LinkCommand(
             )
 
         if cmd_source_prop is not None:
-            if isinstance(self, AlterLink):
+            if is_alter_link:
                 source = self.scls.get_source_type(schema)
             else:
                 source = self.get_local_attribute_value('source').resolve(schema)
@@ -353,7 +432,10 @@ class LinkCommand(
         old_value = command.old_value
         sourcectx = command.source_context
 
-        if name == 'id':
+        if isinstance(name, properties.Property):
+            name = name.get_displayname(schema)
+
+        if name == 'id' or name is None:
             new_val, discard = None, old_value is None
         else:
             uq_name = sn.UnqualName(name)
@@ -893,24 +975,22 @@ class DeleteLink(
 
 
 class SetLinkPath(sd.Command):
-    astnode = qlast.SetLinkPath
-
     @classmethod
-    def _cmd_from_ast(
+    def _cmd_tree_from_ast(
         cls,
         schema: s_schema.Schema,
         astnode: qlast.SetLinkPath,
         context: sd.CommandContext,
-    ) -> sd.Command:
+    ):
         this_op = cls.get_parent_op(context)
-        cmd = super()._cmd_from_ast(schema, astnode, context)
-        this_op.add(
-            sd.AlterObjectProperty(
-                property='target_property',
-                new_value=astnode.target.name,
-                source_context=astnode.target.context
-            )
+        alter_tgt_prop = sd.AlterObjectProperty(
+            property='target_property',
+            new_value=astnode.target.name,
+            source_context=astnode.target.context
         )
+        this_op.add(alter_tgt_prop)
+        cls._validate_cmd(
+            alter_tgt_prop, schema, context, astnode.context)
 
         if astnode.source is not None:
             this_op.add(sd.AlterObjectProperty(
@@ -919,7 +999,31 @@ class SetLinkPath(sd.Command):
                 source_context=astnode.source.context
             ))
 
-        return cmd
+    astnode = qlast.SetLinkPath
+
+    @classmethod
+    def _validate_cmd(
+        cls,
+        cmd: sd.AlterObjectProperty,
+        schema: s_schema.Schema,
+        context: sd.CommandContext,
+        src_contex: parsing.ParserContext
+    ):
+        link_op = cls.get_parent_op(context)
+        if isinstance(link_op, CreateLink):
+            return
+
+        link = link_op.get_object(schema, context)
+        assert isinstance(link, Link)
+        ancestors = link.get_ancestors(schema).objects(schema)
+        if len(ancestors) > 1:
+            ans = ancestors[-2]
+            op = cmd.get_friendly_description(parent_op=link_op, schema=schema)
+            raise errors.QueryError(
+                f"{op} is prohibited, alter that on "
+                f"'{ans.get_source_type(schema).get_displayname(schema)}' instead.",
+                context=src_contex
+            )
 
     @classmethod
     def get_parent_op(
