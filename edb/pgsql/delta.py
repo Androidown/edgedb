@@ -4930,7 +4930,7 @@ class AlterLink(LinkMetaCommand, adapts=s_links.AlterLink):
                 alter_table.add_operation(dbops.AlterTableDropColumn(tgt_col))
                 alter_table_rename_col.add_operation(dbops.AlterTableRenameColumn(tmp_col, tgt_col))
 
-            self.schedule_post_inhview_update_command(schema, context, link_main, alter_ancestors=True)
+            self.create_inhview(schema, context, link_main, alter_ancestors=True)  # todo 有优化空间
             self.schedule_endpoint_delete_action_update(link, orig_schema, schema, context)
 
     def _create_temp_column(
