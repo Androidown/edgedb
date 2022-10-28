@@ -276,28 +276,37 @@ class BasePointerRef(ImmutableBase):
         else:
             return self.in_cardinality
 
-    def maybe_get_union_target_property(self, direction: s_pointers.PointerDirection, typeref: TypeRef = None):
+    def maybe_get_union_property(
+        self,
+        ptr_type: str,
+        direction: s_pointers.PointerDirection,
+        typeref: TypeRef = None
+    ):
         if not typeref:
             return
 
         if not self.union_components:
             return
 
-        maybe_target = set()
+        maybe_result = set()
         to_union = typeref.union or [typeref]
-        map_ptrref = {p.dir_target(direction=direction).id: p.target_property
-                      for p in self.union_components if p.dir_target(direction=direction)}
+        if ptr_type == 'target':
+            map_ptrref = {p.dir_target(direction=direction).id: p.target_property
+                          for p in self.union_components if p.dir_target(direction=direction)}
+        else:
+            map_ptrref = {p.dir_target(direction=direction).id: p.source_property
+                          for p in self.union_components if p.dir_target(direction=direction)}
 
         for t in to_union:
             if t.id in map_ptrref:
-                maybe_target.add(map_ptrref[t.id])
+                maybe_result.add(map_ptrref[t.id])
 
-        if len(maybe_target) > 1:
-            msg = unsupported_union_pointer_error(self.union_components, 'target_property', direction)
+        if len(maybe_result) > 1:
+            msg = unsupported_union_pointer_error(to_union, ptr_type, direction)
             raise UnsupportedFeatureError(msg)
 
-        if maybe_target:
-            return list(maybe_target)[0]
+        if maybe_result:
+            return list(maybe_result)[0]
 
     @property
     def required(self) -> bool:
