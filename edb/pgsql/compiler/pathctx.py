@@ -790,10 +790,21 @@ def maybe_get_rvar_path_link_var(
 
     if aspect == 'target':
         prop = rptr.target_property
+        if (
+            prop is None
+            and path_id.rptr_dir() == s_pointers.PointerDirection.Inbound
+            and (src_ptr := rptr.maybe_get_union_property('source', path_id.rptr_dir(), path_id.target))
+        ):
+            prop = src_ptr
+            if prop:
+                path_id = path_id.extend(ptrref=prop)
     elif aspect == 'source' and path_id.rptr_dir() == s_pointers.PointerDirection.Outbound:
         prop = rptr.source_property
-    elif aspect == 'source' and path_id.rptr_dir() == s_pointers.PointerDirection.Inbound:
-        prop = rptr.target_property
+    elif (
+        aspect == 'source'
+        and path_id.rptr_dir() == s_pointers.PointerDirection.Inbound
+    ):
+        prop = rptr.target_property or rptr.maybe_get_union_property('target', path_id.rptr_dir(), path_id.target)
         if prop:
             path_id = path_id.extend(ptrref=prop)
     else:
