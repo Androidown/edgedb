@@ -3932,12 +3932,32 @@ def process_set_as_traverse_function(
             rexpr=rvar_query
         )
     elif function_name in ('cal::children', 'cal::ichildren'):
-        # todo nulltest
+        # Add join rvar_query with identity and get needed col before IN Clause
+        temp_table = relctx.range_for_typeref(
+            typeref=rel_src.typeref,
+            path_id=irast.PathId.from_typeref(rel_src.typeref),
+            ctx=ctx)
+
+        parent_query_from_rvar = pgast.SelectStmt(
+            target_list=[
+                pgast.ResTarget(
+                    val=pgast.ColumnRef(name=[temp_table.alias.aliasname, id_col.name[1]])
+                )
+            ],
+            from_clause=[temp_table],
+            where_clause=pgast.Expr(
+                nullable=False,
+                name='IN',
+                lexpr=pgast.ColumnRef(name=[temp_table.alias.aliasname, id_col.name[1]]),
+                rexpr=rvar_query
+            )
+        )
+
         main_query.where_clause = pgast.Expr(
             nullable=False,
             name='IN',
             lexpr=pgast.ColumnRef(name=[cte_name, cte_parent_name]),
-            rexpr=rvar_query
+            rexpr=parent_query_from_rvar
         )
 
         if function_name == 'cal::ichildren':
