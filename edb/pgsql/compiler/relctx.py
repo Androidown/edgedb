@@ -701,27 +701,17 @@ def semi_join(
         and far_pid.rptr_dir() == s_pointers.PointerDirection.Outbound
     ):
         tgt_ref = pathctx.maybe_get_rvar_path_link_var(
-            set_rvar, far_pid, env=ctx.env, aspect='target', put_path_output=False
+            set_rvar, far_pid, ctx=ctx, aspect='target', put_path_output=False
         )
     else:
         tgt_ref = pathctx.get_rvar_path_identity_var(
             set_rvar, far_pid, env=ctx.env)
 
-    subselect_to_known_type_rangevar = (
-        isinstance(src_rvar, pgast.RangeSubselect)
-        and isinstance(set_rvar, pgast.RelRangeVar)
-        and set_rvar.typeref is not None
-    )
-
-    target_typeref = set_rvar.typeref if set_rvar.typeref and not set_rvar.typeref.is_opaque_union else ir_set.typeref
-
     if (
         src_rvar.typeref
         and far_pid.target
         and src_rvar.typeref.id == far_pid.target.id
-        and not subselect_to_known_type_rangevar
-        and far_pid.rptr_dir() is None
-        and (target_ref := ptrref.maybe_get_union_target_property(rptr.direction, target_typeref))
+        and (target_ref := ptrref.real_target_property()) is not None
     ):
         pathctx.get_path_value_output(
             ctx.rel,
@@ -1297,14 +1287,14 @@ def _plain_join(
 ) -> None:
     condition = None
 
-    link_src = _find_link_source(right_rvar.query.path_scope, right_rvar.typeref)
+    link_src = _find_link_source(right_rvar.query.path_scope)
 
     for path_id in right_rvar.query.path_scope:
         if link_src is not None and link_src.src_path() == path_id:
             rvar = maybe_get_path_rvar(query, path_id, aspect='value', ctx=ctx)
             if rvar is not None:
                 lref = pathctx.maybe_get_rvar_path_link_var(
-                    rvar, link_src, env=ctx.env, aspect='source')
+                    rvar, link_src, aspect='source', ctx=ctx)
             else:
                 lref = None
         else:
@@ -1316,7 +1306,7 @@ def _plain_join(
             continue
 
         rref = pathctx.maybe_get_rvar_path_link_var(
-            right_rvar, path_id, env=ctx.env, aspect='target')
+            right_rvar, path_id, ctx=ctx, aspect='target', safe_mode=True)
         if rref is None:
             rref = pathctx.get_rvar_path_identity_var(
                 right_rvar, path_id, env=ctx.env)
@@ -2126,7 +2116,7 @@ def clone_ptr_rel_overlays(
             v[k2] = list(v2)
 
 
-def _find_link_source(paths: Iterable[irast.PathId], typeref: irast.TypeRef) -> Optional[irast.PathId]:
+def _find_link_source(paths: Iterable[irast.PathId]) -> Optional[irast.PathId]:
     for path_id in paths:
         if (
             (rptr := path_id.rptr()) is not None
@@ -2137,6 +2127,6 @@ def _find_link_source(paths: Iterable[irast.PathId], typeref: irast.TypeRef) -> 
         if (
             (rptr := path_id.rptr()) is not None
             and path_id.rptr_dir() == s_pointers.PointerDirection.Inbound
-            and rptr.maybe_get_union_target_property(path_id.rptr_dir(), typeref)
+            and rptr.real_target_property()
         ):
             return path_id

@@ -779,37 +779,72 @@ def maybe_get_rvar_path_link_var(
     rvar: pgast.PathRangeVar,
     path_id: irast.PathId,
     *,
-    env: context.Environment,
     aspect: str,
-    put_path_output: bool = True
+    put_path_output: bool = True,
+    ctx: context.CompilerContextLevel = None,
+    safe_mode: bool = False,
 ) -> Optional[pgast.OutputVar]:
     rptr = path_id.rptr()
+    is_inbound = path_id.rptr_dir() == s_pointers.PointerDirection.Inbound
+    search_target = False
 
     if rptr is None:
         return None
 
-    if aspect == 'target':
-        prop = rptr.target_property
-    elif aspect == 'source' and path_id.rptr_dir() == s_pointers.PointerDirection.Outbound:
-        prop = rptr.source_property
-    elif aspect == 'source' and path_id.rptr_dir() == s_pointers.PointerDirection.Inbound:
-        prop = rptr.target_property
-        if prop:
-            path_id = path_id.extend(ptrref=prop)
+    if is_inbound:
+        if aspect == 'source':
+            prop = rptr.real_target_property()
+            search_target = True
+        else:
+            prop = rptr.real_source_property()
     else:
-        prop = None
+        if aspect == 'target':
+            prop = rptr.real_target_property()
+            search_target = True
+        else:
+            prop = rptr.real_source_property()
 
-    if prop is None:
+    if (
+        prop is None
+        or (
+            search_target
+            and rvar.typeref is not None
+            and prop.out_source != rvar.typeref
+        )
+    ):
         return None
 
     ptr_si = pg_types.get_ptrref_storage_info(prop)
-    outvar = _get_rel_path_output(
-        rvar.query, path_id, aspect='value',
-        flavor='normal', ptr_info=ptr_si, env=env,
-        respect_ptrinfo=True,
-        put_path_output=put_path_output
-    )
-    return astutils.get_rvar_var(rvar, outvar, recursive=True, env=env)
+
+    if is_inbound:
+        pid = path_id.src_path()
+        src_query = ctx.rel
+        rvar = None   # This is intentional
+        while src_query is not None:
+            rvar = maybe_get_path_rvar(
+                src_query, pid, aspect='source', env=ctx.env)
+            if rvar is not None:
+                break
+            src_query = ctx.rel_hierarchy.get(src_query)
+
+        assert rvar is not None, f'Failed to find source rangevar for {pid}'
+        outvar = get_path_output(
+            rvar.query, pid.extend(ptrref=prop),
+            aspect='value', env=ctx.env)
+    else:
+        outvar = _get_rel_path_output(
+            rvar.query, path_id, aspect='value',
+            flavor='normal', ptr_info=ptr_si, env=ctx.env,
+            respect_ptrinfo=True,
+            put_path_output=put_path_output
+        )
+    if safe_mode:
+        try:
+            return astutils.get_rvar_var(rvar, outvar, recursive=True, env=ctx.env)
+        except RuntimeError:
+            return None
+    else:
+        return astutils.get_rvar_var(rvar, outvar, recursive=True, env=ctx.env)
 
 
 def get_rvar_path_value_var(

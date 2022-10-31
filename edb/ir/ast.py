@@ -69,6 +69,7 @@ import dataclasses
 import typing
 import uuid
 
+from edb import errors
 from edb.common import ast, compiler, parsing, markup, enum as s_enum
 
 from edb.schema import modules as s_mod
@@ -83,7 +84,6 @@ from edb.edgeql import qltypes
 
 from .pathid import PathId, Namespace  # noqa
 from .scopetree import ScopeTreeNode  # noqa
-from ..errors import UnsupportedFeatureError
 
 
 def new_scope_tree() -> ScopeTreeNode:
@@ -276,28 +276,29 @@ class BasePointerRef(ImmutableBase):
         else:
             return self.in_cardinality
 
-    def maybe_get_union_target_property(self, direction: s_pointers.PointerDirection, typeref: TypeRef = None):
-        if not typeref:
-            return
+    def _resolve_linkpath(self, aspect):
+        if getattr(self, aspect) is not None:
+            return getattr(self, aspect)
 
         if not self.union_components:
             return
 
-        maybe_target = set()
-        to_union = typeref.union or [typeref]
-        map_ptrref = {p.dir_target(direction=direction).id: p.target_property
-                      for p in self.union_components if p.dir_target(direction=direction)}
+        candidates = set(getattr(c, aspect)  for c in self.union_components)
+        candidates.discard(None)
 
-        for t in to_union:
-            if t.id in map_ptrref:
-                maybe_target.add(map_ptrref[t.id])
+        if not candidates:
+            return
 
-        if len(maybe_target) > 1:
-            msg = unsupported_union_pointer_error(self.union_components, 'target_property', direction)
-            raise UnsupportedFeatureError(msg)
+        if len(candidates) == 1:
+            return candidates.pop()
 
-        if maybe_target:
-            return list(maybe_target)[0]
+        raise errors.UnsupportedFeatureError(f'Conflict {aspect} detected in union components.')
+
+    def real_target_property(self) -> typing.Optional[PointerRef]:
+        return self._resolve_linkpath('target_property')
+
+    def real_source_property(self) -> typing.Optional[PointerRef]:
+        return self._resolve_linkpath('source_property')
 
     @property
     def required(self) -> bool:
