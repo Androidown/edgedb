@@ -596,11 +596,14 @@ def _new_inline_pointer_rvar(
     else:
         far_pid = ir_ptr.target.path_id
 
-    far_ref = pathctx.get_rvar_path_identity_var(
-        src_rvar, far_pid, env=ctx.env)
-
-    pathctx.put_rvar_path_bond(ptr_rvar, far_pid)
-    pathctx.put_path_identity_var(ptr_rel, far_pid, var=far_ref, env=ctx.env)
+    if not (
+        is_inbound
+        and far_pid.target
+        and ir_ptr.ptrref.maybe_get_union_property('target', ir_ptr.direction, far_pid.target)
+    ):
+        far_ref = pathctx.get_rvar_path_identity_var(src_rvar, far_pid, env=ctx.env)
+        pathctx.put_rvar_path_bond(ptr_rvar, far_pid)
+        pathctx.put_path_identity_var(ptr_rel, far_pid, var=far_ref, env=ctx.env)
 
     return ptr_rvar
 
