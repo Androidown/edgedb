@@ -30,6 +30,49 @@ class TestEdgeQLLinkPath(test_edgeql_select.TestEdgeQLSelect):
     SETUP = os.path.join(os.path.dirname(__file__), 'schemas',
                          'issues_setup.edgeql')
 
+    async def test_edgeql_select_reverse_overload_01(self):
+        await self.con.execute('''
+            CREATE TYPE Dummy {
+                CREATE LINK owner -> User {
+                    on name;
+                };
+            }
+        ''')
+
+        await self.assert_query_result(
+            r'''
+                SELECT User {
+                    z := (SELECT .<owner[IS Named] { name }
+                          ORDER BY .name)
+                } FILTER .name = 'Elvis';
+            ''',
+            [{"z": [{"name": "Regression."}, {"name": "Release EdgeDB"}]}],
+        )
+
+    async def test_edgeql_select_reverse_overload_02(self):
+        await self.con.execute('''
+            CREATE TYPE Dummy1 {
+                CREATE MULTI LINK owner -> User {
+                    on name
+                };
+            };
+            CREATE TYPE Dummy2 {
+                CREATE SINGLE LINK owner -> User {
+                    on name
+                };
+            };
+        ''')
+
+        await self.assert_query_result(
+            r'''
+                SELECT User {
+                    z := (SELECT .<owner[IS Named] { name }
+                          ORDER BY .name)
+                } FILTER .name = 'Elvis';
+            ''',
+            [{"z": [{"name": "Regression."}, {"name": "Release EdgeDB"}]}],
+        )
+
 
 class TestEdgeQLLinkPathDDL(tb.QueryTestCase, borrows=test_edgeql_select.TestEdgeQLSelect):
     SCHEMA = os.path.join(os.path.dirname(__file__), 'schemas',
