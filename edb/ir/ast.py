@@ -291,10 +291,10 @@ class BasePointerRef(ImmutableBase):
         maybe_result = set()
         to_union = typeref.union or [typeref]
         if ptr_type == 'target':
-            map_ptrref = {p.dir_target(direction=direction).id: p
+            map_ptrref = {p.dir_target(direction=direction).id: p.target_property
                           for p in self.union_components if p.dir_target(direction=direction)}
         else:
-            map_ptrref = {p.dir_target(direction=direction).id: p
+            map_ptrref = {p.dir_target(direction=direction).id: p.source_property
                           for p in self.union_components if p.dir_target(direction=direction)}
 
         for t in to_union:
@@ -302,14 +302,11 @@ class BasePointerRef(ImmutableBase):
                 maybe_result.add(map_ptrref[t.id])
 
         if len(maybe_result) > 1:
-            msg = unsupported_union_pointer_error(maybe_result, f"{ptr_type}_property", direction)
+            msg = unsupported_union_pointer_error(to_union, ptr_type, direction)
             raise UnsupportedFeatureError(msg)
 
         if maybe_result:
-            if ptr_type == 'target':
-                return list(maybe_result)[0].target_property
-            else:
-                return list(maybe_result)[0].source_property
+            return list(maybe_result)[0]
 
     @property
     def required(self) -> bool:
