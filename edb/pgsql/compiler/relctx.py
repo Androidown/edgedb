@@ -2134,3 +2134,9 @@ def _find_link_source(paths: Iterable[irast.PathId], typeref: irast.TypeRef) -> 
             and path_id.rptr_dir() == s_pointers.PointerDirection.Outbound
         ):
             return path_id
+        if (
+            (rptr := path_id.rptr()) is not None
+            and path_id.rptr_dir() == s_pointers.PointerDirection.Inbound
+            and rptr.maybe_get_union_property('target', path_id.rptr_dir(), typeref)
+        ):
+            return path_id
