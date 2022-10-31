@@ -55,7 +55,6 @@ from . import schemactx
 from . import setgen
 from . import stmt
 from . import typegen
-from . import viewgen
 
 if TYPE_CHECKING:
     import uuid
@@ -857,9 +856,6 @@ def finalize_args(
 
         ptrref = irtyputils.ptrref_from_ptrcls(schema=ctx.env.schema, ptrcls=link)
         path_id = barg.val.path_id.extend(ptrref=ptrref)
-        if tgt_ref := ptrref.target_property:
-            inner_set = viewgen._get_innermost_equivalent_set(barg.val, ctx)
-            inner_set.identity_path = inner_set.path_id.extend(ptrref=tgt_ref)
         ptr_set = setgen.new_set(
             stype=bound_type,  # self-reference
             ctx=ctx,

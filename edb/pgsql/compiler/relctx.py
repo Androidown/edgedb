@@ -596,14 +596,11 @@ def _new_inline_pointer_rvar(
     else:
         far_pid = ir_ptr.target.path_id
 
-    if not (
-        is_inbound
-        and far_pid.target
-        and ir_ptr.ptrref.maybe_get_union_property('target', ir_ptr.direction, far_pid.target)
-    ):
-        far_ref = pathctx.get_rvar_path_identity_var(src_rvar, far_pid, env=ctx.env)
-        pathctx.put_rvar_path_bond(ptr_rvar, far_pid)
-        pathctx.put_path_identity_var(ptr_rel, far_pid, var=far_ref, env=ctx.env)
+    far_ref = pathctx.get_rvar_path_identity_var(
+        src_rvar, far_pid, env=ctx.env)
+
+    pathctx.put_rvar_path_bond(ptr_rvar, far_pid)
+    pathctx.put_path_identity_var(ptr_rel, far_pid, var=far_ref, env=ctx.env)
 
     return ptr_rvar
 
@@ -724,7 +721,7 @@ def semi_join(
         and src_rvar.typeref.id == far_pid.target.id
         and not subselect_to_known_type_rangevar
         and far_pid.rptr_dir() is None
-        and (target_ref := ptrref.maybe_get_union_property('target', rptr.direction, target_typeref))
+        and (target_ref := ptrref.maybe_get_union_target_property(rptr.direction, target_typeref))
     ):
         pathctx.get_path_value_output(
             ctx.rel,
@@ -2140,6 +2137,6 @@ def _find_link_source(paths: Iterable[irast.PathId], typeref: irast.TypeRef) -> 
         if (
             (rptr := path_id.rptr()) is not None
             and path_id.rptr_dir() == s_pointers.PointerDirection.Inbound
-            and rptr.maybe_get_union_property('target', path_id.rptr_dir(), typeref)
+            and rptr.maybe_get_union_target_property(path_id.rptr_dir(), typeref)
         ):
             return path_id
