@@ -900,10 +900,14 @@ class AlterInheritingObjectOrFragment(
         context: sd.CommandContext,
         scls: so.InheritingObject,
         props: Tuple[str, ...],
+        mark_propagate: bool = False
     ) -> None:
         for descendant in scls.ordered_descendants(schema):
             d_root_cmd, d_alter_cmd, ctx_stack = descendant.init_delta_branch(
                 schema, context, sd.AlterObject)
+
+            if mark_propagate:
+                d_alter_cmd.set_annotation('is_propagated', True)
 
             d_bases = descendant.get_bases(schema).objects(schema)
 

@@ -140,6 +140,22 @@ class CommandMeta(sd.CommandMeta):
     pass
 
 
+class _LinkAlterInfo(NamedTuple):
+    new_target: s_props.Property
+    old_target: s_props.Property
+    new_source: s_props.Property
+    old_source: s_props.Property
+    type_altered: bool
+
+    @property
+    def target_altered(self):
+        return self.old_target != self.new_target
+
+    @property
+    def source_altered(self):
+        return self.old_source != self.new_source
+
+
 class MetaCommand(sd.Command, metaclass=CommandMeta):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -3932,8 +3948,7 @@ class PointerMetaCommand(MetaCommand):
         is_lprop = pointer.is_link_property(schema)
         is_multi = ptr_table and not is_lprop
         is_required = pointer.get_required(schema)
-        changing_col_type = not is_link
-
+        changing_col_type = not is_link or old_ptr_stor_info.column_type != 'uuid'
         source_ctx = self.get_referrer_context_or_die(context)
         ptr_op = self.get_parent_op(context)
         if is_multi:
@@ -4826,152 +4841,129 @@ class AlterLink(LinkMetaCommand, adapts=s_links.AlterLink):
         return schema
 
     def _alter_finalize(self, schema, context):
+        orig_schema = context.current().original_schema
         schema = super()._alter_finalize(schema, context)
-        self.apply_scheduled_inhview_updates(schema, context)
-        return schema
-
-    def _alter_begin(
-        self,
-        schema: s_schema.Schema,
-        context: sd.CommandContext,
-    ) -> s_schema.Schema:
-        orig_schema = schema
-        schema = super()._alter_begin(schema, context)
         if not self.maybe_get_object_aux_data('from_alias'):
-            self._alter_link_path(
+            self._validate_link_path(self.scls, schema, context)
+            if self._alter_link_path(
                 orig_schema=orig_schema,
-                schema=schema, context=context)
+                schema=schema, context=context
+            ):
+                self.apply_scheduled_inhview_updates(schema, context)
         return schema
 
     def _get_link_path_alter_info(
         self,
-        aspect: str,
-        schema: s_schema.Schema
-    ) -> Tuple[Optional[s_pointers.Pointer], Optional[s_pointers.Pointer]]:
-        if aspect == 'source':
-            cmd = self._get_attribute_set_cmd('source_property')
-        else:
-            cmd = self._get_attribute_set_cmd('target_property')
+        schema: s_schema.Schema,
+        orig_schema: s_schema.Schema
+    ) -> _LinkAlterInfo:
+        old_link = orig_schema.get(self.classname)
+        new_link = schema.get(self.classname)
 
-        if cmd is None:
-            return None, None
+        type_altered = old_link.get_target(orig_schema) \
+            != new_link.get_target(schema)
 
-        if cmd.new_value is not None:
-            if isinstance(cmd.new_value, so.ObjectShell):
-                new_val = cmd.new_value.resolve(schema)
-            else:
-                new_val = cmd.new_value
-        else:
-            new_val = None
-        return cmd.old_value, new_val
+        return _LinkAlterInfo(
+            new_target=new_link.get_target_property(schema),
+            new_source=new_link.get_source_property(schema),
+            old_target=old_link.get_target_property(orig_schema),
+            old_source=old_link.get_source_property(orig_schema),
+            type_altered=type_altered
+        )
 
     def _alter_link_path(
         self,
         orig_schema: s_schema.Schema,
         schema: s_schema.Schema,
         context: sd.CommandContext,
-    ):
-        old_src, new_src = self._get_link_path_alter_info('source', schema)
-        old_tgt, new_tgt = self._get_link_path_alter_info('target', schema)
-        src_altered = old_src is not None or new_src is not None
-        tgt_altered = old_tgt is not None or new_tgt is not None
+    ) -> bool:
+        alter_info = self._get_link_path_alter_info(schema, orig_schema)
         link = self.scls
+        stor_info = types.get_pointer_storage_info(link, schema=schema)
+        is_line_link = stor_info.table_type == 'ObjectType'
 
-        link_stor_info = types.get_pointer_storage_info(
-            link, schema=schema)
-        is_line_link = link_stor_info.table_type == 'ObjectType'
+        source_altered = alter_info.source_altered and not is_line_link
+        target_altered = alter_info.target_altered
 
-        alter_table = self.get_alter_table(
-            schema, context, table_name=link_stor_info.table_name)
-        self.pgops.add(alter_table)
+        if not (source_altered or target_altered):
+            return False
 
-        tgt_cols_to_tmp: List[Tuple[str, dbops.Column]] = []
-
-        if src_altered and not is_line_link:
-            add_col_op = self._create_temp_column(
-                link, 'source', link.get_source_type(schema),
-                new_src, old_src, schema,
-            )
-            alter_table.add_operation(add_col_op)
-            tgt_cols_to_tmp.append(('source', add_col_op.attribute))
-
-        if tgt_altered:
-            add_col_op = self._create_temp_column(
-                link, link_stor_info.column_name,
-                link.get_target(schema), new_tgt, old_tgt,
-                schema, create_index=True
-            )
-            alter_table.add_operation(add_col_op)
-            tgt_cols_to_tmp.append((link_stor_info.column_name, add_col_op.attribute))
-
-        if tgt_cols_to_tmp:
-            if not is_line_link:
-                link_main = link
+        if is_line_link:
+            link_main = link.get_source_type(schema)
+            if self.get_annotation('is_propagated'):
+                drop_inhview = [link_main] + list(link_main.get_ancestors(schema).objects(schema))
             else:
-                link_main = link.get_source_type(schema)
+                drop_inhview = [link_main]
+        else:
+            link_main = link
+            drop_inhview = [link_main]
 
-            self.drop_inhview(schema, context, link_main)
+        for obj in drop_inhview:
+            self.drop_inhview(schema, context, obj, conditional=True)
 
-            alter_table = self.get_alter_table(
-                schema, context,
-                table_name=link_stor_info.table_name,
-                force_new=True
+        alter_table_before = self.get_alter_table(
+            schema, context, table_name=stor_info.table_name,
+            force_new=True, manual=True
+        )
+        self.pgops.add(alter_table_before)
+        alter_table_after = self.get_alter_table(
+            schema, context, table_name=stor_info.table_name,
+            force_new=True, manual=True
+        )
+
+        if source_altered:
+            add_col, update_col, drop_col = self._create_temp_column(
+                stor_info.table_name,
+                'source', link.get_source_type(schema),
+                alter_info.new_source, alter_info.old_source, schema,
             )
-            self.pgops.add(alter_table)
+            alter_table_before.add_operation(add_col)
+            alter_table_after.add_operation(update_col)
+            alter_table_after.add_operation(drop_col)
 
-            for tgt_col_name, tmp_col in tgt_cols_to_tmp:
-                alter_table_rename_col = self.get_alter_table(
-                    schema, context,
-                    table_name=link_stor_info.table_name,
-                    force_new=True
-                )
-                self.pgops.add(alter_table_rename_col)
-                tgt_col = dbops.Column(name=tgt_col_name, type=None)
-                alter_table.add_operation(dbops.AlterTableDropColumn(tgt_col))
-                alter_table_rename_col.add_operation(dbops.AlterTableRenameColumn(tmp_col, tgt_col))
+        if target_altered:
+            add_col, update_col, drop_col = self._create_temp_column(
+                stor_info.table_name,
+                stor_info.column_name, link.get_target(schema),
+                alter_info.new_target, alter_info.old_target, schema,
+                link_type_changed=alter_info.type_altered
+            )
+            alter_table_before.add_operation(add_col)
+            alter_table_after.add_operation(update_col)
+            alter_table_after.add_operation(drop_col)
 
-            self.create_inhview(schema, context, link_main, alter_ancestors=True)  # todo 有优化空间
-            self.schedule_endpoint_delete_action_update(link, orig_schema, schema, context)
+        self.pgops.add(alter_table_after)
+        self.schedule_inhview_update(
+            schema,
+            context,
+            link_main,
+            s_objtypes.ObjectTypeCommandContext,
+        )
+        self.schedule_endpoint_delete_action_update(link, orig_schema, schema, context)
+        return True
 
     def _create_temp_column(
         self,
-        link: s_links.Link,
+        main_table: str,
         link_field: str,
         link_obj: s_types.Type,
         new_pointer: Optional[s_pointers.Pointer],
         old_pointer: Optional[s_pointers.Pointer],
         schema: s_schema.Schema,
-        create_index: bool = False,
-    ) -> dbops.AlterTableAddColumn:
-
-        link_stor_info = types.get_pointer_storage_info(
-            link, schema=schema)
-        main_table = link_stor_info.table_name
-
+        link_type_changed: bool = False
+    ) -> Tuple[
+        dbops.AlterTableAddColumn,
+        dbops.AlterTableAlterColumnType,
+        dbops.AlterTableDropColumn,
+    ]:
         link_table = common.get_backend_name(schema, link_obj)
+        temp_column = self._get_temp_column(new_pointer, schema)
 
-        if link_stor_info.table_type == 'link':
-            comment = None
+        if link_type_changed:
+            # 如果DDL中有SetLinkType，link字段会被重置为id列对应的值
+            old_col = 'id'
         else:
-            comment = str(link.get_shortname(schema))
-
-        temp_column = self._get_temp_column(new_pointer, schema, comment)
-
-        if create_index:
-            index_name = common.get_backend_name(
-                schema, link, catenate=False, aspect='index'
-            )[1]
-            pg_index = dbops.Index(
-                name=index_name, table_name=main_table,
-                unique=False, columns=[temp_column.name],
-                inherit=True
-            )
-            di = dbops.DropIndex(pg_index, conditional=True)
-            self.pgops.add(di)
-            ci = dbops.CreateIndex(pg_index)
-            self.pgops.add(ci)
-
-        old_col = self._get_id_or_property_id(old_pointer)
+            old_col = self._get_id_or_property_id(old_pointer)
         new_col = self._get_id_or_property_id(new_pointer)
         upd_src_qry = textwrap.dedent(
             f"""\
@@ -4983,29 +4975,35 @@ class AlterLink(LinkMetaCommand, adapts=s_links.AlterLink):
             """
         )
         self.pgops.add(dbops.Query(upd_src_qry))
-        return dbops.AlterTableAddColumn(temp_column)
+
+        return (
+            dbops.AlterTableAddColumn(temp_column),
+            dbops.AlterTableAlterColumnType(
+                link_field, self.resolve_col_type(new_pointer, schema),
+                using_expr=qi(temp_column.name)
+            ),
+            dbops.AlterTableDropColumn(temp_column)
+        )
 
     @staticmethod
     def _get_id_or_property_id(
         ptr: Optional[s_pointers.Pointer],
-        qualified: bool = True,
+        quoted: bool = True,
     ):
         ptr_stor = 'id' if ptr is None else str(ptr.id)
-        if qualified:
+        if quoted:
             return q(ptr_stor)
         return ptr_stor
 
     def _get_temp_column(self,
         ptr: Optional[s_pointers.Pointer],
         schema: s_schema.Schema,
-        comment: Optional[str] = None
     ):
-        col_prefix = self._get_id_or_property_id(ptr, qualified=False)
+        col_prefix = self._get_id_or_property_id(ptr, quoted=False)
         col_type = self.resolve_col_type(ptr, schema)
         temp_column = dbops.Column(
             name=f'??{col_prefix}_{common.get_unique_random_name()}',
             type=col_type,
-            comment=comment
         )
         return temp_column
 

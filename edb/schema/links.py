@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from typing import *
 
 from edb.edgeql import ast as qlast
@@ -368,18 +369,26 @@ class LinkCommand(
     referrer_context_class=LinkSourceCommandContext,
 ):
 
-    def canonicalize_attributes(
+    def _resolve_linkpath_attr(
         self,
         schema: s_schema.Schema,
         context: sd.CommandContext,
-    ) -> s_schema.Schema:
-        schema = super().canonicalize_attributes(schema, context)
-
+    ) -> Dict[str, so.Object]:
         # canonicalize linkpath attributes
         cmd_target_prop = self._get_attribute_set_cmd('target_property')
         cmd_source_prop = self._get_attribute_set_cmd('source_property')
 
         is_alter_link = isinstance(self, AlterLink)
+
+        if is_alter_link:
+            if cmd_target_prop is not None:
+                cmd_target_prop.old_value = self.scls.get_explicit_field_value(
+                    schema, 'target_property', default=None)
+            if cmd_source_prop is not None:
+                cmd_source_prop.old_value = self.scls.get_explicit_field_value(
+                    schema, 'source_property', default=None)
+
+        altered_props = {}
 
         if cmd_target_prop is not None:
             if is_alter_link:
@@ -389,7 +398,11 @@ class LinkCommand(
                 else:
                     target = target_ref.resolve(schema)
             else:
-                target = self.get_local_attribute_value('target').resolve(schema)
+                target_shell = self.get_local_attribute_value('target')
+                if target_shell is None:
+                    target = self.get_attribute_value('target')
+                else:
+                    target = target_shell.resolve(schema)
 
             if target.is_compound_type(schema):
                 raise errors.UnsupportedFeatureError(
@@ -397,28 +410,35 @@ class LinkCommand(
                     context=self.get_attribute_source_context('target')
                 )
 
-            self._finalize_alter_attr(
+            altered = self._finalize_alter_attr(
                 cmd_target_prop,
                 'target_property',
                 source=target,
                 schema=schema,
-                modaliases=context.modaliases,
+                context=context,
             )
+            altered_props.update(altered)
 
         if cmd_source_prop is not None:
             if is_alter_link:
                 source = self.scls.get_source_type(schema)
             else:
-                source = self.get_local_attribute_value('source').resolve(schema)
+                maybe_source_shell = self.get_local_attribute_value('source')
+                if isinstance(maybe_source_shell, so.ObjectShell):
+                    source = maybe_source_shell.resolve(schema)
+                else:
+                    source = maybe_source_shell
 
-            self._finalize_alter_attr(
+            altered = self._finalize_alter_attr(
                 cmd_source_prop,
                 'source_property',
                 source=source,
                 schema=schema,
-                modaliases=context.modaliases,
+                context=context,
             )
-        return schema
+            altered_props.update(altered)
+
+        return altered_props
 
     def _finalize_alter_attr(
         self,
@@ -426,8 +446,8 @@ class LinkCommand(
         attrname: str,
         source: s_objtypes.ObjectType,
         schema: s_schema.Schema,
-        modaliases: Mapping[Optional[str], str],
-    ):
+        context: sd.CommandContext,
+    ) -> Dict[str, so.Object]:
         name = command.new_value
         old_value = command.old_value
         sourcectx = command.source_context
@@ -441,7 +461,7 @@ class LinkCommand(
             uq_name = sn.UnqualName(name)
             ptr = source.maybe_get_ptr(schema, uq_name)
             if ptr is not None:
-                new_val, discard = ptr.as_shell(schema), ptr == old_value
+                new_val, discard = ptr, ptr == old_value
             else:
                 vname = source.get_verbosename(schema, with_parent=True)
                 err = errors.InvalidReferenceError(
@@ -451,7 +471,7 @@ class LinkCommand(
                 utils.enrich_schema_lookup_error(
                     err,
                     uq_name,
-                    modaliases=modaliases,
+                    modaliases=context.modaliases,
                     item_type=properties.Property,
                     collection=source.get_pointers(schema).objects(schema),
                     schema=schema,
@@ -460,9 +480,11 @@ class LinkCommand(
 
         if discard:
             self.discard(command)
+            return {}
         else:
             self.set_attribute_value(
                 attrname, new_val, source_context=sourcectx)
+            return {attrname: new_val}
 
     def _append_subcmd_ast(
         self,
@@ -526,6 +548,37 @@ class LinkCommand(
                 context=srcctx,
             )
 
+        self._validate_link_path(scls, schema, context)
+
+    def _validate_link_path(
+        self,
+        scls: Link,
+        schema: s_schema.Schema,
+        context: sd.CommandContext,
+    ):
+
+        if (
+            (src_prop := scls.get_source_property(schema)) is not None
+            and not src_prop.is_exclusive(schema)
+        ):
+            srcctx = self.get_attribute_source_context('source_property')
+            raise errors.SchemaDefinitionError(
+                f'invalid link source property for {scls.get_verbosename(schema, with_parent=True)}, '
+                f'{src_prop.get_verbosename(schema, with_parent=True)} is not exclusive.',
+                context=srcctx
+            )
+
+        if (
+            (tgt_prop := scls.get_target_property(schema)) is not None
+            and not tgt_prop.is_exclusive(schema)
+        ):
+            srcctx = self.get_attribute_source_context('target_property')
+            raise errors.SchemaDefinitionError(
+                f'invalid link target property for {scls.get_verbosename(schema, with_parent=True)}, '
+                f'{tgt_prop.get_verbosename(schema, with_parent=True)} is not exclusive.',
+                context=srcctx
+            )
+
     def _get_ast(
         self,
         schema: s_schema.Schema,
@@ -568,6 +621,37 @@ class CreateLink(
 ):
     astnode = [qlast.CreateConcreteLink, qlast.CreateLink]
     referenced_astnode = qlast.CreateConcreteLink
+
+    def _create_begin(
+        self,
+        schema: s_schema.Schema,
+        context: sd.CommandContext,
+    ) -> s_schema.Schema:
+        with contextlib.ExitStack() as stack:
+            if not context.canonical:
+                stack.enter_context(self._hide_linkpath_props())
+            schema = super()._create_begin(schema, context)
+
+        if not context.canonical and not context.mark_derived:
+            altered_props = self._resolve_linkpath_attr(schema, context)
+            if altered_props:
+                schema = self.scls.update(schema, altered_props)
+
+        return schema
+
+    @contextlib.contextmanager
+    def _hide_linkpath_props(self):
+        tgt_op = self._get_attribute_set_cmd('target_property')
+        src_op = self._get_attribute_set_cmd('source_property')
+        self.discard(tgt_op)
+        self.discard(src_op)
+        try:
+            yield
+        finally:
+            if tgt_op is not None:
+                self.add(tgt_op)
+            if src_op is not None:
+                self.add(src_op)
 
     @classmethod
     def _cmd_tree_from_ast(
@@ -678,7 +762,8 @@ class CreateLink(
             if link_path_op is not None:
                 link_path_op.source = ref
             else:
-                node.commands.append(qlast.SetLinkPath(source=ref))
+                node.commands.append(qlast.SetLinkPath(
+                    source=ref, target=qlast.ObjectRef(name='id')))
         else:
             super()._apply_field_ast(schema, context, node, op)
 
@@ -811,6 +896,51 @@ class SetLinkType(
             tgt_prop_alter.set_attribute_value('target', new_target)
             self.add(tgt_prop_alter)
 
+        return schema
+
+    def _alter_finalize(
+        self,
+        schema: s_schema.Schema,
+        context: sd.CommandContext,
+    ) -> s_schema.Schema:
+        schema = super()._alter_finalize(schema, context)
+        link = self.scls
+        link_op = self.get_parent_op(context)
+
+        if (
+            not link_op.get_annotation('implicit_propagation')
+            and context.canonical
+            and not link_op.get_annotation('set_linkpath')
+            and (tgt_prop := link.get_target_property(schema)) is not None
+        ):
+            orig_target = tgt_prop.get_source(schema)
+            new_target = link.get_target(schema)
+
+            action = self.get_friendly_description()
+            link_desc = link.get_verbosename(schema=schema, with_parent=True)
+            if (
+                orig_target != new_target
+            ):
+                raise errors.SchemaDefinitionError(
+                    f"cannot {action} because this affects "
+                    f"'target_property' of {link_desc}.",
+                    details=(
+                        f"target_property '{tgt_prop.get_displayname(schema)}' "
+                        f"belongs to {orig_target.get_verbosename(schema)}, "
+                        f"not {new_target.get_verbosename(schema)}"
+                    )
+                )
+
+        if (
+            not link_op.get_annotation('implicit_propagation')
+            and context.canonical
+            and link_op.get_annotation('set_linkpath')
+            and link.descendants(schema)
+        ):
+            action = self.get_friendly_description()
+            raise errors.UnsupportedFeatureError(
+                f"{action} on a pathed parent link is not yet supported. "
+            )
         return schema
 
 
@@ -948,6 +1078,27 @@ class AlterLink(
         else:
             super()._apply_field_ast(schema, context, node, op)
 
+    def _alter_begin(
+        self,
+        schema: s_schema.Schema,
+        context: sd.CommandContext,
+    ) -> s_schema.Schema:
+        if (
+            context.canonical
+            and not self.get_annotation('link_path_resolved')
+            and not self.maybe_get_object_aux_data('from_alias')
+        ):
+            altered_props = self._resolve_linkpath_attr(schema, context)
+            if altered_props:
+                schema = self.scls.update(schema, altered_props)
+                if not self.get_annotation('is_propagated'):
+                    self._propagate_field_alter(
+                        schema, context, self.scls,
+                        tuple(altered_props), mark_propagate=True
+                    )
+            self.set_annotation('link_path_resolved', True)
+        return super()._alter_begin(schema, context)
+
 
 class DeleteLink(
     LinkCommand,
@@ -975,8 +1126,26 @@ class DeleteLink(
 
 
 class SetLinkPath(sd.Command):
+    astnode = qlast.SetLinkPath
+
     @classmethod
     def _cmd_tree_from_ast(
+        cls,
+        schema: s_schema.Schema,
+        astnode: qlast.SetLinkPath,
+        context: sd.CommandContext,
+    ):
+        this_op = cls.get_parent_op(context)
+
+        if isinstance(this_op, CreateLink):
+            cls._attach_cmd(schema, astnode, context)
+        else:
+            cmd = super()._cmd_tree_from_ast(schema, astnode, context)
+            cmd.astnode = astnode
+            return cmd
+
+    @classmethod
+    def _attach_cmd(
         cls,
         schema: s_schema.Schema,
         astnode: qlast.SetLinkPath,
@@ -990,16 +1159,29 @@ class SetLinkPath(sd.Command):
         )
         this_op.add(alter_tgt_prop)
         cls._validate_cmd(
-            alter_tgt_prop, schema, context, astnode.context)
+            alter_tgt_prop, schema, context, astnode.context
+        )
 
         if astnode.source is not None:
-            this_op.add(sd.AlterObjectProperty(
-                property='source_property',
-                new_value=astnode.source.name,
-                source_context=astnode.source.context
-            ))
+            this_op.add(
+                sd.AlterObjectProperty(
+                    property='source_property',
+                    new_value=astnode.source.name,
+                    source_context=astnode.source.context
+                )
+            )
+        this_op.set_annotation('set_linkpath', True)
 
-    astnode = qlast.SetLinkPath
+    def apply(
+        self,
+        schema: s_schema.Schema,
+        context: sd.CommandContext,
+    ) -> s_schema.Schema:
+        schema = super().apply(schema, context)
+        if not context.canonical:
+            self._attach_cmd(schema, self.astnode, context)
+            self.get_parent_op(context).discard(self)
+        return schema
 
     @classmethod
     def _validate_cmd(
