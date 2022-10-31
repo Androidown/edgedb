@@ -275,6 +275,10 @@ def find_column_in_subselect_rvar(
         ))
         return len(subquery.target_list) - 1, alias
 
+    cte_map = {}
+    if subquery.ctes and len(subquery.ctes) > 0:
+        cte_map = {cte.name: cte.query for cte in subquery.ctes}
+
     if recursive and isinstance(subquery, pgast.SelectStmt):
         for sub_rvar in subquery.from_clause:
             if isinstance(sub_rvar, pgast.RangeSubselect):
@@ -293,6 +297,18 @@ def find_column_in_subselect_rvar(
                     )
                 except RuntimeError:
                     pass
+            elif isinstance(sub_rvar, pgast.RelRangeVar) and sub_rvar.query.name in cte_map:
+                actual_sub_query = cte_map[sub_rvar.query.name].larg
+                for res_t in actual_sub_query.target_list:
+                    if res_t.val.name[-1] == name:
+                        alias = env.aliases.get(name)
+                        subquery.target_list.append(
+                            pgast.ResTarget(
+                                name=alias,
+                                val=pgast.ColumnRef(name=[res_t.name])
+                            )
+                        )
+                        return len(subquery.target_list) - 1, alias
             else:
                 if isinstance(sub_rvar, pgast.JoinExpr):
                     sub_rvar = sub_rvar.larg
