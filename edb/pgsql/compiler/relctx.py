@@ -696,14 +696,20 @@ def semi_join(
             ctx.rel, map_rvar,
             path_id=ir_set.path_id.ptr_path(), ctx=ctx)
 
+    tgt_ref = None
+
     if (
-        ptrref.target_property is not None
-        and far_pid.rptr_dir() == s_pointers.PointerDirection.Outbound
+        (ptrref.real_target_property() is not None
+         and far_pid.rptr_dir() == s_pointers.PointerDirection.Outbound)
+        or (
+           ptrref.real_source_property() is not None
+            and far_pid.rptr_dir() == s_pointers.PointerDirection.Inbound)
     ):
         tgt_ref = pathctx.maybe_get_rvar_path_link_var(
             set_rvar, far_pid, ctx=ctx, aspect='target', put_path_output=False
         )
-    else:
+
+    if tgt_ref is None:
         tgt_ref = pathctx.get_rvar_path_identity_var(
             set_rvar, far_pid, env=ctx.env)
 
