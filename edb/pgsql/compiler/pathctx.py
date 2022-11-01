@@ -809,7 +809,7 @@ def maybe_get_rvar_path_link_var(
         or (
             search_target
             and rvar.typeref is not None
-            and prop.out_source != rvar.typeref
+            and prop.out_source != rvar.typeref.real_material_type
         )
     ):
         return None
@@ -817,20 +817,28 @@ def maybe_get_rvar_path_link_var(
     ptr_si = pg_types.get_ptrref_storage_info(prop)
 
     if is_inbound:
-        pid = path_id.src_path()
-        src_query = ctx.rel
-        rvar = None   # This is intentional
-        while src_query is not None:
-            rvar = maybe_get_path_rvar(
-                src_query, pid, aspect='source', env=ctx.env)
-            if rvar is not None:
-                break
-            src_query = ctx.rel_hierarchy.get(src_query)
+        if search_target:
+            pid = path_id.src_path()
+            src_query = ctx.rel
+            rvar = None   # This is intentional
+            while src_query is not None:
+                rvar = maybe_get_path_rvar(
+                    src_query, pid, aspect='source', env=ctx.env)
+                if rvar is not None:
+                    break
+                src_query = ctx.rel_hierarchy.get(src_query)
 
-        assert rvar is not None, f'Failed to find source rangevar for {pid}'
-        outvar = get_path_output(
-            rvar.query, pid.extend(ptrref=prop),
-            aspect='value', env=ctx.env)
+            assert rvar is not None, f'Failed to find source rangevar for {pid}'
+            outvar = get_path_output(
+                rvar.query, pid.extend(ptrref=prop),
+                aspect='value', env=ctx.env)
+        else:
+            outvar = _get_rel_path_output(
+                rvar.query, path_id.extend(ptrref=prop), aspect='value',
+                flavor='normal', ptr_info=ptr_si, env=ctx.env,
+                respect_ptrinfo=True,
+                put_path_output=put_path_output
+            )
     else:
         outvar = _get_rel_path_output(
             rvar.query, path_id, aspect='value',
