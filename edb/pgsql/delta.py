@@ -3948,7 +3948,7 @@ class PointerMetaCommand(MetaCommand):
         is_lprop = pointer.is_link_property(schema)
         is_multi = ptr_table and not is_lprop
         is_required = pointer.get_required(schema)
-        changing_col_type = not is_link or old_ptr_stor_info.column_type != 'uuid'
+        changing_col_type = not is_link or old_ptr_stor_info.column_type != ('uuid', )
         source_ctx = self.get_referrer_context_or_die(context)
         ptr_op = self.get_parent_op(context)
         if is_multi:
