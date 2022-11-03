@@ -4881,10 +4881,14 @@ class AlterLink(LinkMetaCommand, adapts=s_links.AlterLink):
         schema: s_schema.Schema,
         context: sd.CommandContext,
     ) -> bool:
+        link = self.scls
+        if link.generic(schema):
+            return False
+
         alter_info = self._get_link_path_alter_info(schema, orig_schema)
         if alter_info is None:
             return False
-        link = self.scls
+
         stor_info = types.get_pointer_storage_info(link, schema=schema)
         is_line_link = stor_info.table_type == 'ObjectType'
 
