@@ -86,6 +86,22 @@ edgeql_query_compilations = registry.new_labeled_counter(
     labels=('path',)
 )
 
+edgeql_cache_pickle_dump_duration = registry.new_histogram(
+    'edgeql_cache_pickle_dump_duration',
+    'Time it takes in disk cache pickle dump.',
+    unit=prom.Unit.SECONDS,
+)
+edgeql_cache_pickle_load_duration = registry.new_histogram(
+    'edgeql_cache_pickle_load_duration',
+    'Time it takes in disk cache pickle load.',
+    unit=prom.Unit.SECONDS,
+)
+edgeql_cache_os_remove_duration = registry.new_histogram(
+    'edgeql_cache_os_remove_duration',
+    'Time it takes in disk cache os remove.',
+    unit=prom.Unit.SECONDS,
+)
+
 edgeql_query_compilation_duration = registry.new_histogram(
     'edgeql_query_compilation_duration',
     'Time it takes to compile an EdgeQL query or script.',

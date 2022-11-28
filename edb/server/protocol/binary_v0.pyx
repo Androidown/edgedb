@@ -882,8 +882,6 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
 
         if self.debug:
             self.debug_print('OPTIMISTIC EXECUTE', query)
-
-        metrics.edgeql_query_compilations.inc(1.0, 'cache')
         await self._legacy_execute(
             compiled,
             bind_args,
@@ -1174,7 +1172,6 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
 
         unit_group = await self._legacy_compile_script(
             eql, skip_first=skip_first, module=module, read_only=read_only)
-        metrics.edgeql_query_compilations.inc(1.0, 'compiler')
 
         if self._cancelled:
             raise ConnectionAbortedError

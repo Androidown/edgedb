@@ -99,6 +99,8 @@ class Query(BaseQuery):
     has_dml: bool = False
     single_unit: bool = False
     cacheable: bool = True
+    # Set of object ids that used in this Query
+    ref_ids: Optional[Set[uuid.UUID]] = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -292,6 +294,8 @@ class QueryUnit:
     cached_reflection: Optional[bytes] = None
     # The pickled user_shema mutation log, aim to replace user_schema
     user_schema_mutation: Optional[bytes] = None
+    # Record affected object ids for cache clear
+    affected_obj_ids: Optional[Set[uuid.UUID]] = None
 
     # If present, represents the future global schema state
     # after the command is run. The schema is pickled.
@@ -346,6 +350,8 @@ class QueryUnitGroup:
     user_schema_mutation: Optional[bytes] = None
 
     units: List[QueryUnit] = dataclasses.field(default_factory=list)
+    # Set of object ids that used in this Query
+    ref_ids: Optional[Set[uuid.UUID]] = None
 
     def __iter__(self):
         return iter(self.units)
