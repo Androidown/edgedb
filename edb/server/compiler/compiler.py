@@ -31,6 +31,7 @@ import textwrap
 import uuid
 
 import immutables
+from loguru import logger
 
 from edb import errors
 
@@ -82,6 +83,8 @@ from . import dbstate
 from . import enums
 from . import sertypes
 from . import status
+
+STD_MODULES_STR = ('std', 'schema', 'math', 'sys', 'cfg', 'cal')
 
 if TYPE_CHECKING:
     from edb.server import pgcon
@@ -293,6 +296,20 @@ class Compiler:
             h.update(param.encode('latin1'))
             h.update(val)
         return h.hexdigest().encode('latin1')
+
+    @staticmethod
+    def _filter_ref_ids(schema: s_schema.FlatSchema, refs: FrozenSet[s_obj.Object]):
+        ref_ids = set()
+        names = set()
+        for ref in refs:
+            if (
+                ref.is_type()
+                and ref.get_name(schema).module not in STD_MODULES_STR
+            ):
+                ref_ids.add(ref.id)
+                names.add(ref.get_name(schema))
+        logger.debug(f'Names of refered object for current Query: \n{names}')
+        return ref_ids
 
     async def initialize_from_pg(self, con: pgcon.PGConnection) -> None:
         if self._std_schema is None:
@@ -742,6 +759,7 @@ class Compiler:
             out_type_data=out_type_data,
             cacheable=cacheable,
             has_dml=ir.dml_exprs,
+            ref_ids=self._filter_ref_ids(schema, ir.schema_refs)
         )
 
     def _extract_params(
@@ -1888,6 +1906,12 @@ class Compiler:
 
                 unit.cacheable = comp.cacheable
 
+                if comp.ref_ids:
+                    if rv.ref_ids:
+                        rv.ref_ids.update(comp.ref_ids)
+                    else:
+                        rv.ref_ids = comp.ref_ids
+
                 if is_trailing_stmt:
                     unit.cardinality = comp.cardinality
 
@@ -1903,6 +1927,9 @@ class Compiler:
                 unit.has_role_ddl = comp.has_role_ddl
                 unit.ddl_stmt_id = comp.ddl_stmt_id
                 if comp.user_schema is not None:
+                    self.gather_affected_obj_ids(
+                        comp.user_schema, ctx, unit
+                    )
                     self.send_schema_change(
                         comp.user_schema,
                         unit, mutations, is_script, ctx)
@@ -1918,6 +1945,9 @@ class Compiler:
                 unit.sql = comp.sql
                 unit.cacheable = comp.cacheable
                 if comp.user_schema is not None:
+                    self.gather_affected_obj_ids(
+                        comp.user_schema, ctx, unit
+                    )
                     self.send_schema_change(
                         comp.user_schema,
                         unit, mutations, is_script, ctx)
@@ -1949,6 +1979,9 @@ class Compiler:
                 unit.sql = comp.sql
                 unit.cacheable = comp.cacheable
                 if comp.user_schema is not None:
+                    self.gather_affected_obj_ids(
+                        comp.user_schema, ctx, unit
+                    )
                     self.send_schema_change(
                         comp.user_schema,
                         unit, mutations, is_script, ctx)
@@ -2090,6 +2123,26 @@ class Compiler:
                 user_schema.get_mutation(), -1)
         user_schema.rebase_mutation()
 
+    @staticmethod
+    def gather_affected_obj_ids(
+        user_schema: s_schema.FlatSchema,
+        ctx: CompileContext,
+        unit: dbstate.QueryUnit
+    ):
+        if ctx.in_tx:
+            mutation = ctx.state.get_mutation()
+        else:
+            mutation = user_schema.get_mutation()
+
+        if mutation is None:
+            return
+
+        if mutation.ops and (id_to_data_ops := mutation.ops[s_schema.SC.ITD]):
+            for op in id_to_data_ops:
+                if unit.affected_obj_ids is None:
+                    unit.affected_obj_ids = {op.key}
+                else:
+                    unit.affected_obj_ids.add(op.key)
     # API
 
     @staticmethod

@@ -73,6 +73,8 @@ cdef class Database:
 
     cdef:
         object _eql_to_compiled
+        object _eql_to_compiled_disk
+        object _object_id_to_eql
         DatabaseIndex _index
         object _views
         object _introspection_lock
@@ -88,7 +90,7 @@ cdef class Database:
 
     cdef schedule_config_update(self)
 
-    cdef _invalidate_caches(self)
+    cdef _invalidate_caches(self, drop_ids=?)
     cdef _cache_compiled_query(self, key, query_unit)
     cdef _new_view(self, query_cache, protocol_version)
     cdef _remove_view(self, view)
@@ -99,6 +101,7 @@ cdef class Database:
         reflection_cache=?,
         backend_ids=?,
         db_config=?,
+        affecting_ids=?,
     )
     cdef get_state_serializer(self, protocol_version)
 

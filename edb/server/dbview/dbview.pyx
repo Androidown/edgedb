@@ -29,9 +29,10 @@ import struct
 import time
 import typing
 import weakref
-
+import uuid
 import immutables
 import logging
+from collections import UserDict
 
 from edb import errors
 from edb import edgeql
@@ -57,7 +58,6 @@ cdef DEFAULT_STATE = json.dumps([]).encode('utf-8')
 cdef INT32_PACKER = struct.Struct('!l').pack
 
 cdef int VER_COUNTER = 0
-cdef DICTDEFAULT = (None, None)
 
 cdef object logger = logging.getLogger('edb.server')
 
@@ -146,11 +146,136 @@ cdef class CompiledQuery:
         self.extra_counts = extra_counts
         self.extra_blobs = extra_blobs
 
+class EqlDict(UserDict):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.refering = {}
+
+    def __setitem__(self, obj_id, eqls):
+        for eql in eqls:
+            if eql in self.refering:
+                self.refering[eql].add(obj_id)
+            else:
+                self.refering[eql] = {obj_id}
+        self.data[obj_id] = eqls
+
+    def __delitem__(self, obj_id):
+        ref_eqls = set(self.data[obj_id])
+        self.maybe_drop_with_eqls(ref_eqls)
+        self.data.pop(obj_id, None)
+
+    def maybe_drop_with_eqls(self, eqls):
+        if not isinstance(eqls, set):
+            eqls = {eqls}
+
+        for eql in eqls:
+            if eql not in self.refering:
+                continue
+
+            ref_objs = list(self.refering[eql])
+            for obj_id in ref_objs:
+                self.data[obj_id].remove(eql)
+                if len(self.data[obj_id]) == 0:
+                    del self.data[obj_id]
+            del self.refering[eql]
+
+    def add(self, obj_id, eql):
+        if eql in self.refering:
+            self.refering[eql].add(obj_id)
+        else:
+            self.refering[eql] = {obj_id}
+        self.data[obj_id].add(eql)
+
+    def __repr__(self):
+        msg = []
+        for obj_id, eqls in self.data.items():
+            msg.append(f"Object<{obj_id}>: [{format_eqls(eqls)}]")
+        return "\n".join(msg)
+
+
+class RankedDiskCache(UserDict):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.__rank = {}
+
+
+    def __delitem__(self, key):
+        if key in self.__rank:
+            del self.__rank[key]
+
+        filepath = self.data[key]
+
+        if os.path.exists(filepath):
+            started_at = time.monotonic()
+            os.remove(filepath)
+            metrics.edgeql_cache_os_remove_duration.observe(time.monotonic() - started_at)
+
+        del self.data[key]
+
+    def __setitem__(self, key, item):
+        if key not in self.__rank:
+            self.__rank[key] = 0
+
+        self.data[key] = item
+
+    def __getitem__(self, key):
+        if key in self.data:
+            if key in self.__rank:
+                self.__rank[key] += 1
+            return self.data[key]
+        raise KeyError(key)
+
+    def seldom_used(self):
+        if self.__rank:
+            ordered = sorted(self.__rank.items(), key=lambda x: x[1])
+            return ordered[0][0]
+
+    def delete_with_cb(self, key, cb=None):
+        bak_before_set = set(self.data.keys())
+        del self.data[key]
+        if cb is not None:
+            delta = bak_before_set.difference(self.data.keys())
+            cb(delta)
+
+
+class RankedDiskCacheAutoClean(RankedDiskCache):
+    def __setitem__(self, key, item):
+        # Maybe drop cache when larger than max count after add one new cache
+        # If rank is the same, the one cached earlier will be dropped
+        overload = len(self.data) - (defines.DISK_CACHE_MAX_COUNT - 1)
+        if overload > 0:
+            for i in range(overload):
+                self.__delitem__(self.seldom_used())
+
+        super().__setitem__(key, item)
+
+    def set_with_cb(self, key, item, cb=None):
+        bak_before_set = set(self.data.keys())
+        self.__setitem__(key, item)
+        if cb is not None:
+            delta = bak_before_set.difference(self.data.keys())
+            cb(delta)
+
+
+def format_eqls(raw_eqls):
+    msg = []
+    for query_req, alias, session in raw_eqls:
+        msg.append(
+            f"<Sql: {query_req.source.text()} "
+            f"alias: {alias} "
+            f"session: {session}>"
+        )
+
+    return "\n".join(msg)
 
 cdef class Database:
 
     # Global LRU cache of compiled anonymous queries
     _eql_to_compiled: typing.Mapping[str, dbstate.QueryUnitGroup]
+    # Additional cache in disk for all eql queried
+    _eql_to_compiled_disk: RankedDiskCacheAutoClean
+    # Dict for object id to eql
+    _object_id_to_eql: EqlDict
 
     def __init__(
         self,
@@ -173,8 +298,9 @@ cdef class Database:
 
         self._introspection_lock = asyncio.Lock()
 
-        self._eql_to_compiled = lru.LRUMapping(
-            maxsize=defines._MAX_QUERIES_CACHE)
+        self._eql_to_compiled = lru.LRUMapping(maxsize=defines._MAX_QUERIES_CACHE)
+        self._eql_to_compiled_disk = RankedDiskCacheAutoClean()
+        self._object_id_to_eql = EqlDict()
 
         self.db_config = db_config
         self.user_schema = user_schema
@@ -192,6 +318,10 @@ cdef class Database:
     def server(self):
         return self._index._server
 
+    @property
+    def sql_bak_dir(self):
+        return os.path.join(self.server._runstate_dir, 'sql_bak')
+
     cdef schedule_config_update(self):
         self._index._server._on_local_database_config_change(self.name)
 
@@ -201,6 +331,7 @@ cdef class Database:
         reflection_cache=None,
         backend_ids=None,
         db_config=None,
+        affecting_ids: typing.Set[uuid.UUID]=None
     ):
         if new_schema is None:
             raise AssertionError('new_schema is not supposed to be None')
@@ -220,24 +351,87 @@ cdef class Database:
             self.reflection_cache = reflection_cache
         if db_config is not None:
             self.db_config = db_config
-        self._invalidate_caches()
+        if affecting_ids:
+            drop_ids = affecting_ids.intersection(self._object_id_to_eql.keys())
+        else:
+            drop_ids = None
+        self._invalidate_caches(drop_ids)
 
     cdef _update_backend_ids(self, new_types):
         self.backend_ids.update(new_types)
 
-    cdef _invalidate_caches(self):
-        self._eql_to_compiled.clear()
+    cdef _invalidate_caches(self, drop_ids: typing.Set[uuid.UUID]=None):
         self._state_serializers.clear()
+        if drop_ids is None:
+            return
+
+        logger.debug(f'Ids to drop: {drop_ids}')
+
+        for obj_id in drop_ids:
+            if obj_id not in self._object_id_to_eql:
+                continue
+
+            for eql in list(self._object_id_to_eql[obj_id]):
+                if eql in self._eql_to_compiled:
+                    logger.debug(f"Eql with sql:{format_eqls((eql,))} "
+                                 f"will be dropped for change of object with id <{obj_id}> in LRU cache.")
+                    del self._eql_to_compiled[eql]
+                if eql in self._eql_to_compiled_disk:
+                    logger.debug(f"Eql with sql:{format_eqls((eql,))} "
+                                 f"will be dropped for change of object with id <{obj_id}> in Disk cache.")
+                    del self._eql_to_compiled_disk[eql]
+
+            del self._object_id_to_eql[obj_id]
+
+        logger.debug('After invalidate, LRU Cache: \n' + format_eqls(self._eql_to_compiled._dict.keys()))
+        logger.debug('Disk Cache: \n' + format_eqls(self._eql_to_compiled_disk.keys()))
+        logger.debug(f'Obj id to Eql: \n{self._object_id_to_eql}')
 
     cdef _cache_compiled_query(self, key, compiled: dbstate.QueryUnitGroup):
         assert compiled.cacheable
 
-        existing, dbver = self._eql_to_compiled.get(key, DICTDEFAULT)
-        if existing is not None and dbver == self.dbver:
-            # We already have a cached query for a more recent DB version.
+        # We already have a cached query for a more recent DB version.
+        existing = self._eql_to_compiled.get(key)
+        if existing is not None:
             return
 
-        self._eql_to_compiled[key] = compiled, self.dbver
+        disk_filepath = self._eql_to_compiled_disk.get(key)
+        if disk_filepath is not None:
+            return
+
+        sql_length = sum(
+            len(sql_bytes) for query_unit in compiled.units
+            for sql_bytes in query_unit.sql
+        )
+        logger.debug(f'Sql bytes length: {sql_length}')
+        dump_to_disk = sql_length > defines.SQL_BYTES_LENGTH_DISK_CACHE
+        # Update Cache
+        if dump_to_disk:
+            disk_filepath = os.path.join(self.sql_bak_dir, str(uuidgen.uuid4()))
+            if not os.path.isdir(self.sql_bak_dir):
+                os.mkdir(self.sql_bak_dir)
+
+            started_at = time.monotonic()
+            with open(disk_filepath, 'wb') as disk_file:
+                pickle.dump(compiled, file=disk_file, protocol=pickle.HIGHEST_PROTOCOL)
+                self._eql_to_compiled_disk.set_with_cb(
+                    key,
+                    disk_filepath,
+                    self._object_id_to_eql.maybe_drop_with_eqls
+                )
+            metrics.edgeql_cache_pickle_dump_duration.observe(time.monotonic() - started_at)
+
+        self._eql_to_compiled[key] = compiled
+
+        if compiled.ref_ids is None:
+            return
+
+        logger.debug(f"Ref ids in Compiled: {compiled.ref_ids}")
+        for obj_id in compiled.ref_ids:
+            if obj_id not in self._object_id_to_eql:
+                self._object_id_to_eql[obj_id] = {key}
+            else:
+                self._object_id_to_eql.add(obj_id, key)
 
     cdef _new_view(self, query_cache, protocol_version):
         view = DatabaseConnectionView(
@@ -305,8 +499,7 @@ cdef class DatabaseConnectionView:
 
         # Whenever we are in a transaction that had executed a
         # DDL command, we use this cache for compiled queries.
-        self._eql_to_compiled = lru.LRUMapping(
-            maxsize=defines._MAX_QUERIES_CACHE)
+        self._eql_to_compiled = lru.LRUMapping(maxsize=defines._MAX_QUERIES_CACHE)
 
         self._reset_tx_state()
 
@@ -721,6 +914,7 @@ cdef class DatabaseConnectionView:
 
     cdef cache_compiled_query(self, object key, object query_unit_group):
         assert query_unit_group.cacheable
+        logger.debug(f'Put {key.source.text()} in cache...')
 
         key = (key, self.get_modaliases(), self.get_session_config())
 
@@ -737,13 +931,29 @@ cdef class DatabaseConnectionView:
 
         key = (key, self.get_modaliases(), self.get_session_config())
 
-        if self._in_tx_with_ddl:
-            query_unit_group = self._eql_to_compiled.get(key)
-        else:
-            query_unit_group, qu_dbver = self._db._eql_to_compiled.get(
-                key, DICTDEFAULT)
-            if query_unit_group is not None and qu_dbver != self._db.dbver:
-                query_unit_group = None
+        query_unit_group = self._db._eql_to_compiled.get(key)
+
+        if query_unit_group is None:
+            disk_filepath = self._db._eql_to_compiled_disk.get(key)
+
+            if disk_filepath is None:
+                return None
+
+            if not os.path.exists(disk_filepath):
+                logger.debug(f'Find dumped sql bytes in disk deleted, '
+                             f'drop Eql for Sql: {key[0].source.text()}.')
+                self._db._eql_to_compiled_disk.delete_with_cb(
+                    key,
+                    self._db._object_id_to_eql.maybe_drop_with_eqls
+                )
+                return None
+
+            started_at = time.monotonic()
+            with open(disk_filepath, 'rb') as disk_file:
+                query_unit_group = pickle.load(disk_file)
+            metrics.edgeql_cache_pickle_load_duration.observe(time.monotonic() - started_at)
+
+            self._db._eql_to_compiled[key] = query_unit_group
 
         return query_unit_group
 
@@ -833,7 +1043,10 @@ cdef class DatabaseConnectionView:
                     query_unit.update_user_schema(self._db.user_schema),
                     pickle.loads(query_unit.cached_reflection)
                         if query_unit.cached_reflection is not None
-                        else None
+                        else None,
+                    None,
+                    None,
+                    query_unit.affected_obj_ids
                 )
                 side_effects |= SideEffects.SchemaChanges
             if query_unit.system_config:
@@ -873,7 +1086,10 @@ cdef class DatabaseConnectionView:
                     query_unit.update_user_schema(self._in_tx_base_user_schema),
                     pickle.loads(query_unit.cached_reflection)
                         if query_unit.cached_reflection is not None
-                        else None
+                        else None,
+                    None,
+                    None,
+                    query_unit.affected_obj_ids
                 )
                 side_effects |= SideEffects.SchemaChanges
             if self._in_tx_with_sysconfig:

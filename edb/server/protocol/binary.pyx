@@ -1254,7 +1254,6 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         if self.debug:
             self.debug_print('EXECUTE', query_req.source.text())
 
-        metrics.edgeql_query_compilations.inc(1.0, 'cache')
         if (
             _dbview.in_tx_error()
             or query_unit_group[0].tx_savepoint_rollback
