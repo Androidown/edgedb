@@ -79,6 +79,8 @@ cdef class Database:
         object _views
         object _introspection_lock
         object _state_serializers
+        str _sql_bak_dir
+        bint _should_log
 
         readonly str name
         readonly object dbver

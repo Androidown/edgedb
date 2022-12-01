@@ -20,6 +20,8 @@
 
 
 from __future__ import annotations
+
+import logging
 from typing import *
 
 import collections
@@ -31,7 +33,6 @@ import textwrap
 import uuid
 
 import immutables
-from loguru import logger
 
 from edb import errors
 
@@ -85,6 +86,7 @@ from . import sertypes
 from . import status
 
 STD_MODULES_STR = ('std', 'schema', 'math', 'sys', 'cfg', 'cal')
+logger = logging.getLogger('edb.server')
 
 if TYPE_CHECKING:
     from edb.server import pgcon
@@ -300,15 +302,21 @@ class Compiler:
     @staticmethod
     def _filter_ref_ids(schema: s_schema.FlatSchema, refs: FrozenSet[s_obj.Object]):
         ref_ids = set()
-        names = set()
         for ref in refs:
             if (
                 ref.is_type()
                 and ref.get_name(schema).module not in STD_MODULES_STR
             ):
                 ref_ids.add(ref.id)
-                names.add(ref.get_name(schema))
-        logger.debug(f'Names of refered object for current Query: \n{names}')
+
+        if logger.isEnabledFor(logging.DEBUG) and ref_ids:
+            names = set()
+            for obj_id in ref_ids:
+                obj = schema.get_by_id(obj_id, default=None)
+                if obj:
+                    names.add(obj.get_name(schema))
+            logger.debug(f'Names of refered object for current Query: \n{names}')
+
         return ref_ids
 
     async def initialize_from_pg(self, con: pgcon.PGConnection) -> None:
