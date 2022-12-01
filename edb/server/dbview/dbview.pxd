@@ -46,6 +46,7 @@ cdef class QueryRequestInfo:
     cdef public uint64_t allow_capabilities
     cdef public object module
     cdef public bint read_only
+    cdef public object external_view
 
     cdef int cached_hash
 

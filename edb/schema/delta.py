@@ -25,6 +25,8 @@ import contextlib
 import functools
 import itertools
 import uuid
+import immutables
+
 
 from edb import errors
 
@@ -1216,6 +1218,7 @@ class CommandContext:
         compat_ver: Optional[verutils.Version] = None,
         module: Optional[str] = None,
         module_is_implicit: Optional[bool] = False,
+        external_view: Optional[Mapping] = None,
     ) -> None:
         self.stack: List[CommandContextToken[Command]] = []
         self._cache: Dict[Hashable, Any] = {}
@@ -1244,6 +1247,8 @@ class CommandContext:
         self.compat_ver = compat_ver
         self.module = module
         self.module_is_implicit = module_is_implicit
+        self.external_view = external_view or immutables.Map()
+        self.external_objs = set()
 
     @property
     def modaliases(self) -> Mapping[Optional[str], str]:
@@ -2903,6 +2908,12 @@ class CreateObject(ObjectCommand[so.Object_T], Generic[so.Object_T]):
             # Record the generated ID.
             self.set_attribute_value('id', self.scls.id)
 
+        if self.scls.is_external(schema, context):
+            self.set_attribute_value('external', True)
+            context.external_objs.add(self.scls)
+        else:
+            self.set_attribute_value('external', False)
+
         return schema
 
     def canonicalize_attributes(
@@ -3463,6 +3474,10 @@ class AlterObject(AlterObjectOrFragment[so.Object_T], Generic[so.Object_T]):
                 return schema
         else:
             scls = self.get_object(schema, context)
+
+        if scls.get_external(schema):
+            raise errors.UnsupportedFeatureError(
+                f"Cannot {self.get_friendly_description()} because it is external.")
 
         self.scls = scls
 

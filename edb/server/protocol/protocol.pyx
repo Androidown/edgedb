@@ -53,6 +53,7 @@ from . import notebook_ext
 from . import system_api
 from . import ui_ext
 from . import schema_info
+from . import extern_obj
 
 
 HTTPStatus = http.HTTPStatus
@@ -528,6 +529,10 @@ cdef class HttpProtocol:
                     )
                 elif extname == 'schema_info':
                     await schema_info.handle_request(
+                        request, response, db, args, self.server
+                    )
+                elif extname == 'extern':
+                    await extern_obj.handle_request(
                         request, response, db, args, self.server
                     )
 

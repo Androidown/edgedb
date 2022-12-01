@@ -2047,6 +2047,9 @@ class CreateConstraint(ConstraintCommand, adapts=s_constr.CreateConstraint):
         schema = super().apply(schema, context)
         constraint = self.scls
 
+        if constraint.get_subject(schema) in context.external_objs:
+            return schema
+
         op = self.create_constraint(
             constraint, schema, context, self.source_context)
         self.pgops.add(op)
@@ -2194,8 +2197,13 @@ class DeleteConstraint(ConstraintCommand, adapts=s_constr.DeleteConstraint):
         delta_root_ctx = context.top()
         orig_schema = delta_root_ctx.original_schema
         constraint = schema.get(self.classname)
+        is_external = constraint.get_subject(schema).get_external(schema)
 
         schema = super().apply(schema, context)
+
+        if is_external:
+            return schema
+
         op = self.delete_constraint(
             constraint, orig_schema, context, self.source_context)
         self.pgops.add(op)
@@ -2889,6 +2897,7 @@ class CompositeMetaCommand(MetaCommand):
                 module=get_schema_name(rel.get_name(schema).get_module_name()),
             )
             for rel in rels
+            if not rel.get_external(schema)
         )
         return dbops.View(
             name=inhview_name,
@@ -3182,6 +3191,11 @@ class CompositeMetaCommand(MetaCommand):
 
         self.pgops.update(self.post_inhview_update_commands)
 
+    def schedule_external_type_inhview_create(self, obj, schema, context):
+        create_extern_view_actions = context.get(
+            sd.DeltaRootContext).op.create_extern_view_actions
+        create_extern_view_actions.collect_external_objects(obj, schema, context)
+
 
 class IndexCommand(MetaCommand):
     pass
@@ -3345,7 +3359,13 @@ class CreateObjectType(ObjectTypeMetaCommand,
         schema = super().apply(schema, context)
 
         objtype = self.scls
-        if objtype.is_compound_type(schema) or objtype.get_is_derived(schema):
+        if (
+            objtype.is_compound_type(schema)
+            or objtype.get_is_derived(schema)
+            or objtype in context.external_objs
+        ):
+            if objtype in context.external_objs:
+                self.schedule_external_type_inhview_create(objtype, schema, context)
             return schema
 
         self.attach_alter_table(context)
@@ -3365,8 +3385,13 @@ class CreateObjectType(ObjectTypeMetaCommand,
     ) -> s_schema.Schema:
         schema = super()._create_begin(schema, context)
         objtype = self.scls
-        if objtype.is_compound_type(schema) or objtype.get_is_derived(schema):
+        if (
+            objtype.is_compound_type(schema)
+            or objtype.get_is_derived(schema)
+            or objtype in context.external_objs
+        ):
             return schema
+
         new_table_name = common.get_backend_name(
             schema, self.scls, catenate=False)
         self.table_name = new_table_name
@@ -3481,6 +3506,7 @@ class DeleteObjectType(ObjectTypeMetaCommand,
     ) -> s_schema.Schema:
         self.scls = objtype = schema.get(self.classname)
         self._sort_subcommand()
+        is_external = objtype.get_external(schema)
 
         old_table_name = common.get_backend_name(
             schema, objtype, catenate=False)
@@ -3489,6 +3515,11 @@ class DeleteObjectType(ObjectTypeMetaCommand,
         schema = super().apply(schema, context)
 
         self.apply_scheduled_inhview_updates(schema, context)
+
+        if is_external:
+            self.pgops.add(dbops.DropView(name=('edgedbpub', str(objtype.id))))
+            self.pgops.add(dbops.DropView(name=('edgedbpub', str(objtype.id) + '_t')))
+            return schema
 
         if has_table(objtype, orig_schema):
             self.attach_alter_table(context)
@@ -4677,10 +4708,24 @@ class CreateLink(LinkMetaCommand, adapts=s_links.CreateLink):
         schema = super()._create_begin(schema, context)
 
         link = self.scls
+        if link in context.external_objs:
+            return schema
+
         self.table_name = common.get_backend_name(schema, link, catenate=False)
 
         self._create_link(link, schema, orig_schema, context)
 
+        return schema
+
+    def apply(
+        self,
+        schema: s_schema.Schema,
+        context: sd.CommandContext,
+    ) -> s_schema.Schema:
+        schema = super().apply(schema, context)
+        link = self.scls
+        if link in context.external_objs and has_table(link, schema):
+            self.schedule_external_type_inhview_create(link, schema, context)
         return schema
 
     def _create_finalize(self, schema, context):
@@ -5028,6 +5073,10 @@ class DeleteLink(LinkMetaCommand, adapts=s_links.DeleteLink):
         link = schema.get(self.classname)
 
         schema = super()._delete_innards(schema, context)
+
+        if link.get_external(schema):
+            return schema
+
         self._delete_link(link, schema, orig_schema, context)
 
         return schema
@@ -5037,9 +5086,18 @@ class DeleteLink(LinkMetaCommand, adapts=s_links.DeleteLink):
         schema: s_schema.Schema,
         context: sd.CommandContext,
     ) -> s_schema.Schema:
+        link = schema.get(self.classname)
+        has_extern_table = (
+            link.get_external(schema)
+            and has_table(link, schema))
+
         schema = super().apply(schema, context)
 
         self.apply_scheduled_inhview_updates(schema, context)
+        if has_extern_table:
+            self.pgops.add(dbops.DropView(name=('edgedbpub', str(link.id))))
+            self.pgops.add(dbops.DropView(name=('edgedbpub', str(link.id) + '_t')))
+            return schema
 
         return schema
 
@@ -5302,6 +5360,9 @@ class CreateProperty(PropertyMetaCommand, adapts=s_props.CreateProperty):
         schema = super()._create_begin(schema, context)
         prop = self.scls
 
+        if prop in context.external_objs:
+            return schema
+
         src = context.get(s_sources.SourceCommandContext)
 
         self._create_property(prop, src, schema, orig_schema, context)
@@ -5485,6 +5546,10 @@ class DeleteProperty(PropertyMetaCommand, adapts=s_props.DeleteProperty):
     ) -> s_schema.Schema:
         schema = super()._delete_innards(schema, context)
         prop = self.scls
+
+        if prop.get_source(schema).get_external(schema):
+            return schema
+
         orig_schema = context.current().original_schema
 
         source_ctx = self.get_referrer_context(context)
@@ -6586,6 +6651,74 @@ class UpdateEndpointDeleteActions(MetaCommand):
             )
 
 
+class CreateExternalView(MetaCommand):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.external_views: List[dbops.View] = []
+
+    def collect_external_objects(
+        self,
+        obj: so.Object,
+        schema: s_schema.Schema,
+        context: sd.CommandContext,
+    ):
+        key = obj.get_displayname(schema)
+        if (src_is_link := isinstance(obj, s_links.Link)):
+            key = (obj.get_source_type(schema).get_displayname(schema), key)
+
+        if key not in context.external_view:
+            raise errors.SchemaDefinitionError(
+                f"Failed to find view definition for external object {key} ")
+
+        view_def = context.external_view[key]
+        columns = []
+
+        for ptr in context.external_objs:
+            if not isinstance(ptr, s_pointers.Pointer):
+                continue
+
+            if (
+                ptr.get_source(schema) != obj
+                or ptr.is_pure_computable(schema)
+                or has_table(ptr, schema)
+            ):
+                continue
+
+            ptrname = ptr.get_shortname(schema).name
+
+            if ptrname == 'id':
+                columns.append("edgedbext.uuid_generate_v1mc() AS id")
+            elif ptrname == '__type__':
+                columns.append(f"'{(str(obj.id))}'::uuid AS __type__")
+            else:
+                if ptrname not in view_def.columns:
+                    raise errors.SchemaDefinitionError(
+                        f"Missing column definition for "
+                        f"{ptr.get_verbosename(schema, with_parent=True)}")
+
+                if src_is_link and ptrname in ('target', 'source'):
+                    colview_name = ptrname
+                else:
+                    colview_name = str(ptr.id)
+
+                columns.append(f"{q(view_def.columns[ptrname])} AS {q(colview_name)}")
+
+        column_str = ',\n'.join(columns)
+        query = f"SELECT {column_str} FROM {view_def.relation}"
+        self.external_views.append(dbops.View(query=query, name=('edgedbpub', str(obj.id))))
+        self.external_views.append(dbops.View(query=query, name=('edgedbpub', str(obj.id) + '_t')))
+
+
+    def apply(
+        self,
+        schema: s_schema.Schema,
+        context: sd.CommandContext,
+    ) -> s_schema.Schema:
+        for view in self.external_views:
+            self.pgops.add(dbops.CreateView(view=view, or_replace=True))
+        return schema
+
+
 class ModuleMetaCommand(MetaCommand):
     pass
 
@@ -6992,11 +7125,14 @@ class DeltaRoot(MetaCommand, adapts=sd.DeltaRoot):
         context: sd.CommandContext,
     ) -> s_schema.Schema:
         self.update_endpoint_delete_actions = UpdateEndpointDeleteActions()
+        self.create_extern_view_actions = CreateExternalView()
 
         schema = super().apply(schema, context)
 
         self.update_endpoint_delete_actions.apply(schema, context)
         self.pgops.add(self.update_endpoint_delete_actions)
+        self.create_extern_view_actions.apply(schema, context)
+        self.pgops.add(self.create_extern_view_actions)
 
         return schema
 

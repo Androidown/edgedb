@@ -4213,8 +4213,10 @@ def _generate_database_views(schema: s_schema.Schema) -> List[dbops.View]:
                 AS {qi(ptr_col_name(schema, Database, 'computed_fields'))},
             ((d.description)->>'builtin')::bool
                 AS {qi(ptr_col_name(schema, Database, 'builtin'))},
-            null
-                AS {qi(ptr_col_name(schema, Database, 'module_name'))}
+            (d.description)->>'module_name'
+                AS {qi(ptr_col_name(schema, Database, 'module_name'))},
+            ((d.description)->>'external')::bool
+                AS {qi(ptr_col_name(schema, Database, 'external'))}
         FROM
             pg_database dat
             CROSS JOIN LATERAL (
@@ -4336,8 +4338,10 @@ def _generate_extension_views(schema: s_schema.Schema) -> List[dbops.View]:
                 AS {qi(ptr_col_name(schema, ExtPkg, 'builtin'))},
             (e.value->>'internal')::bool
                 AS {qi(ptr_col_name(schema, ExtPkg, 'internal'))},
-            null
-                AS {qi(ptr_col_name(schema, ExtPkg, 'module_name'))}
+            (e.value->>'module_name')
+                AS {qi(ptr_col_name(schema, ExtPkg, 'module_name'))},
+            ((e.value )->>'external')::bool
+                AS {qi(ptr_col_name(schema, ExtPkg, 'external'))}
         FROM
             jsonb_each(
                 edgedb.get_database_metadata(
@@ -4459,8 +4463,10 @@ def _generate_role_views(schema: s_schema.Schema) -> List[dbops.View]:
                 AS {qi(ptr_col_name(schema, Role, 'internal'))},
             (d.description)->>'password_hash'
                 AS {qi(ptr_col_name(schema, Role, 'password'))},
-            null
-                AS {qi(ptr_col_name(schema, Role, 'module_name'))}
+            (d.description)->>'module_name'
+                AS {qi(ptr_col_name(schema, Role, 'module_name'))},
+            ((d.description)->>'external')::bool
+                AS {qi(ptr_col_name(schema, Role, 'external'))}
         FROM
             pg_catalog.pg_roles AS a
             CROSS JOIN LATERAL (
@@ -4647,8 +4653,10 @@ def _generate_single_role_views(schema: s_schema.Schema) -> List[dbops.View]:
                 AS {qi(ptr_col_name(schema, Role, 'internal'))},
             json->>'password_hash'
                 AS {qi(ptr_col_name(schema, Role, 'password'))},
-            null
-                AS {qi(ptr_col_name(schema, Role, 'module_name'))}
+            json->>'module_name'
+                AS {qi(ptr_col_name(schema, Role, 'module_name'))},
+            (json->>'external')::bool
+                AS {qi(ptr_col_name(schema, Role, 'external'))}
         FROM
             edgedbinstdata.instdata
         WHERE
@@ -4769,8 +4777,10 @@ def _generate_schema_ver_views(schema: s_schema.Schema) -> List[dbops.View]:
                 AS {qi(ptr_col_name(schema, Ver, 'internal'))},
             ARRAY[]::text[]
                 AS {qi(ptr_col_name(schema, Ver, 'computed_fields'))},
-            null
-                AS {qi(ptr_col_name(schema, Ver, 'module_name'))}
+            (v.value->>'module_name')
+                AS {qi(ptr_col_name(schema, Ver, 'module_name'))},
+            ((v.value )->>'external')::bool
+                AS {qi(ptr_col_name(schema, Ver, 'external'))}
         FROM
             jsonb_each(
                 edgedb.get_database_metadata(

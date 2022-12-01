@@ -85,6 +85,7 @@ cdef class QueryRequestInfo:
         allow_capabilities: uint64_t = <uint64_t>compiler.Capability.ALL,
         module: str = None,
         read_only: bint = False,
+        external_view: object = immutables.Map(),
     ):
         self.source = source
         self.protocol_version = protocol_version
@@ -98,6 +99,7 @@ cdef class QueryRequestInfo:
         self.allow_capabilities = allow_capabilities
         self.module = module
         self.read_only = read_only
+        self.external_view = external_view
 
         self.cached_hash = hash((
             self.source.cache_key(),
@@ -109,7 +111,7 @@ cdef class QueryRequestInfo:
             self.inline_typeids,
             self.inline_typenames,
             self.inline_objectids,
-            self.module
+            self.module,
         ))
 
     def __hash__(self):
@@ -1306,6 +1308,7 @@ cdef class DatabaseConnectionView:
                     query_req.input_format is compiler.InputFormat.JSON,
                     self.in_tx_error(),
                     query_req.module,
+                    query_req.external_view,
                 )
             else:
                 result = await compiler_pool.compile(
@@ -1328,6 +1331,7 @@ cdef class DatabaseConnectionView:
                     query_req.inline_objectids,
                     query_req.input_format is compiler.InputFormat.JSON,
                     query_req.module,
+                    query_req.external_view,
                 )
         finally:
             metrics.edgeql_query_compilation_duration.observe(

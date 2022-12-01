@@ -397,6 +397,42 @@ def signal_side_effects(dbv, side_effects):
         )
 
 
+async def parse_execute(
+    db: dbview.Database,
+    query: str,
+    *,
+    external_view: Mapping = immutables.Map(),
+):
+    server = db.server
+    dbv = await server.new_dbview(
+        dbname=db.name,
+        query_cache=False           ,
+        protocol_version=edbdef.CURRENT_PROTOCOL,
+    )
+
+    query_req = dbview.QueryRequestInfo(
+        edgeql.Source.from_string(query),
+        protocol_version=edbdef.CURRENT_PROTOCOL,
+        input_format=compiler.InputFormat.JSON,
+        output_format=compiler.OutputFormat.NONE,
+        allow_capabilities=compiler.Capability.MODIFICATIONS | compiler.Capability.DDL,
+        external_view=external_view
+    )
+
+    compiled = await dbv.parse(query_req)
+
+    pgcon = await server.acquire_pgcon(db.name)
+    try:
+        return await execute(
+            pgcon,
+            dbv,
+            compiled,
+            bind_args=_encode_args([])
+        )
+    finally:
+        server.release_pgcon(db.name, pgcon)
+
+
 async def parse_execute_json(
     db: dbview.Database,
     query: str,
