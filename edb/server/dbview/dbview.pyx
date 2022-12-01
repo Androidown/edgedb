@@ -15,7 +15,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-
 from typing import (
     Optional,
 )
@@ -32,7 +31,7 @@ import weakref
 import uuid
 import immutables
 import logging
-from collections import UserDict
+from collections import UserDict, defaultdict, OrderedDict
 
 from edb import errors
 from edb import edgeql
@@ -147,27 +146,23 @@ cdef class CompiledQuery:
         self.extra_blobs = extra_blobs
 
 class EqlDict(UserDict):
+    """object id到eqls的字典
+    从eql到object ids的关系也被维护于其中(refering成员中)，
+    用于在object id被删除导致eqls被删除时，eql相关的其他object中的eql也会被级联删除
+    """
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.refering = {}
-
-    def __setitem__(self, obj_id, eqls):
-        for eql in eqls:
-            if eql in self.refering:
-                self.refering[eql].add(obj_id)
-            else:
-                self.refering[eql] = {obj_id}
-        self.data[obj_id] = eqls
+        self.data = defaultdict(set)
+        self.refering = defaultdict(set)
+        if kwargs:
+            self.update(kwargs)
 
     def __delitem__(self, obj_id):
         ref_eqls = set(self.data[obj_id])
         self.maybe_drop_with_eqls(ref_eqls)
         self.data.pop(obj_id, None)
 
-    def maybe_drop_with_eqls(self, eqls):
-        if not isinstance(eqls, set):
-            eqls = {eqls}
-
+    def maybe_drop_with_eqls(self, eqls: typing.Set):
         for eql in eqls:
             if eql not in self.refering:
                 continue
@@ -179,12 +174,13 @@ class EqlDict(UserDict):
                     del self.data[obj_id]
             del self.refering[eql]
 
+    def __setitem__(self, obj_id, eqls):
+        for eql in eqls:
+            self.add(obj_id, eql)
+
     def add(self, obj_id, eql):
-        if eql in self.refering:
-            self.refering[eql].add(obj_id)
-        else:
-            self.refering[eql] = {obj_id}
         self.data[obj_id].add(eql)
+        self.refering[eql].add(obj_id)
 
     def __repr__(self):
         msg = []
@@ -196,13 +192,11 @@ class EqlDict(UserDict):
 class RankedDiskCache(UserDict):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.__rank = {}
-
+        self.data = OrderedDict()
+        if kwargs:
+            self.update(kwargs)
 
     def __delitem__(self, key):
-        if key in self.__rank:
-            del self.__rank[key]
-
         filepath = self.data[key]
 
         if os.path.exists(filepath):
@@ -213,22 +207,22 @@ class RankedDiskCache(UserDict):
         del self.data[key]
 
     def __setitem__(self, key, item):
-        if key not in self.__rank:
-            self.__rank[key] = 0
-
-        self.data[key] = item
+        # Maybe drop cache when larger than max count after add one new cache
+        # If rank is the same, the one cached earlier will be dropped
+        if key in self.data:
+            self.data[key] = item
+            self.data.move_to_end(key, last=True)
+        else:
+            self.data[key] = item
+            if len(self.data) > defines.DISK_CACHE_MAX_COUNT:
+                self.data.popitem(last=False)
 
     def __getitem__(self, key):
         if key in self.data:
-            if key in self.__rank:
-                self.__rank[key] += 1
-            return self.data[key]
+            value = self.data[key]
+            self.data.move_to_end(key, last=True)
+            return value
         raise KeyError(key)
-
-    def seldom_used(self):
-        if self.__rank:
-            ordered = sorted(self.__rank.items(), key=lambda x: x[1])
-            return ordered[0][0]
 
     def delete_with_cb(self, key, cb=None):
         bak_before_set = set(self.data.keys())
@@ -236,18 +230,6 @@ class RankedDiskCache(UserDict):
         if cb is not None:
             delta = bak_before_set.difference(self.data.keys())
             cb(delta)
-
-
-class RankedDiskCacheAutoClean(RankedDiskCache):
-    def __setitem__(self, key, item):
-        # Maybe drop cache when larger than max count after add one new cache
-        # If rank is the same, the one cached earlier will be dropped
-        overload = len(self.data) - (defines.DISK_CACHE_MAX_COUNT - 1)
-        if overload > 0:
-            for i in range(overload):
-                self.__delitem__(self.seldom_used())
-
-        super().__setitem__(key, item)
 
     def set_with_cb(self, key, item, cb=None):
         bak_before_set = set(self.data.keys())
@@ -257,7 +239,7 @@ class RankedDiskCacheAutoClean(RankedDiskCache):
             cb(delta)
 
 
-def format_eqls(raw_eqls):
+cdef format_eqls(raw_eqls):
     msg = []
     for query_req, alias, session in raw_eqls:
         msg.append(
@@ -268,14 +250,33 @@ def format_eqls(raw_eqls):
 
     return "\n".join(msg)
 
+
 cdef class Database:
 
     # Global LRU cache of compiled anonymous queries
-    _eql_to_compiled: typing.Mapping[str, dbstate.QueryUnitGroup]
+    _eql_to_compiled: typing.Mapping[
+        typing.Tuple[QueryRequestInfo,
+                     typing.Optional[immutables.Map],
+                     typing.Optional[immutables.Map]
+        ],
+        dbstate.QueryUnitGroup
+    ]
     # Additional cache in disk for all eql queried
-    _eql_to_compiled_disk: RankedDiskCacheAutoClean
+    _eql_to_compiled_disk: RankedDiskCache[
+        typing.Tuple[QueryRequestInfo,
+                     typing.Optional[immutables.Map],
+                     typing.Optional[immutables.Map]
+        ],
+        str
+    ]
     # Dict for object id to eql
-    _object_id_to_eql: EqlDict
+    _object_id_to_eql: EqlDict[
+        uuid.UUID,
+        typing.Tuple[QueryRequestInfo,
+                     typing.Optional[immutables.Map],
+                     typing.Optional[immutables.Map]
+        ]
+    ]
 
     def __init__(
         self,
@@ -299,7 +300,7 @@ cdef class Database:
         self._introspection_lock = asyncio.Lock()
 
         self._eql_to_compiled = lru.LRUMapping(maxsize=defines._MAX_QUERIES_CACHE)
-        self._eql_to_compiled_disk = RankedDiskCacheAutoClean()
+        self._eql_to_compiled_disk = RankedDiskCache()
         self._object_id_to_eql = EqlDict()
 
         self.db_config = db_config
@@ -314,13 +315,12 @@ cdef class Database:
         else:
             self.extensions = extensions
 
+        self._sql_bak_dir = os.path.join(self.server._runstate_dir, 'sql_bak')
+        self._should_log = logger.isEnabledFor(logging.DEBUG)
+
     @property
     def server(self):
         return self._index._server
-
-    @property
-    def sql_bak_dir(self):
-        return os.path.join(self.server._runstate_dir, 'sql_bak')
 
     cdef schedule_config_update(self):
         self._index._server._on_local_database_config_change(self.name)
@@ -365,7 +365,8 @@ cdef class Database:
         if drop_ids is None:
             return
 
-        logger.debug(f'Ids to drop: {drop_ids}')
+        if self._should_log:
+            logger.debug(f'Ids to drop: {drop_ids}')
 
         for obj_id in drop_ids:
             if obj_id not in self._object_id_to_eql:
@@ -373,24 +374,26 @@ cdef class Database:
 
             for eql in list(self._object_id_to_eql[obj_id]):
                 if eql in self._eql_to_compiled:
-                    logger.debug(f"Eql with sql:{format_eqls((eql,))} "
-                                 f"will be dropped for change of object with id <{obj_id}> in LRU cache.")
+                    if self._should_log:
+                        logger.debug(f"Eql with sql:{format_eqls((eql,))} "
+                                     f"will be dropped for change of object with id <{obj_id}> in LRU cache.")
                     del self._eql_to_compiled[eql]
                 if eql in self._eql_to_compiled_disk:
-                    logger.debug(f"Eql with sql:{format_eqls((eql,))} "
-                                 f"will be dropped for change of object with id <{obj_id}> in Disk cache.")
+                    if self._should_log:
+                        logger.debug(f"Eql with sql:{format_eqls((eql,))} "
+                                     f"will be dropped for change of object with id <{obj_id}> in Disk cache.")
                     del self._eql_to_compiled_disk[eql]
 
             del self._object_id_to_eql[obj_id]
 
-        logger.debug('After invalidate, LRU Cache: \n' + format_eqls(self._eql_to_compiled._dict.keys()))
-        logger.debug('Disk Cache: \n' + format_eqls(self._eql_to_compiled_disk.keys()))
-        logger.debug(f'Obj id to Eql: \n{self._object_id_to_eql}')
+        if self._should_log:
+            logger.debug('After invalidate, LRU Cache: \n' + format_eqls(self._eql_to_compiled._dict.keys()))
+            logger.debug('Disk Cache: \n' + format_eqls(self._eql_to_compiled_disk.keys()))
+            logger.debug(f'Obj id to Eql: \n{self._object_id_to_eql}')
 
     cdef _cache_compiled_query(self, key, compiled: dbstate.QueryUnitGroup):
         assert compiled.cacheable
 
-        # We already have a cached query for a more recent DB version.
         existing = self._eql_to_compiled.get(key)
         if existing is not None:
             return
@@ -403,13 +406,15 @@ cdef class Database:
             len(sql_bytes) for query_unit in compiled.units
             for sql_bytes in query_unit.sql
         )
-        logger.debug(f'Sql bytes length: {sql_length}')
+
+        if self._should_log:
+            logger.debug(f'Sql bytes length: {sql_length}')
         dump_to_disk = sql_length > defines.SQL_BYTES_LENGTH_DISK_CACHE
         # Update Cache
         if dump_to_disk:
-            disk_filepath = os.path.join(self.sql_bak_dir, str(uuidgen.uuid4()))
-            if not os.path.isdir(self.sql_bak_dir):
-                os.mkdir(self.sql_bak_dir)
+            disk_filepath = os.path.join(self._sql_bak_dir, str(uuidgen.uuid4()))
+            if not os.path.isdir(self._sql_bak_dir):
+                os.makedirs(self._sql_bak_dir, exist_ok=True)
 
             started_at = time.monotonic()
             with open(disk_filepath, 'wb') as disk_file:
@@ -426,12 +431,11 @@ cdef class Database:
         if compiled.ref_ids is None:
             return
 
-        logger.debug(f"Ref ids in Compiled: {compiled.ref_ids}")
+        if self._should_log:
+            logger.debug(f"Ref ids in Compiled: {compiled.ref_ids}")
+
         for obj_id in compiled.ref_ids:
-            if obj_id not in self._object_id_to_eql:
-                self._object_id_to_eql[obj_id] = {key}
-            else:
-                self._object_id_to_eql.add(obj_id, key)
+            self._object_id_to_eql.add(obj_id, key)
 
     cdef _new_view(self, query_cache, protocol_version):
         view = DatabaseConnectionView(
@@ -467,7 +471,11 @@ cdef class Database:
 
 cdef class DatabaseConnectionView:
 
-    _eql_to_compiled: typing.Mapping[bytes, dbstate.QueryUnitGroup]
+    _eql_to_compiled: typing.Mapping[
+        typing.Tuple[QueryRequestInfo,
+                     typing.Optional[immutables.Map],
+                     typing.Optional[immutables.Map]],
+        dbstate.QueryUnitGroup]
 
     def __init__(self, db: Database, *, query_cache, protocol_version):
         self._db = db
@@ -914,7 +922,6 @@ cdef class DatabaseConnectionView:
 
     cdef cache_compiled_query(self, object key, object query_unit_group):
         assert query_unit_group.cacheable
-        logger.debug(f'Put {key.source.text()} in cache...')
 
         key = (key, self.get_modaliases(), self.get_session_config())
 
@@ -939,9 +946,10 @@ cdef class DatabaseConnectionView:
             if disk_filepath is None:
                 return None
 
-            if not os.path.exists(disk_filepath):
-                logger.debug(f'Find dumped sql bytes in disk deleted, '
-                             f'drop Eql for Sql: {key[0].source.text()}.')
+            if not os.path.isfile(disk_filepath):
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f'Find dumped sql bytes in disk deleted, '
+                                 f'drop Eql for Sql: {key[0].source.text()}.')
                 self._db._eql_to_compiled_disk.delete_with_cb(
                     key,
                     self._db._object_id_to_eql.maybe_drop_with_eqls

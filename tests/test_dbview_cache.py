@@ -6,7 +6,7 @@ from unittest import skipIf
 from unittest.mock import Mock, call
 
 import immutables
-from edb.server.dbview.dbview import EqlDict, RankedDiskCacheAutoClean
+from edb.server.dbview.dbview import EqlDict, RankedDiskCache
 from edb.server import defines
 from edb.testbase import server as tb
 
@@ -127,23 +127,25 @@ class TestDbviewCache(tb.QueryTestCase):
         reason='Test Query Bytes is 9203 length.'
     )
     async def test_db_cause_disk_cache_01(self):
-        await self.con._fetchall_json("""
-        WITH
-            MODULE schema,
-            DCardT := (SELECT ObjectType
-                       FILTER .name = 'default::DCard'),
-            DCardOwners := (SELECT DCardT.links
-                            FILTER .name = 'owners')
-        SELECT
-            DCardOwners {
-                target[IS ObjectType]: {
-                    name,
-                    pointers: {
-                        name
-                    } FILTER .name = 'name_upper'
-                }
-            }
-        """)
+        await self.con._fetchall_json(
+            """
+                    WITH
+                        MODULE schema,
+                        DCardT := (SELECT ObjectType
+                                   FILTER .name = 'default::DCard'),
+                        DCardOwners := (SELECT DCardT.links
+                                        FILTER .name = 'owners')
+                    SELECT
+                        DCardOwners {
+                            target[IS ObjectType]: {
+                                name,
+                                pointers: {
+                                    name
+                                } FILTER .name = 'name_upper'
+                            }
+                        }
+                    """
+        )
         self.assertGreater(get_dump_count(self.fetch_metrics()), 0)
 
 
@@ -202,7 +204,7 @@ class TestEqlDict(unittest.TestCase):
         self.assertEqual(self.obj_id_to_eql.refering[key1], {'aa-bb', 'cc-dd'})
         self.assertEqual(self.obj_id_to_eql.refering[key2], {'aa-bb'})
 
-        self.obj_id_to_eql.maybe_drop_with_eqls(key2)
+        self.obj_id_to_eql.maybe_drop_with_eqls({key2})
         self.assertEqual(self.obj_id_to_eql['aa-bb'], {key1})
         self.assertEqual(self.obj_id_to_eql.refering[key1], {'aa-bb', 'cc-dd'})
         self.assertNotIn(key2, self.obj_id_to_eql.refering)
@@ -251,12 +253,14 @@ class TestEqlDict(unittest.TestCase):
         self.assertEqual(len(self.obj_id_to_eql), 0)
         self.assertEqual(len(self.obj_id_to_eql.refering), 0)
 
+
 bak_count = defines.DISK_CACHE_MAX_COUNT
 
-class TestRankedDiskCacheAutoClean(unittest.TestCase):
+
+class TestRankedDiskCache(unittest.TestCase):
     def setUp(self):
         defines.DISK_CACHE_MAX_COUNT = 3
-        self.disk_cache = RankedDiskCacheAutoClean()
+        self.disk_cache = RankedDiskCache()
         self.cb = Mock()
 
     def tearDown(self):
@@ -281,7 +285,7 @@ class TestRankedDiskCacheAutoClean(unittest.TestCase):
         self.disk_cache.set_with_cb(key1, '/a', self.cb)
         self.disk_cache.set_with_cb(key2, '/b', self.cb)
         self.disk_cache.set_with_cb(key3, '/c', self.cb)
-        self.disk_cache.set_with_cb(key3, '/d', self.cb)
+        self.disk_cache.set_with_cb(key4, '/d', self.cb)
         self.cb.assert_has_calls([call({key1})])
 
     def test_delete_with_cb(self):
@@ -291,10 +295,15 @@ class TestRankedDiskCacheAutoClean(unittest.TestCase):
         self.cb.assert_has_calls([call({key2})])
         self.assertNotIn(key2, self.disk_cache)
 
-    def test_rank(self):
+    def test_rank_1(self):
         self.disk_cache[key1] = '/a'
         self.disk_cache[key2] = '/b'
         self.disk_cache[key1]
-        self.assertEqual(self.disk_cache.seldom_used(), key2)
+        self.assertEqual(self.disk_cache.data.popitem(last=False)[0], key2)
+
+    def test_rank_2(self):
+        self.disk_cache[key1] = '/a'
+        self.disk_cache[key2] = '/b'
+        self.disk_cache[key1]
         self.disk_cache[key2]
-        self.assertEqual(self.disk_cache.seldom_used(), key1)
+        self.assertEqual(self.disk_cache.data.popitem(last=False)[0], key1)
