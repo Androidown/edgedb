@@ -63,6 +63,9 @@ CREATE ABSTRACT TYPE schema::Object EXTENDING std::BaseObject {
     CREATE PROPERTY module_name -> std::str {
         SET default := 'builtin';
     };
+    CREATE REQUIRED PROPERTY external -> std::bool {
+        SET default := false;
+    };
 
     CREATE ACCESS POLICY not_internal
         ALLOW SELECT USING (not .internal);

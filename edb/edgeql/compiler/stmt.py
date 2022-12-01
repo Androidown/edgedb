@@ -490,6 +490,10 @@ def compile_InsertQuery(
 
         stmt_subject_stype = setgen.get_set_type(subject, ctx=ictx)
         assert isinstance(stmt_subject_stype, s_objtypes.ObjectType)
+        if stmt_subject_stype.get_external(ctx.env.schema):
+            raise errors.QueryError(
+                f"External {stmt_subject_stype.get_verbosename(ctx.env.schema)} "
+                f"is read-only.")
 
         stmt.conflict_checks = conflicts.compile_inheritance_conflict_checks(
             stmt, stmt_subject_stype, ctx=ictx)
@@ -620,6 +624,10 @@ def compile_UpdateQuery(
 
         stmt_subject_stype = setgen.get_set_type(subject, ctx=ictx)
         assert isinstance(stmt_subject_stype, s_objtypes.ObjectType)
+        if stmt_subject_stype.get_external(ctx.env.schema):
+            raise errors.QueryError(
+                f"External {stmt_subject_stype.get_verbosename(ctx.env.schema)} "
+                f"is read-only.")
 
         ctx.env.dml_stmts.add(stmt)
 
@@ -736,6 +744,11 @@ def compile_DeleteQuery(
 
         stmt_subject_stype = setgen.get_set_type(subject, ctx=ictx)
         assert isinstance(stmt_subject_stype, s_objtypes.ObjectType)
+
+        if stmt_subject_stype.get_external(ctx.env.schema):
+            raise errors.QueryError(
+                f"External {stmt_subject_stype.get_verbosename(ctx.env.schema)} "
+                f"is read-only.")
 
         mat_stype = schemactx.get_material_type(stmt_subject_stype, ctx=ctx)
         result = setgen.class_set(

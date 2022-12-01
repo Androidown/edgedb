@@ -132,6 +132,8 @@ class CompileContext:
     module_is_implicit: Optional[bool] = False
     # True, if in transaction context.
     in_tx: Optional[bool] = False
+    # External view definition
+    external_view: Optional[Mapping] = None
 
 
 DEFAULT_MODULE_ALIASES_MAP = immutables.Map(
@@ -371,6 +373,7 @@ class Compiler:
         context.allow_dml_in_functions = (
             self.get_config_val(ctx, 'allow_dml_in_functions'))
         context.module = ctx.module
+        context.external_view = ctx.external_view
         return context
 
     def _process_delta(self, ctx: CompileContext, delta):
@@ -2288,6 +2291,7 @@ class Compiler:
         inline_objectids: bool = True,
         json_parameters: bool = False,
         module: Optional[str] = None,
+        external_view: Optional[Mapping] = None,
     ) -> Tuple[dbstate.QueryUnitGroup,
                Optional[dbstate.CompilerConnectionState]]:
 
@@ -2331,7 +2335,8 @@ class Compiler:
             json_parameters=json_parameters,
             source=source,
             protocol_version=protocol_version,
-            module=module
+            module=module,
+            external_view=external_view
         )
 
         unit_group = self._compile(ctx=ctx, source=source)
@@ -2362,6 +2367,7 @@ class Compiler:
         json_parameters: bool = False,
         expect_rollback: bool = False,
         module: Optional[str] = None,
+        external_view: Optional[Mapping] = None,
     ) -> Tuple[dbstate.QueryUnitGroup, dbstate.CompilerConnectionState]:
         if (
             expect_rollback and
@@ -2390,7 +2396,8 @@ class Compiler:
             json_parameters=json_parameters,
             expect_rollback=expect_rollback,
             module=module,
-            in_tx=True
+            in_tx=True,
+            external_view=external_view
         )
 
         return self._compile(ctx=ctx, source=source), ctx.state

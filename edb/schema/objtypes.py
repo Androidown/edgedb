@@ -330,6 +330,13 @@ class ObjectType(
         else:
             return None
 
+    def is_external(
+        self,
+        schema: s_schema.Schema,
+        context: sd.CommandContext
+    ):
+        return self.get_displayname(schema) in context.external_view
+
 
 def get_or_create_union_type(
     schema: s_schema.Schema,

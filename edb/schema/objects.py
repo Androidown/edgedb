@@ -995,6 +995,12 @@ class Object(s_abc.Object, ObjectContainer, metaclass=ObjectMeta):
         inheritable=False,
     )
 
+    external = SchemaField(
+        bool,
+        inheritable=False,
+        default=False
+    )
+
     _fields: Dict[str, SchemaField[Any]]
 
     def schema_reduce(self) -> Tuple[str, uuid.UUID]:
@@ -1978,6 +1984,13 @@ class Object(s_abc.Object, ObjectContainer, metaclass=ObjectMeta):
             f'<{type(self).__name__} name={self.get_name(schema)!r} '
             f'at {id(self):#x}>'
         )
+
+    def is_external(
+        self,
+        schema: s_schema.Schema,
+        context: sd.CommandContext
+    ):
+        return False
 
     def __repr__(self) -> str:
         return f'<{type(self).__name__} {self.id} at 0x{id(self):#x}>'

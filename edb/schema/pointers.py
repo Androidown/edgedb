@@ -892,6 +892,16 @@ class Pointer(referencing.ReferencedInheritingObject,
 
         return delta
 
+    def is_external(
+        self,
+        schema: s_schema.Schema,
+        context: sd.CommandContext
+    ):
+        return (
+            (src := self.get_source(schema)) is not None
+            and src.is_external(schema, context)
+        )
+
 
 class PseudoPointer(s_abc.Pointer):
     # An abstract base class for pointer-like objects, i.e.
