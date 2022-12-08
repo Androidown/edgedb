@@ -151,6 +151,8 @@ class flags(metaclass=FlagsMeta):
     disable_docs_edgeql_validation = Flag(
         doc="Disable validation of edgeql in docs (for site build)")
 
+    disable_link_path = Flag(
+        doc="Disable link path functionality. (for debug only)")
 
 @contextlib.contextmanager
 def timeit(title='block'):

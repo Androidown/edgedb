@@ -192,32 +192,6 @@ class AnyTupleRef(TypeRef):
     pass
 
 
-def unsupported_union_pointer_error(union_components, attr_name, direction):
-    msg = [f"Unsupported union pointer with different {attr_name}.",
-           f"{attr_name} for current pointers:"]
-
-    if direction == s_pointers.PointerDirection.Inbound:
-        direction = '<-'
-    else:
-        direction = '->'
-
-    for component in union_components:
-        source_cls = component.out_source
-        property_ref = getattr(component, attr_name)
-        property_source = None
-        if property_ref:
-            property_source = property_ref.out_source
-        if property_ref:
-            msg.append(f"<{source_cls.name_hint} {direction}"
-                       f" {component.std_parent_name.name} '{component.shortname.name}'>"
-                       f": <{property_ref.std_parent_name.name} '{property_ref.shortname.name}'"
-                       f" of {property_source.name_hint}>")
-        else:
-            msg.append(f"<{source_cls.name_hint} {direction}"
-                       f" {component.std_parent_name.name} '{component.shortname.name}'>: None.")
-    return "\n".join(msg)
-
-
 class BasePointerRef(ImmutableBase):
     __abstract_node__ = True
 
@@ -494,6 +468,18 @@ class Pointer(Base):
     @property
     def dir_cardinality(self) -> qltypes.Cardinality:
         return self.ptrref.dir_cardinality(self.direction)
+
+    @property
+    def target_ref(self) -> typing.Optional[PointerRef]:
+        if self.is_inbound:
+            return self.ptrref.real_source_property()
+        return self.ptrref.real_target_property()
+
+    @property
+    def source_ref(self) -> typing.Optional[PointerRef]:
+        if self.is_inbound:
+            return self.ptrref.real_target_property()
+        return self.ptrref.real_source_property()
 
 
 class TypeIntersectionPointer(Pointer):
