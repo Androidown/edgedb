@@ -686,13 +686,21 @@ def put_path_serialized_var_if_not_exists(
 
 
 def put_path_bond(
-        stmt: pgast.BaseRelation, path_id: irast.PathId) -> None:
-    stmt.path_scope.add(path_id)
+    stmt: pgast.BaseRelation,
+    path_id: irast.PathId,
+    lpid: Optional[irast.PathId] = None,
+    rpid: Optional[irast.PathId] = None,
+) -> None:
+    stmt.path_scope.add((path_id, lpid, rpid))
 
 
 def put_rvar_path_bond(
-        rvar: pgast.PathRangeVar, path_id: irast.PathId) -> None:
-    put_path_bond(rvar.query, path_id)
+    rvar: pgast.PathRangeVar,
+    path_id: irast.PathId,
+    lpid: Optional[irast.PathId] = None,
+    rpid: Optional[irast.PathId] = None,
+) -> None:
+    put_path_bond(rvar.query, path_id, lpid, rpid)
 
 
 def get_path_output_alias(
@@ -773,86 +781,6 @@ def get_rvar_path_identity_var(
         rvar: pgast.PathRangeVar, path_id: irast.PathId, *,
         env: context.Environment) -> pgast.OutputVar:
     return get_rvar_path_var(rvar, path_id, aspect='identity', env=env)
-
-
-def maybe_get_rvar_path_link_var(
-    rvar: pgast.PathRangeVar,
-    path_id: irast.PathId,
-    *,
-    aspect: str,
-    put_path_output: bool = True,
-    ctx: context.CompilerContextLevel = None,
-    safe_mode: bool = False,
-) -> Optional[pgast.OutputVar]:
-    rptr = path_id.rptr()
-    is_inbound = path_id.rptr_dir() == s_pointers.PointerDirection.Inbound
-    search_target = False
-
-    if rptr is None:
-        return None
-
-    if is_inbound:
-        if aspect == 'source':
-            prop = rptr.real_target_property()
-            search_target = True
-        else:
-            prop = rptr.real_source_property()
-    else:
-        if aspect == 'target':
-            prop = rptr.real_target_property()
-            search_target = True
-        else:
-            prop = rptr.real_source_property()
-
-    if (
-        prop is None
-        or (
-            search_target
-            and rvar.typeref is not None
-            and prop.out_source != rvar.typeref.real_material_type
-        )
-    ):
-        return None
-
-    ptr_si = pg_types.get_ptrref_storage_info(prop)
-
-    if is_inbound:
-        if search_target:
-            pid = path_id.src_path()
-            src_query = ctx.rel
-            rvar = None   # This is intentional
-            while src_query is not None:
-                rvar = maybe_get_path_rvar(
-                    src_query, pid, aspect='source', env=ctx.env)
-                if rvar is not None:
-                    break
-                src_query = ctx.rel_hierarchy.get(src_query)
-
-            assert rvar is not None, f'Failed to find source rangevar for {pid}'
-            outvar = get_path_output(
-                rvar.query, pid.extend(ptrref=prop),
-                aspect='value', env=ctx.env)
-        else:
-            outvar = _get_rel_path_output(
-                rvar.query, path_id.extend(ptrref=prop), aspect='value',
-                flavor='normal', ptr_info=ptr_si, env=ctx.env,
-                respect_ptrinfo=True,
-                put_path_output=put_path_output
-            )
-    else:
-        outvar = _get_rel_path_output(
-            rvar.query, path_id, aspect='value',
-            flavor='normal', ptr_info=ptr_si, env=ctx.env,
-            respect_ptrinfo=True,
-            put_path_output=put_path_output
-        )
-    if safe_mode:
-        try:
-            return astutils.get_rvar_var(rvar, outvar, recursive=True, env=ctx.env)
-        except RuntimeError:
-            return None
-    else:
-        return astutils.get_rvar_var(rvar, outvar, recursive=True, env=ctx.env)
 
 
 def get_rvar_path_value_var(
@@ -1048,16 +976,13 @@ def _get_rel_object_id_output(
 
 
 def _get_rel_path_output(
-    rel: pgast.BaseRelation, path_id: irast.PathId, *,
-    aspect: str,
-    flavor: str,
-    ptr_info: Optional[pg_types.PointerStorageInfo] = None,
-    env: context.Environment,
-    respect_ptrinfo: bool = False,
-    put_path_output: bool = True
-) -> pgast.OutputVar:
+        rel: pgast.BaseRelation, path_id: irast.PathId, *,
+        aspect: str,
+        flavor: str,
+        ptr_info: Optional[pg_types.PointerStorageInfo]=None,
+        env: context.Environment) -> pgast.OutputVar:
 
-    if path_id.is_objtype_path() and not respect_ptrinfo:
+    if path_id.is_objtype_path():
         if aspect == 'identity':
             aspect = 'value'
 
@@ -1139,8 +1064,7 @@ def _get_rel_path_output(
             name=[ptr_info.column_name],
             nullable=not ptrref.required)
 
-    if put_path_output:
-        _put_path_output_var(rel, path_id, aspect, result, flavor=flavor, env=env)
+    _put_path_output_var(rel, path_id, aspect, result, flavor=flavor, env=env)
     return result
 
 

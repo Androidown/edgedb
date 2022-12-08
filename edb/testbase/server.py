@@ -104,6 +104,10 @@ def get_ca_file():
     assert target_folder is not None, 'Failed to locate ca_file.'
 
     subfolders = list(filter(lambda p: not p.startswith('.'), os.listdir(target_folder)))
+    try:
+        subfolders.remove('sql_bak')
+    except:
+        pass
     assert len(subfolders) == 1, f'More than 1 folder found in {target_folder}'
 
     subfolder = subfolders[0]

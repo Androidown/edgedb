@@ -496,7 +496,6 @@ def new_primitive_rvar(
         typeref, path_id, lateral=lateral, dml_source=dml_source,
         include_descendants=not ir_set.skip_subtypes,
         ignore_rewrites=ir_set.ignore_rewrites, ctx=ctx)
-    pathctx.put_rvar_path_bond(set_rvar, path_id)
 
     rptr = ir_set.rptr
     if rptr is not None:
@@ -518,11 +517,10 @@ def new_primitive_rvar(
                     allow_missing=True)
             ) and ptr_info.table_type == 'ObjectType'
         ):
-            # Inline link
-            prefix_path_id = path_id.src_path()
-            assert prefix_path_id is not None, 'expected a path'
-
             flipped_id = path_id.extend(ptrref=rptrref)
+            # Inline link
+            path_id = path_id.src_path()
+            assert path_id is not None, 'expected a path'
 
             # Unfortunately we can't necessarily just install the
             # prefix path id path---the rvar from range_from_typeref
@@ -531,8 +529,41 @@ def new_primitive_rvar(
             # path bonds need to be valid on each *subquery*, so we
             # need to set them up in each subquery.
             _deep_copy_primitive_rvar_path_var(
-                flipped_id, prefix_path_id, set_rvar, env=ctx.env)
-            pathctx.put_rvar_path_bond(set_rvar, prefix_path_id)
+                flipped_id, path_id, set_rvar, env=ctx.env)
+
+        ptr_info = pg_types.get_ptrref_storage_info(
+            rptr.ptrref, resolve_type=False, link_bias=False,
+            allow_missing=True
+        )
+
+        if (
+            (tgt_ptrref := rptr.target_ref)
+            and not (
+                rptr.is_inbound
+                and ptr_info
+                and ptr_info.table_type == 'ObjectType'
+            )
+        ):
+            rpid = path_id.tgt_path().extend(ptrref=tgt_ptrref)
+            tgt_ref = pathctx.get_rvar_path_value_var(set_rvar, rpid, env=ctx.env)
+            pathctx.put_path_value_var(set_rvar.query, rpid, var=tgt_ref, env=ctx.env)
+        else:
+            rpid = None
+
+        if (
+            (src_ptrref := rptr.source_ref)
+            and rptr.is_inbound
+            and ptr_info
+            and ptr_info.table_type == 'ObjectType'
+        ):
+            lpid = path_id.extend(ptrref=src_ptrref)
+        else:
+            lpid = None
+
+        pathctx.put_rvar_path_bond(set_rvar, path_id, lpid=lpid, rpid=rpid)
+
+    else:
+        pathctx.put_rvar_path_bond(set_rvar, path_id)
 
     return set_rvar
 
@@ -576,7 +607,7 @@ def new_pointer_rvar(
             ir_ptr, ptr_info=ptr_info,
             src_rvar=src_rvar, ctx=ctx)
     else:
-        return _new_mapped_pointer_rvar(ir_ptr, src_rvar, ctx=ctx)
+        return _new_mapped_pointer_rvar(ir_ptr, ctx=ctx)
 
 
 def _new_inline_pointer_rvar(
@@ -589,28 +620,40 @@ def _new_inline_pointer_rvar(
     ptr_rvar = rvar_for_rel(ptr_rel, lateral=lateral, ctx=ctx)
     ptr_rvar.query.path_id = ir_ptr.target.path_id.ptr_path()
 
-    is_inbound = ir_ptr.direction == s_pointers.PointerDirection.Inbound
+    is_inbound = ir_ptr.is_inbound
 
     if is_inbound:
         far_pid = ir_ptr.source.path_id
     else:
         far_pid = ir_ptr.target.path_id
 
-    far_ref = pathctx.get_rvar_path_identity_var(
-        src_rvar, far_pid, env=ctx.env)
+    if is_inbound and (tgt_ptrref := ir_ptr.target_ref):
+        src_pid = far_pid
+        rpid = src_pid.extend(ptrref=tgt_ptrref)
+        far_ref = pathctx.get_rvar_path_value_var(
+            src_rvar, rpid, env=ctx.env)
+        pathctx.put_path_value_var(ptr_rel, rpid, var=far_ref, env=ctx.env)
+    else:
+        rpid = None
+        far_ref = pathctx.get_rvar_path_identity_var(
+            src_rvar, far_pid, env=ctx.env)
 
-    pathctx.put_rvar_path_bond(ptr_rvar, far_pid)
+    if is_inbound:
+        pathctx.put_rvar_path_bond(ptr_rvar, far_pid, lpid=rpid)
+    else:
+        pathctx.put_rvar_path_bond(ptr_rvar, far_pid, rpid=rpid)
+
     pathctx.put_path_identity_var(ptr_rel, far_pid, var=far_ref, env=ctx.env)
 
     return ptr_rvar
 
 
 def _new_mapped_pointer_rvar(
-        ir_ptr: irast.Pointer, src_rvar: pgast.PathRangeVar, *,
+        ir_ptr: irast.Pointer, *,
         ctx: context.CompilerContextLevel) -> pgast.PathRangeVar:
     ptrref = ir_ptr.ptrref
     dml_source = irutils.get_nearest_dml_stmt(ir_ptr.source)
-    ptr_rvar = range_for_pointer(ir_ptr, src_rvar, dml_source=dml_source, ctx=ctx)
+    ptr_rvar = range_for_pointer(ir_ptr, dml_source=dml_source, ctx=ctx)
 
     src_col = 'source'
     source_ref = pgast.ColumnRef(name=[src_col], nullable=False)
@@ -636,7 +679,12 @@ def _new_mapped_pointer_rvar(
     ptr_pid = tgt_pid.ptr_path()
 
     ptr_rvar.query.path_id = ptr_pid
-    pathctx.put_rvar_path_bond(ptr_rvar, src_pid)
+    if src_ref := ir_ptr.source_ref:
+        lpid = src_pid.extend(ptrref=src_ref)
+    else:
+        lpid = None
+
+    pathctx.put_rvar_path_bond(ptr_rvar, src_pid, lpid=lpid)
     pathctx.put_rvar_path_output(ptr_rvar, src_pid, aspect='identity',
                                  var=near_ref, env=ctx.env)
     pathctx.put_rvar_path_output(ptr_rvar, src_pid, aspect='value',
@@ -645,7 +693,12 @@ def _new_mapped_pointer_rvar(
                                  var=far_ref, env=ctx.env)
 
     if tgt_pid.is_objtype_path():
-        pathctx.put_rvar_path_bond(ptr_rvar, tgt_pid)
+        if tgt_ref := ir_ptr.target_ref:
+            lpid = tgt_pid.extend(ptrref=tgt_ref)
+        else:
+            lpid = None
+
+        pathctx.put_rvar_path_bond(ptr_rvar, tgt_pid, lpid=lpid)
         pathctx.put_rvar_path_output(ptr_rvar, tgt_pid, aspect='identity',
                                      var=far_ref, env=ctx.env)
 
@@ -696,34 +749,21 @@ def semi_join(
             ctx.rel, map_rvar,
             path_id=ir_set.path_id.ptr_path(), ctx=ctx)
 
-    tgt_ref = None
-
-    if (
-        (ptrref.real_target_property() is not None
-         and far_pid.rptr_dir() == s_pointers.PointerDirection.Outbound)
-        or (
-           ptrref.real_source_property() is not None
-            and far_pid.rptr_dir() == s_pointers.PointerDirection.Inbound)
-    ):
-        tgt_ref = pathctx.maybe_get_rvar_path_link_var(
-            set_rvar, far_pid, ctx=ctx, aspect='target', put_path_output=False
-        )
-
-    if tgt_ref is None:
+    if target_ref := rptr.target_ref:
+        tgt_ref = pathctx.get_rvar_path_value_var(
+            set_rvar, far_pid.extend(ptrref=target_ref), env=ctx.env)
+    else:
         tgt_ref = pathctx.get_rvar_path_identity_var(
             set_rvar, far_pid, env=ctx.env)
 
-    if (
-        src_rvar.typeref
-        and far_pid.target
-        and src_rvar.typeref.id == far_pid.target.id
-        and (target_ref := ptrref.real_target_property()) is not None
-    ):
-        pathctx.get_path_value_output(
-            ctx.rel,
-            far_pid.extend(ptrref=target_ref),
-            env=ctx.env
-        )
+    if (source_ref := rptr.source_ref) and ptr_info.table_type == 'ObjectType':
+        # 由于far_pid是指向link对象的pathid，需要取到link源pathid
+        if rptr.is_inbound:
+            # already a source path
+            near_pid = far_pid.extend(ptrref=source_ref)
+        else:
+            near_pid = far_pid.src_path().extend(ptrref=source_ref)
+        pathctx.get_path_value_output(ctx.rel, near_pid, env=ctx.env)
     else:
         pathctx.get_path_identity_output(
             ctx.rel, far_pid, env=ctx.env)
@@ -1293,27 +1333,27 @@ def _plain_join(
 ) -> None:
     condition = None
 
-    link_src = _find_link_source(right_rvar.query.path_scope)
-
-    for path_id in right_rvar.query.path_scope:
-        if link_src is not None and link_src.src_path() == path_id:
-            rvar = maybe_get_path_rvar(query, path_id, aspect='value', ctx=ctx)
+    for path_id, lpid, rpid in right_rvar.query.path_scope:
+        if lpid is not None:
+            lref = None
+            rvar = maybe_get_path_rvar(query, path_id, aspect='identity', ctx=ctx)
             if rvar is not None:
-                lref = pathctx.maybe_get_rvar_path_link_var(
-                    rvar, link_src, aspect='source', ctx=ctx)
-            else:
-                lref = None
+                try:
+                    lref = pathctx.get_rvar_path_var(
+                        rvar, lpid, aspect='value', env=ctx.env)
+                except LookupError:
+                    pass
         else:
             lref = maybe_get_path_var(query, path_id, aspect='identity', ctx=ctx)
             if lref is None:
                 lref = maybe_get_path_var(query, path_id, aspect='value', ctx=ctx)
-
         if lref is None:
             continue
 
-        rref = pathctx.maybe_get_rvar_path_link_var(
-            right_rvar, path_id, ctx=ctx, aspect='target', safe_mode=True)
-        if rref is None:
+        if rpid is not None:
+            rref = pathctx.get_rvar_path_value_var(
+                right_rvar, rpid, env=ctx.env)
+        else:
             rref = pathctx.get_rvar_path_identity_var(
                 right_rvar, path_id, env=ctx.env)
 
@@ -1349,7 +1389,7 @@ def _lateral_union_join(
     def _inject_filter(component: pgast.Query) -> None:
         condition = None
 
-        for path_id in right_rvar.query.path_scope:
+        for path_id, *_ in right_rvar.query.path_scope:
             lref = maybe_get_path_var(
                 query, path_id, aspect='identity', ctx=ctx)
             if lref is None:
@@ -1771,11 +1811,10 @@ def table_from_ptrref(
 
 def range_for_ptrref(
     ptrref: irast.BasePointerRef, *,
-    src_rvar: pgast.PathRangeVar = None,
-    dml_source: Optional[irast.MutatingStmt] = None,
-    for_mutation: bool = False,
-    only_self: bool = False,
-    path_id: Optional[irast.PathId] = None,
+    dml_source: Optional[irast.MutatingStmt]=None,
+    for_mutation: bool=False,
+    only_self: bool=False,
+    path_id: Optional[irast.PathId]=None,
     ctx: context.CompilerContextLevel,
 ) -> pgast.PathRangeVar:
     """"Return a Range subclass corresponding to a given ptr step.
@@ -1790,20 +1829,11 @@ def range_for_ptrref(
     set_ops = []
 
     if ptrref.union_components:
-        src_known_refs = {ref for ref in ptrref.union_components
-                          if src_rvar.typeref and ref.out_source and ref.out_source.id == src_rvar.typeref.id}
-        if (
-            not src_rvar
-            or not src_rvar.typeref
-            or len(src_known_refs) == 0
-        ):
-            refs = ptrref.union_components
-            if only_self and len(refs) > 1:
-                raise errors.InternalServerError(
-                    'unexpected union link'
-                )
-        else:
-            refs = src_known_refs
+        refs = ptrref.union_components
+        if only_self and len(refs) > 1:
+            raise errors.InternalServerError(
+                'unexpected union link'
+            )
     elif ptrref.intersection_components:
         # This is a little funky, but in an intersection, the pointer
         # needs to appear in *all* of the tables, so we just pick any
@@ -1913,7 +1943,6 @@ def range_for_ptrref(
 
 def range_for_pointer(
     pointer: irast.Pointer,
-    src_rvar: pgast.PathRangeVar,
     *,
     dml_source: Optional[irast.MutatingStmt] = None,
     ctx: context.CompilerContextLevel,
@@ -1929,7 +1958,7 @@ def range_for_pointer(
         ptrref = ptrref.material_ptr
 
     return range_for_ptrref(
-        ptrref, src_rvar=src_rvar, dml_source=dml_source, path_id=path_id, ctx=ctx)
+        ptrref, dml_source=dml_source, path_id=path_id, ctx=ctx)
 
 
 def rvar_for_rel(

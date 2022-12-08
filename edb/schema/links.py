@@ -26,6 +26,7 @@ from edb.edgeql import ast as qlast
 from edb.edgeql import qltypes
 
 from edb import errors
+from edb.common import debug
 
 from . import abc as s_abc
 from . import constraints
@@ -280,6 +281,13 @@ class Link(
         inheritable=True,
         merge_fn=merge_target_property
     )
+
+    if debug.flags.disable_link_path:
+        def get_source_property(self, schema: s_schema.Schema):
+            return None
+
+        def get_target_property(self, schema: s_schema.Schema):
+            return None
 
     def get_target(self, schema: s_schema.Schema) -> s_objtypes.ObjectType:
         return self.get_field_value(  # type: ignore[no-any-return]

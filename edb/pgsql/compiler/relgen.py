@@ -996,30 +996,6 @@ def _source_path_needs_semi_join(
 
     return True
 
-
-def _maybe_pull_link_source(
-    rptr: Optional[irast.Pointer],
-    ir_source: irast.Set,
-    rel: pgast.SelectStmt,
-    *,
-    env: context.Environment,
-):
-    ptr_src = rptr.ptrref.source_property
-
-    if (
-        ptr_src is None
-        or rptr.dir_cardinality.is_single()
-    ):
-        return
-
-    var = pathctx.get_path_value_var(
-        rel,
-        path_id=ir_source.path_id.extend(ptrref=ptr_src),
-        env=env
-    )
-    rel.target_list.append(pgast.ResTarget(val=var))
-
-
 def process_set_as_path(
         ir_set: irast.Set, stmt: pgast.SelectStmt, *,
         ctx: context.CompilerContextLevel) -> SetRVars:
@@ -1118,7 +1094,6 @@ def process_set_as_path(
             # semi_join needs a source rvar, so make sure we have one.
             # (The returned one won't be a source rvar if it comes
             # from a function, for example)
-
             if not ir_source.path_id.is_type_intersection_path():
                 src_rvar = ensure_source_rvar(ir_source, ctx.rel, ctx=srcctx)
             set_rvar = relctx.semi_join(stmt, ir_set, src_rvar, ctx=srcctx)
@@ -1129,8 +1104,6 @@ def process_set_as_path(
         assert ir_source.rptr is not None
         ir_source = ir_source.rptr.source
         src_rvar = get_set_rvar(ir_source, ctx=ctx)
-        _maybe_pull_link_source(
-            rptr, ir_source, ctx.rel, env=ctx.env)
 
     elif not source_is_visible:
         with ctx.subrel() as srcctx:
@@ -1147,9 +1120,6 @@ def process_set_as_path(
                     srcctx.rel.where_clause = astutils.extend_binop(
                         srcctx.rel.where_clause,
                         pgast.NullTest(arg=var, negated=True))
-
-            _maybe_pull_link_source(
-                rptr, ir_source, srcctx.rel, env=ctx.env)
 
         srcrel = srcctx.rel
         src_rvar = relctx.rvar_for_rel(srcrel, lateral=True, ctx=srcctx)
@@ -1191,8 +1161,6 @@ def process_set_as_path(
         else:
             aspects = ['value', 'source']
             src_rvar = get_set_rvar(ir_source, ctx=ctx)
-            _maybe_pull_link_source(
-                rptr, ir_source, ctx.rel, env=ctx.env)
 
         assert ir_set.rptr is not None
         map_rvar = SetRVar(
@@ -1424,19 +1392,21 @@ def process_set_as_subquery(
             set_rvar = relctx.new_root_rvar(ir_set, ctx=newctx)
 
             if (
-                (rptr := ir_set.path_id.rptr()) is not None
-                and (tgr_prop := rptr.real_material_ptr.target_property) is not None
+                (rptr := ir_set.rptr)
+                and (target_ref := rptr.target_ref)
             ):
-
-                tgt_ref = pathctx.get_rvar_path_var(
-                    set_rvar, ir_set.path_id.extend(ptrref=tgr_prop),
-                    'value', env=ctx.env)
+                tgt_ref = pathctx.get_rvar_path_value_var(
+                    set_rvar, ir_set.path_id.extend(ptrref=target_ref), env=ctx.env)
+                if stmt.target_list:
+                    stmt.target_list.clear()  # hack
+                pathctx.get_path_value_output(
+                    stmt, ir_set.path_id.extend(ptrref=target_ref), env=ctx.env)
             else:
                 tgt_ref = pathctx.get_rvar_path_identity_var(
                     set_rvar, ir_set.path_id, env=ctx.env)
+                pathctx.get_path_identity_output(
+                    stmt, ir_set.path_id, env=ctx.env)
 
-            pathctx.get_path_identity_output(
-                stmt, ir_set.path_id, env=ctx.env)
             cond_expr = astutils.new_binop(tgt_ref, stmt, 'IN')
 
             # Make a new stmt, join in the new root, and semi join on
@@ -3631,6 +3601,7 @@ def _get_cte_source_table(
     if stor_info.table_type == 'ObjectType':
         # store in source
         src_table = relctx.new_root_rvar(source, ctx=ctx)
+        pathctx.put_path_source_rvar(stmt, source.path_id, rvar=src_table, env=ctx.env)
         main_id_ref = id_ref = pathctx.get_rvar_path_identity_var(
             src_table, source.path_id, env=ctx.env)
 
@@ -3643,6 +3614,7 @@ def _get_cte_source_table(
             stmt.target_list.append(pgast.ResTarget(val=id_ref))
     else:
         main_table = relctx.new_root_rvar(source, ctx=ctx)
+        pathctx.put_path_source_rvar(stmt, source.path_id, rvar=main_table, env=ctx.env)
         link_table = relctx.new_pointer_rvar(parent_link.rptr, src_rvar=main_table, ctx=ctx)
 
         main_id_ref = sp_ref = id_ref = pathctx.get_rvar_path_identity_var(
@@ -3675,6 +3647,7 @@ def _get_cte_source_table(
             ),
         )
 
+    pathctx.put_path_identity_var(stmt, source.path_id, var=main_id_ref, env=ctx.env)
     stmt.target_list.append(pgast.ResTarget(val=main_id_ref))
     if append_parent:
         stmt.target_list.append(pgast.ResTarget(val=parent_colref, name="parent"))
@@ -3690,6 +3663,10 @@ def _process_set_as_root_traverse_function(
 ) -> SetRVars:
     expr = ir_set.expr
     assert isinstance(expr, irast.FunctionCall)
+    outer_id = ir_set.path_id
+    inner_id = expr.args[0].expr.path_id
+    pathctx.put_path_id_map(ctx.rel, outer_id, inner_id)
+
     src_table, parent_col, id_col = _get_cte_source_table(
         source=expr.args[0].expr,
         parent_link=expr.args[1].expr,
@@ -3868,7 +3845,7 @@ def process_set_as_traverse_function(
     )
 
     new_rvars = new_stmt_set_rvar(ir_set, stmt, ctx=ctx)
-    main_query = ctx.rel
+    main_query = pgast.SelectStmt()
 
     main_query.append_cte(cte)
 
@@ -3877,11 +3854,6 @@ def process_set_as_traverse_function(
         alias=pgast.Alias(aliasname=cte_name)
     ))
 
-    output_var = pgast.ColumnRef(name=['id'])
-    main_query.target_list.append(pgast.ResTarget(
-        val=output_var,
-        name='id'
-    ))
 
     if function_name in ('cal::base', 'cal::ibase'):
         main_query.where_clause = pgast.Expr(
@@ -3936,6 +3908,11 @@ def process_set_as_traverse_function(
                 op='OR'
             )
     main_query.distinct_clause = [pgast.Star()]
+    output_var = pgast.ColumnRef(name=['id'])
+    main_query.target_list.append(pgast.ResTarget(
+        val=output_var,
+        name='id'
+    ))
     pathctx._put_path_output_var(  # noqa
         rel=main_query,
         path_id=ir_set.path_id,
@@ -3943,4 +3920,14 @@ def process_set_as_traverse_function(
         var=output_var,
         env=ctx.env
     )
+    relctx.include_rvar(
+        stmt, relctx.rvar_for_rel(main_query, ctx=ctx),
+        ir_set.path_id, ctx=ctx
+    )
+
+    src_rvar = relctx.new_primitive_rvar(
+        rel_src, path_id=ir_set.path_id,
+        lateral=True, ctx=ctx)
+    relctx.include_rvar(stmt, src_rvar, ir_set.path_id, ctx=ctx)
+
     return new_rvars
