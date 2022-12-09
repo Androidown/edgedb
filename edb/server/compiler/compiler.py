@@ -79,6 +79,7 @@ from edb.pgsql import params as pg_params
 from edb.pgsql import types as pg_types
 
 from edb.server import config
+from edb.server.defines import DROP_IN_SCHEMA_DELTA
 
 from . import dbstate
 from . import enums
@@ -1922,6 +1923,11 @@ class Compiler:
                         rv.ref_ids.update(comp.ref_ids)
                     else:
                         rv.ref_ids = comp.ref_ids
+                if isinstance(stmt, qlast.DescribeStmt):
+                    if rv.ref_ids:
+                        rv.ref_ids.update({DROP_IN_SCHEMA_DELTA})
+                    else:
+                        rv.ref_ids = {DROP_IN_SCHEMA_DELTA}
 
                 if is_trailing_stmt:
                     unit.cardinality = comp.cardinality

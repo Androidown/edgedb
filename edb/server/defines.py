@@ -56,6 +56,8 @@ _MAX_QUERIES_CACHE = 1000
 SQL_BYTES_LENGTH_DISK_CACHE = 5000
 # max count for eql in disk cache per db index
 DISK_CACHE_MAX_COUNT = 10000
+# special constant for mark object id refs for eql as needed to be dropped as soon as schema delta happened
+DROP_IN_SCHEMA_DELTA = 'DROP_IN_SCHEMA_DELTA'
 
 _QUERY_ROLLING_AVG_LEN = 10
 _QUERIES_ROLLING_AVG_LEN = 300
