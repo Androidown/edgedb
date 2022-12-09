@@ -93,7 +93,7 @@ cdef class Database:
 
     cdef schedule_config_update(self)
 
-    cdef _invalidate_caches(self, drop_ids=?)
+    cdef _invalidate_caches(self, drop_ids)
     cdef _cache_compiled_query(self, key, query_unit)
     cdef _new_view(self, query_cache, protocol_version)
     cdef _remove_view(self, view)

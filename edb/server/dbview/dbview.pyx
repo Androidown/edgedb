@@ -43,11 +43,13 @@ from edb.schema import version as s_ver
 from edb.schema import name as sn
 from edb.server import compiler, defines, config, metrics
 from edb.server.compiler import dbstate, sertypes, enums
+from edb.server.defines import DROP_IN_SCHEMA_DELTA
 from edb.pgsql import dbops
 
 cimport cython
 
 __all__ = ('DatabaseIndex', 'DatabaseConnectionView', 'SideEffects')
+
 
 cdef DEFAULT_MODALIASES = immutables.Map({None: defines.DEFAULT_MODULE_ALIAS})
 cdef DEFAULT_CONFIG = immutables.Map()
@@ -353,19 +355,19 @@ cdef class Database:
             self.reflection_cache = reflection_cache
         if db_config is not None:
             self.db_config = db_config
+
+        drop_ids = {DROP_IN_SCHEMA_DELTA}
+
         if affecting_ids:
-            drop_ids = affecting_ids.intersection(self._object_id_to_eql.keys())
-        else:
-            drop_ids = None
+            drop_ids.update(affecting_ids.intersection(self._object_id_to_eql.keys()))
+
         self._invalidate_caches(drop_ids)
 
     cdef _update_backend_ids(self, new_types):
         self.backend_ids.update(new_types)
 
-    cdef _invalidate_caches(self, drop_ids: typing.Set[uuid.UUID]=None):
+    cdef _invalidate_caches(self, drop_ids: typing.Set[uuid.UUID]):
         self._state_serializers.clear()
-        if drop_ids is None:
-            return
 
         if self._should_log:
             logger.debug(f'Ids to drop: {drop_ids}')
