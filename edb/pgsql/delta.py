@@ -4890,11 +4890,11 @@ class AlterLink(LinkMetaCommand, adapts=s_links.AlterLink):
         schema = super()._alter_finalize(schema, context)
         if not self.maybe_get_object_aux_data('from_alias'):
             self._validate_link_path(self.scls, schema, context)
-            if self._alter_link_path(
+            self._alter_link_path(
                 orig_schema=orig_schema,
                 schema=schema, context=context
-            ):
-                self.apply_scheduled_inhview_updates(schema, context)
+            )
+        self.apply_scheduled_inhview_updates(schema, context)
         return schema
 
     def _get_link_path_alter_info(
@@ -4934,7 +4934,7 @@ class AlterLink(LinkMetaCommand, adapts=s_links.AlterLink):
         if alter_info is None:
             return False
 
-        stor_info = types.get_pointer_storage_info(link, schema=schema)
+        stor_info = types.get_pointer_storage_info(link, schema=schema, link_bias=True)
         is_line_link = stor_info.table_type == 'ObjectType'
 
         source_altered = alter_info.source_altered and not is_line_link
@@ -4951,7 +4951,12 @@ class AlterLink(LinkMetaCommand, adapts=s_links.AlterLink):
                 drop_inhview = [link_main]
         else:
             link_main = link
-            drop_inhview = [link_main]
+            if self.get_annotation('is_propagated'):
+                ancs = set(link_main.get_ancestors(schema).objects(schema))
+                ancs.discard(schema.get('std::link'))
+                drop_inhview = [link_main] + list(ancs)
+            else:
+                drop_inhview = [link_main]
 
         for obj in drop_inhview:
             self.drop_inhview(schema, context, obj, conditional=True)

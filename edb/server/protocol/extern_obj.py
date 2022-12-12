@@ -274,7 +274,7 @@ class CreateObjectType(BaseObjectType):
 
 
 class DeleteObjectType(BaseObjectType):
-    def to_dll(self):
+    def to_ddl(self):
         return f"DROP TYPE {self.qualname}"
 
 

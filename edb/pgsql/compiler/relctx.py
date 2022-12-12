@@ -517,6 +517,7 @@ def new_primitive_rvar(
                     allow_missing=True)
             ) and ptr_info.table_type == 'ObjectType'
         ):
+            pathctx.put_rvar_path_bond(set_rvar, path_id)
             flipped_id = path_id.extend(ptrref=rptrref)
             # Inline link
             path_id = path_id.src_path()
@@ -756,7 +757,15 @@ def semi_join(
         tgt_ref = pathctx.get_rvar_path_identity_var(
             set_rvar, far_pid, env=ctx.env)
 
-    if (source_ref := rptr.source_ref) and ptr_info.table_type == 'ObjectType':
+    if (
+        (source_ref := rptr.source_ref)
+        and (
+            (rptr.is_inbound and ptr_info.table_type == 'ObjectType')
+            or (not rptr.is_inbound
+                and pg_types.get_ptrref_storage_info(
+                    ptrref, link_bias=True).table_type == 'ObjectType')
+        )
+    ):
         # 由于far_pid是指向link对象的pathid，需要取到link源pathid
         if rptr.is_inbound:
             # already a source path
