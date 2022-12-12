@@ -762,8 +762,9 @@ def semi_join(
         and (
             (rptr.is_inbound and ptr_info.table_type == 'ObjectType')
             or (not rptr.is_inbound
-                and pg_types.get_ptrref_storage_info(
-                    ptrref, link_bias=True).table_type == 'ObjectType')
+               and (ptr_bias_info := pg_types.get_ptrref_storage_info(
+                    ptrref, link_bias=True))
+                and ptr_bias_info.table_type == 'ObjectType')
         )
     ):
         # 由于far_pid是指向link对象的pathid，需要取到link源pathid
