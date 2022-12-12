@@ -291,7 +291,12 @@ class GraphQLTestCase(BaseHttpExtensionTest, server.QueryTestCase):
         return res
 
 
-class InferExprTestCase(BaseHttpExtensionTest, server.QueryTestCase):
+class InferExprTestCase(BaseHttpTest, server.QueryTestCase):
+    @classmethod
+    def get_api_path(cls):
+        extpath = cls.get_extension_name()
+        dbname = cls.get_database_name()
+        return f'/db/{dbname}/{extpath}'
 
     @classmethod
     def get_extension_name(cls):
@@ -311,12 +316,13 @@ class InferExprTestCase(BaseHttpExtensionTest, server.QueryTestCase):
         )
         resp_data = json.loads(response.read())
 
-        if 'data' in resp_data:
-            return resp_data['data']
+        if 'cardinality' in resp_data and 'type' in resp_data:
+            return resp_data
 
-        err = resp_data['errors'][0]
+        err = resp_data['error']
 
-        typename, msg = err['message'].split(':', 1)
+        msg = err['message']
+        typename = err['type']
         msg = msg.strip()
 
         try:

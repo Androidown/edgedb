@@ -68,92 +68,6 @@ class TestHttpInferExpr(tb.InferExprTestCase):
             }
         )
 
-    def test_infer_expr_body_invalid_1(self):
-        with self.http_con() as con:
-            data, headers, status = self.http_con_request(
-                con,
-                {
-                    "object1": "A",
-                    "module": "default",
-                    "expression": "cal::children(.t)"
-                }
-            )
-
-            self.assertEqual(status, 400)
-            self.assertEqual(headers['connection'], 'close')
-            self.assertEqual(b'Field \'object\' is required.', data)
-
-        with self.http_con() as con:
-            data, headers, status = self.http_con_request(
-                con,
-                {
-                    "object": "A",
-                    "module1": "default",
-                    "expression": "cal::children(.t)"
-                }
-            )
-
-            self.assertEqual(status, 400)
-            self.assertEqual(headers['connection'], 'close')
-            self.assertEqual(b'Field \'module\' is required.', data)
-
-        with self.http_con() as con:
-            data, headers, status = self.http_con_request(
-                con,
-                {
-                    "object": "A",
-                    "module": "default",
-                    "expression1": "cal::children(.t)"
-                }
-            )
-
-            self.assertEqual(status, 400)
-            self.assertEqual(headers['connection'], 'close')
-            self.assertEqual(b'Field \'expression\' is required.', data)
-
-    def test_infer_expr_body_invalid_2(self):
-        with self.http_con() as con:
-            data, headers, status = self.http_con_request(
-                con,
-                {
-                    "object": 1,
-                    "module": "default",
-                    "expression": "cal::children(.t)"
-                }
-            )
-
-            self.assertEqual(status, 400)
-            self.assertEqual(headers['connection'], 'close')
-            self.assertEqual(b'Field \'object\' must be a string.', data)
-
-        with self.http_con() as con:
-            data, headers, status = self.http_con_request(
-                con,
-                {
-                    "object": "A",
-                    "module": 1,
-                    "expression": "cal::children(.t)"
-                }
-            )
-
-            self.assertEqual(status, 400)
-            self.assertEqual(headers['connection'], 'close')
-            self.assertEqual(b'Field \'module\' must be a string.', data)
-
-        with self.http_con() as con:
-            data, headers, status = self.http_con_request(
-                con,
-                {
-                    "object": "A",
-                    "module": "default",
-                    "expression": 1
-                }
-            )
-
-            self.assertEqual(status, 400)
-            self.assertEqual(headers['connection'], 'close')
-            self.assertEqual(b'Field \'expression\' must be a string.', data)
-
     def test_infer_expr_module_no_exist(self):
         with self.assertRaisesRegex(
             edgedb.SchemaError,
@@ -178,13 +92,13 @@ class TestHttpInferExpr(tb.InferExprTestCase):
     def test_infer_expr_type_parse_error(self):
         with self.assertRaisesRegex(
             edgedb.EdgeQLSyntaxError,
-            "Unexpected '++'"
+            "Unexpected '\+\+'"
         ):
             self.infer_expr('Test', 'default', '.g ++++ \'2\'')
 
     def test_infer_expr_type_invalid_expr_error(self):
         with self.assertRaisesRegex(
             edgedb.InvalidTypeError,
-            "operator '++' cannot be applied to operands of type 'std::str' and 'std::int64'"
+            "operator '\+\+' cannot be applied to operands of type 'std::str' and 'std::int64'"
         ):
             self.infer_expr('Test', 'default', '.g ++ 2')
