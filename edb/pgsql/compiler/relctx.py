@@ -760,10 +760,10 @@ def semi_join(
     if (
         (source_ref := rptr.source_ref)
         and (
-            (rptr.is_inbound and ptr_info.table_type == 'ObjectType')
+            (rptr.is_inbound and ptr_info and ptr_info.table_type == 'ObjectType')
             or (not rptr.is_inbound
                and (ptr_bias_info := pg_types.get_ptrref_storage_info(
-                    ptrref, link_bias=True))
+                    ptrref, link_bias=True, allow_missing=True))
                 and ptr_bias_info.table_type == 'ObjectType')
         )
     ):
