@@ -289,3 +289,50 @@ class GraphQLTestCase(BaseHttpExtensionTest, server.QueryTestCase):
         assert_data_shape.assert_data_shape(
             res, result, self.fail, message=msg)
         return res
+
+
+class InferExprTestCase(BaseHttpExtensionTest, server.QueryTestCase):
+
+    @classmethod
+    def get_extension_name(cls):
+        return 'infer-expr'
+
+    def infer_expr(self, objname, module, expression):
+        req_data = {
+            'object': objname,
+            'module': module,
+            'expression': expression
+        }
+
+        req = urllib.request.Request(self.http_addr, method='POST')
+        req.add_header('Content-Type', 'application/json')
+        response = urllib.request.urlopen(
+            req, json.dumps(req_data).encode(), context=self.tls_context
+        )
+        resp_data = json.loads(response.read())
+
+        if 'data' in resp_data:
+            return resp_data['data']
+
+        err = resp_data['errors'][0]
+
+        typename, msg = err['message'].split(':', 1)
+        msg = msg.strip()
+
+        try:
+            ex_type = getattr(edgedb, typename)
+        except AttributeError:
+            raise AssertionError(
+                f'server returned an invalid exception typename: {typename!r}'
+                f'\n  Message: {msg}')
+
+        ex = ex_type(msg)
+
+        if 'locations' in err:
+            # XXX Fix this when LSP "location" objects are implemented
+            ex._attrs[base_errors.FIELD_LINE_START] = str(
+                err['locations'][0]['line']).encode()
+            ex._attrs[base_errors.FIELD_COLUMN_START] = str(
+                err['locations'][0]['column']).encode()
+
+        raise ex
