@@ -238,6 +238,25 @@ def compile_notebook(
     )
 
 
+def infer_expr(
+    client_id: int,
+    dbname: str,
+    *compile_args: Any,
+    **compile_kwargs: Any,
+):
+    global clients
+    client_schema = clients[client_id]
+    db = client_schema.dbs[dbname]
+
+    return COMPILER.infer_expr(
+        STD_SCHEMA,
+        db.user_schema,
+        client_schema.global_schema,
+        *compile_args,
+        **compile_kwargs,
+    )
+
+
 def try_compile_rollback(
     *compile_args: Any,
     **compile_kwargs: Any,

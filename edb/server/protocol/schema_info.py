@@ -78,6 +78,7 @@ async def handle_request(
 
     response.status = http.HTTPStatus.OK
     response.content_type = b'application/json'
+    await db.introspection()
     try:
         result = await execute(db, server, query_uuid)
     except Exception as ex:
@@ -112,16 +113,14 @@ async def execute(db, server, query_uuid: str):
     if obj := global_schema.get_by_id(obj_id, default=None):
         actual_schema = global_schema
     else:
-        for schema_name, schema in user_schema.items():
-            obj = schema.get_by_id(obj_id, default=None)
-            if obj is not None:
-                actual_schema = schema
-                break
+        obj = user_schema.get_by_id(obj_id, default=None)
+        if obj is not None:
+            actual_schema = user_schema
 
     if actual_schema is None:
         raise errors.InvalidReferenceError(
             f'Can\'t find Object with uuid: <{obj_id}>'
-            f' among schema: {["global", *user_schema.keys()]}.'
+            f' among schema: {["global", db.dbname]}.'
         )
 
     all_fields = type(obj).get_schema_fields()

@@ -54,6 +54,7 @@ from . import system_api
 from . import ui_ext
 from . import schema_info
 from . import extern_obj
+from . import infer_expr
 
 
 HTTPStatus = http.HTTPStatus
@@ -533,6 +534,10 @@ cdef class HttpProtocol:
                     )
                 elif extname == 'extern':
                     await extern_obj.handle_request(
+                        request, response, db, args, self.server
+                    )
+                elif extname == 'infer-expr':
+                    await infer_expr.handle_request(
                         request, response, db, args, self.server
                     )
 

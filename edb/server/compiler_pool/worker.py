@@ -300,6 +300,34 @@ def compile_notebook(
     )
 
 
+def infer_expr(
+    dbname: str,
+    user_schema: Optional[bytes],
+    reflection_cache: Optional[bytes],
+    global_schema: Optional[bytes],
+    database_config: Optional[bytes],
+    system_config: Optional[bytes],
+    *compile_args: Any,
+    **compile_kwargs: Any,
+):
+    db = __sync__(
+        dbname,
+        user_schema,
+        reflection_cache,
+        global_schema,
+        database_config,
+        system_config,
+    )
+
+    return COMPILER.infer_expr(
+        STD_SCHEMA,
+        db.user_schema,
+        GLOBAL_SCHEMA,
+        *compile_args,
+        **compile_kwargs
+    )
+
+
 def try_compile_rollback(
     *compile_args: Any,
     **compile_kwargs: Any,
@@ -390,6 +418,8 @@ def get_handler(methname):
             meth = compile_notebook
         elif methname == "compile_graphql":
             meth = compile_graphql
+        elif methname == "infer_expr":
+            meth = infer_expr
         elif methname == "try_compile_rollback":
             meth = try_compile_rollback
         elif methname == 'set_user_schema':

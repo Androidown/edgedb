@@ -58,6 +58,7 @@ from edb.ir import ast as irast
 from edb.schema import database as s_db
 from edb.schema import ddl as s_ddl
 from edb.schema import delta as s_delta
+from edb.schema import expr as s_expr
 from edb.schema import functions as s_func
 from edb.schema import links as s_links
 from edb.schema import properties as s_props
@@ -2475,6 +2476,42 @@ class Compiler:
             schema_ids=ids,
             blocks=descriptors,
         )
+
+    def infer_expr(
+        self,
+        std_schema: s_schema.FlatSchema,
+        user_schema: s_schema.FlatSchema,
+        global_schema: s_schema.FlatSchema,
+        objname: str,
+        expression: str,
+    ):
+        current_schema = s_schema.ChainedSchema(
+            std_schema,
+            user_schema,
+            global_schema,
+        )
+        source_obj = user_schema.get(name=objname, default=None)
+
+        if source_obj is None:
+            raise errors.SchemaError(f"Can\'t find Object: '{objname}' in current schema.")
+
+        options = qlcompiler.CompilerOptions(
+            anchors={qlast.Source().name: source_obj},
+            path_prefix_anchor=qlast.Source().name,
+            singletons=[source_obj]
+        )
+        expr = s_expr.Expression(text=expression)
+
+        compiled = type(expr).compiled(
+            expr,
+            schema=current_schema,
+            options=options
+        )
+
+        return {
+            'cardinality': compiled.cardinality,
+            'type': str(compiled.stype.get_name(current_schema))
+        }
 
     def _describe_object(
         self,
