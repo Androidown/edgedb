@@ -744,6 +744,38 @@ class AbstractPool:
         finally:
             self._release_worker(worker)
 
+    async def infer_expr(
+        self,
+        dbname,
+        user_schema,
+        global_schema,
+        reflection_cache,
+        database_config,
+        system_config,
+        *compile_args
+    ):
+        worker = await self._acquire_worker()
+        try:
+            preargs, sync_state = await self._compute_compile_preargs(
+                worker,
+                dbname,
+                user_schema,
+                global_schema,
+                reflection_cache,
+                database_config,
+                system_config,
+            )
+
+            return await worker.call(
+                'infer_expr',
+                *preargs,
+                *compile_args,
+                sync_state=sync_state
+            )
+
+        finally:
+            self._release_worker(worker)
+
     async def describe_database_dump(
         self,
         *args,
