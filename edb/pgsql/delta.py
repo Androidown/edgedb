@@ -4934,7 +4934,9 @@ class AlterLink(LinkMetaCommand, adapts=s_links.AlterLink):
         if alter_info is None:
             return False
 
-        stor_info = types.get_pointer_storage_info(link, schema=schema, link_bias=True)
+        link_bias = link.has_user_defined_properties(schema) \
+                    and link.get_cardinality(schema).is_single()
+        stor_info = types.get_pointer_storage_info(link, schema=schema, link_bias=link_bias)
         is_line_link = stor_info.table_type == 'ObjectType'
 
         source_altered = alter_info.source_altered and not is_line_link
