@@ -2197,7 +2197,9 @@ class DeleteConstraint(ConstraintCommand, adapts=s_constr.DeleteConstraint):
         delta_root_ctx = context.top()
         orig_schema = delta_root_ctx.original_schema
         constraint = schema.get(self.classname)
-        is_external = constraint.get_subject(schema).get_external(schema)
+        is_external = (
+            (sub := constraint.get_subject(schema)) is not None
+            and sub.get_external(schema))
 
         schema = super().apply(schema, context)
 
