@@ -5556,7 +5556,10 @@ class DeleteProperty(PropertyMetaCommand, adapts=s_props.DeleteProperty):
         schema = super()._delete_innards(schema, context)
         prop = self.scls
 
-        if prop.get_source(schema).get_external(schema):
+        if (
+            (src := prop.get_source(schema)) is not None
+            and src.get_external(schema)
+        ):
             return schema
 
         orig_schema = context.current().original_schema
