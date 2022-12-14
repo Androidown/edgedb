@@ -6420,6 +6420,9 @@ class UpdateEndpointDeleteActions(MetaCommand):
                             affected_targets.add(current_orig_target)
 
         for source in affected_sources:
+            if source.get_external(schema):
+                continue
+
             links = []
             inline_links = []
 
@@ -6476,6 +6479,9 @@ class UpdateEndpointDeleteActions(MetaCommand):
                         all_affected_targets.add(descendant)
 
         for target in all_affected_targets:
+            if target.get_external(schema):
+                continue
+
             deferred_links = []
             deferred_inline_links = []
             links = []
