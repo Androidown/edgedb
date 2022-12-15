@@ -135,7 +135,7 @@ class CompileContext:
     # True, if in transaction context.
     in_tx: Optional[bool] = False
     # External view definition
-    external_view: Optional[Mapping] = None
+    external_view: Optional[Mapping] = immutables.Map()
 
 
 DEFAULT_MODULE_ALIASES_MAP = immutables.Map(
