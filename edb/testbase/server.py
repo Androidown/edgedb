@@ -46,7 +46,9 @@ import unittest
 import edgedb
 
 from edb.edgeql import quote as qlquote
-from edb.server import args as edgedb_args
+from edb.pgsql import common as pgcommon
+from edb.pgsql import params as pgparams
+from edb.server import args as edgedb_args, pgcon, pgconnparams
 from edb.server import cluster as edgedb_cluster
 from edb.server import defines as edgedb_defines
 from edb.server import main as edgedb_main
@@ -782,6 +784,43 @@ class ClusterTestCase(TestCase):
                 raise
             finally:
                 await tx.rollback()
+
+
+class PGConnMixin:
+    @classmethod
+    def pg_conn(cls):
+        conn_spec = {}
+        addrs, params = pgconnparams.parse_dsn(cls.backend_dsn)
+        conn_spec['host'], conn_spec['port'] = addrs[0]
+        for k in (
+            'user',
+            'password',
+            'database',
+            'ssl',
+            'sslmode',
+            'server_settings',
+        ):
+            v = getattr(params, k)
+            if v is not None:
+                conn_spec[k] = v
+
+        if 'database' not in conn_spec:
+            conn_spec['database'] = 'postgres'
+        if 'user' not in conn_spec:
+            conn_spec['user'] = 'postgres'
+
+        instance_params = pgparams.get_default_runtime_params().instance_params
+
+        return pgcon.connect(
+            conn_spec,
+            pgcommon.get_database_backend_name(
+                cls.get_database_name(),
+                tenant_id=instance_params.tenant_id
+            ),
+            pgparams.BackendRuntimeParams(
+                instance_params=instance_params
+            )
+        )
 
 
 class RollbackChanges:

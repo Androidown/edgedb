@@ -116,7 +116,7 @@ class CreateProperty(_Pointer):
 
     def to_ddl(self, pretty=False):
         if self.cardinality.is_multi():
-            raise ValueError('Mutli property is not yet suppported.')
+            raise ValueError('Multi property is not yet suppported.')
 
         if self.expr is None:
             req = ' required ' if self.required else ' '
