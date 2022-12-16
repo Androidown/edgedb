@@ -33,6 +33,7 @@ from edb.errors import base as base_errors
 from edb.common import assert_data_shape
 
 from . import server
+from .server import PGConnMixin
 
 
 class StubbornHttpConnection(http.client.HTTPSConnection):
@@ -318,6 +319,59 @@ class InferExprTestCase(BaseHttpTest, server.QueryTestCase):
 
         if 'cardinality' in resp_data and 'type' in resp_data:
             return resp_data
+
+        err = resp_data['error']
+
+        msg = err['message']
+        typename = err['type']
+        msg = msg.strip()
+
+        try:
+            ex_type = getattr(edgedb, typename)
+        except AttributeError:
+            raise AssertionError(
+                f'server returned an invalid exception typename: {typename!r}'
+                f'\n  Message: {msg}'
+            )
+
+        ex = ex_type(msg)
+
+        if 'locations' in err:
+            # XXX Fix this when LSP "location" objects are implemented
+            ex._attrs[base_errors.FIELD_LINE_START] = str(
+                err['locations'][0]['line']
+            ).encode()
+            ex._attrs[base_errors.FIELD_COLUMN_START] = str(
+                err['locations'][0]['column']
+            ).encode()
+
+        raise ex
+
+
+class ExternTestCase(BaseHttpTest, server.QueryTestCase, PGConnMixin):
+    @classmethod
+    def get_extension_name(cls):
+        return 'extern/create-type'
+
+    @classmethod
+    def get_api_path(cls):
+        extpath = cls.get_extension_name()
+        dbname = cls.get_database_name()
+        return f'/db/{dbname}/{extpath}'
+
+    def create_type(self, body):
+        req_data = body.as_dict()
+
+        req = urllib.request.Request(self.http_addr, method='POST')
+        req.add_header('Content-Type', 'application/json')
+        response = urllib.request.urlopen(
+            req, json.dumps(req_data).encode(), context=self.tls_context
+        )
+        resp = response.read()
+        resp_data = json.loads(resp)
+
+        if 'data' in resp_data:
+            return True
 
         err = resp_data['error']
 
