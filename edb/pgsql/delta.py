@@ -6695,10 +6695,11 @@ class CreateExternalView(MetaCommand):
             if not isinstance(ptr, s_pointers.Pointer):
                 continue
 
+            has_link_table = has_table(ptr, schema)
             if (
                 ptr.get_source(schema) != obj
                 or ptr.is_pure_computable(schema)
-                or has_table(ptr, schema)
+                or (has_link_table and not ptr.singular(schema))
             ):
                 continue
 
@@ -6714,7 +6715,10 @@ class CreateExternalView(MetaCommand):
                         f"Missing column definition for "
                         f"{ptr.get_verbosename(schema, with_parent=True)}")
 
-                if src_is_link and ptrname in ('target', 'source'):
+                if has_link_table:
+                    ptrname = ptr.get_source_property(schema).get_shortname(schema).name
+                    colview_name = str(ptr.id)
+                elif src_is_link and ptrname in ('target', 'source'):
                     colview_name = ptrname
                 else:
                     colview_name = str(ptr.id)
