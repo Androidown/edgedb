@@ -278,8 +278,7 @@ class TestHttpCreateType(tb.ExternTestCase):
             # query object with link
             await self.assert_query_result(
                 r'''
-                SELECT distinct
-                    Facility {
+                SELECT Facility {
                         fid, name,
                         bookedby: {
                             mid,
@@ -290,7 +289,7 @@ class TestHttpCreateType(tb.ExternTestCase):
                 [{
                     'fid': 1,
                     'name': 'Tennis Court 2',
-                    'bookedby': {'mid': 1, 'fullname': 'Smith.Darren'}
+                    'bookedby': {'mid': 0, 'fullname': 'GUEST.GUEST'}
                 }]
             )
         finally:
@@ -419,7 +418,7 @@ class TestHttpCreateType(tb.ExternTestCase):
             ):
                 await self.con.execute(
                     f'''
-                    delete {link_to} FILTER .mid=0;
+                    delete {link_to} FILTER .mid=6;
                     '''
                 )
         finally:
@@ -450,8 +449,7 @@ class TestHttpCreateType(tb.ExternTestCase):
             # query object with link
             await self.assert_query_result(
                 r'''
-                SELECT distinct
-                    Facility {
+                SELECT Facility {
                         fid, name,
                         bookedby: {
                             mid,
@@ -462,7 +460,7 @@ class TestHttpCreateType(tb.ExternTestCase):
                 [{
                     'fid': 1,
                     'name': 'Tennis Court 2',
-                    'bookedby': {'mid': 1, 'fullname': 'Smith.Darren'}
+                    'bookedby': {'mid': 0, 'fullname': 'GUEST.GUEST'}
                 }]
             )
 
@@ -499,12 +497,6 @@ class TestHttpCreateType(tb.ExternTestCase):
                     'discount': 5 / 25,
                     'name': 'Tennis Court 2'
                 }]
-            )
-            await self.assert_query_result(
-                r'''
-                SELECT count(Person);
-                ''',
-                [32]
             )
             # query object with link
             await self.assert_query_result(
@@ -554,7 +546,7 @@ class TestHttpCreateType(tb.ExternTestCase):
             ):
                 await self.con.execute(
                     f'''
-                    delete {link_to} FILTER .mid=0;
+                    delete {link_to} FILTER .mid=5;
                     '''
                 )
         finally:

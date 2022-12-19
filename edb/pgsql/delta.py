@@ -6690,7 +6690,8 @@ class CreateExternalView(MetaCommand):
 
         view_def = context.external_view[key]
         columns = []
-
+        join_link_table = None
+        source_identity = None
         for ptr in context.external_objs:
             if not isinstance(ptr, s_pointers.Pointer):
                 continue
@@ -6709,24 +6710,32 @@ class CreateExternalView(MetaCommand):
                 columns.append("edgedbext.uuid_generate_v1mc() AS id")
             elif ptrname == '__type__':
                 columns.append(f"'{(str(obj.id))}'::uuid AS __type__")
+            elif has_link_table:
+                # Single link with property,
+                # the link col appears with value of target_property from target table
+                colview_name = str(ptr.id)
+                join_link_table = context.external_view[(key, ptrname)]
+                source_identity = view_def.columns[ptr.get_source_property(schema).get_shortname(schema).name]
+                ptrname = join_link_table.columns['target']
+                columns.append(f"INNER_T.{ptrname} AS {q(colview_name)}")
             else:
                 if ptrname not in view_def.columns:
                     raise errors.SchemaDefinitionError(
                         f"Missing column definition for "
                         f"{ptr.get_verbosename(schema, with_parent=True)}")
 
-                if has_link_table:
-                    ptrname = ptr.get_source_property(schema).get_shortname(schema).name
-                    colview_name = str(ptr.id)
-                elif src_is_link and ptrname in ('target', 'source'):
+                if src_is_link and ptrname in ('target', 'source'):
                     colview_name = ptrname
                 else:
                     colview_name = str(ptr.id)
 
-                columns.append(f"{q(view_def.columns[ptrname])} AS {q(colview_name)}")
+                columns.append(f"SOURCE_T.{q(view_def.columns[ptrname])} AS {q(colview_name)}")
 
         column_str = ',\n'.join(columns)
-        query = f"SELECT {column_str} FROM {view_def.relation}"
+        query = f"SELECT {column_str} FROM (SELECT * FROM {view_def.relation}) AS SOURCE_T"
+        if join_link_table is not None:
+            query += f", (SELECT * FROM {join_link_table.relation}) AS INNER_T " \
+                     f"where INNER_T.{join_link_table.columns['source']} = SOURCE_T.{source_identity}"
         self.external_views.append(dbops.View(query=query, name=('edgedbpub', str(obj.id))))
         self.external_views.append(dbops.View(query=query, name=('edgedbpub', str(obj.id) + '_t')))
 
