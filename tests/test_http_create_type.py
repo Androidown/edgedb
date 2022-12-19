@@ -89,11 +89,15 @@ class TestHttpCreateType(tb.ExternTestCase):
 
     def create_facility(self, link_to, link_card='single', has_link_prop=True):
         if has_link_prop or link_card == 'multi':
+            if link_card == 'single':
+                relation = "(select distinct on (facid) * from cd.bookings) as bookings"
+            else:
+                relation = "(select distinct on (facid, memid) * from cd.bookings) as bookings"
             link_detail = [
                     LinkDetail(
-                        name="booked_by",
+                        name="bookedby",
                         cardinality=link_card,
-                        relation="cd.bookings",
+                        relation=relation,
                         type=link_to,
                         source="facid",
                         target="memid",
@@ -277,20 +281,87 @@ class TestHttpCreateType(tb.ExternTestCase):
                 SELECT distinct
                     Facility {
                         fid, name,
-                        booked_by: {
+                        bookedby: {
                             mid,
                             fullname := .surname ++ '.' ++ .firstname
                         } ORDER BY .mid,
-                    } FILTER .fid=1
-                LIMIT 3;
+                    } FILTER .fid=1;
                 ''',
                 [{
                     'fid': 1,
                     'name': 'Tennis Court 2',
-                    'booked_by': [
+                    'bookedby': {'mid': 1, 'fullname': 'Smith.Darren'}
+                }]
+            )
+        finally:
+            await self.con.execute(
+                '''
+                Drop type Facility;
+                '''
+            )
+            await self.con.execute(
+                '''
+                Drop type Member;
+                '''
+            )
+
+    async def test_link_outer_outer_multi_link_with_prop(self):
+        self.assertTrue(self.create_member_from_outer())
+        link_to = "Member"
+        self.assertTrue(self.create_facility(link_to, 'multi'))
+        try:
+            # query object without link
+            await self.assert_query_result(
+                r'''
+                SELECT
+                    Facility {
+                        fid, discount, name
+                    } FILTER .fid = 1;
+                ''',
+                [{
+                    'fid': 1,
+                    'discount': 5 / 25,
+                    'name': 'Tennis Court 2'
+                }]
+            )
+            # query object with link
+            await self.assert_query_result(
+                r'''
+                SELECT distinct
+                    Facility {
+                        fid, name,
+                        bookedby: {
+                            mid,
+                            fullname := .surname ++ '.' ++ .firstname
+                        } ORDER BY .mid,
+                    } FILTER .fid=1;
+                ''',
+                [{
+                    'fid': 1,
+                    'name': 'Tennis Court 2',
+                    'bookedby': [
                         {'mid': 0, 'fullname': 'GUEST.GUEST'},
                         {'mid': 1, 'fullname': 'Smith.Darren'},
                         {'mid': 2, 'fullname': 'Smith.Tracy'},
+                        {'mid': 3, 'fullname': 'Rownam.Tim'},
+                        {'mid': 4, 'fullname': 'Joplette.Janice'},
+                        {'mid': 5, 'fullname': 'Butters.Gerald'},
+                        {'mid': 6, 'fullname': 'Tracy.Burton'},
+                        {'mid': 7, 'fullname': 'Dare.Nancy'},
+                        {'mid': 8, 'fullname': 'Boothe.Tim'},
+                        {'mid': 9, 'fullname': 'Stibbons.Ponder'},
+                        {'mid': 10, 'fullname': 'Owen.Charles'},
+                        {'mid': 11, 'fullname': 'Jones.David'},
+                        {'mid': 12, 'fullname': 'Baker.Anne'},
+                        {'mid': 13, 'fullname': 'Farrell.Jemima'},
+                        {'mid': 14, 'fullname': 'Smith.Jack'},
+                        {'mid': 15, 'fullname': 'Bader.Florence'},
+                        {'mid': 16, 'fullname': 'Baker.Timothy'},
+                        {'mid': 24, 'fullname': 'Sarwin.Ramnaresh'},
+                        {'mid': 27, 'fullname': 'Rumney.Henrietta'},
+                        {'mid': 28, 'fullname': 'Farrell.David'},
+                        {'mid': 30, 'fullname': 'Purview.Millicent'},
+                        {'mid': 35, 'fullname': 'Hunt.John'},
                     ]
                 }]
             )
@@ -342,13 +413,15 @@ class TestHttpCreateType(tb.ExternTestCase):
                     'booked_by': {'mid': 3, 'fullname': 'Rownam.Tim'}
                 }]
             )
-
-            #
-            await self.con.execute(
-                f'''
-                delete {link_to} FILTER .mid=0;
-                '''
-            )
+            with self.assertRaisesRegex(
+                edgedb.ConstraintViolationError,
+                regex='deletion of .* is prohibited by link target policy'
+            ):
+                await self.con.execute(
+                    f'''
+                    delete {link_to} FILTER .mid=0;
+                    '''
+                )
         finally:
             await self.con.execute(
                 '''
@@ -380,27 +453,104 @@ class TestHttpCreateType(tb.ExternTestCase):
                 SELECT distinct
                     Facility {
                         fid, name,
-                        booked_by: {
+                        bookedby: {
                             mid,
                             fullname := .surname ++ '.' ++ .firstname
                         } ORDER BY .mid,
-                    } FILTER .fid=1
-                LIMIT 3;
+                    } FILTER .fid=1;
                 ''',
                 [{
                     'fid': 1,
                     'name': 'Tennis Court 2',
-                    'booked_by': [
+                    'bookedby': {'mid': 1, 'fullname': 'Smith.Darren'}
+                }]
+            )
+
+            with self.assertRaisesRegex(
+                edgedb.ConstraintViolationError,
+                regex='deletion of .* is prohibited by link target policy'
+            ):
+                await self.con.execute(
+                    f'''
+                    delete {link_to} FILTER .mid=0;
+                    '''
+                )
+        finally:
+            await self.con.execute(
+                '''
+                Drop type Facility;
+                '''
+            )
+
+    async def test_link_outer_inner_multi_link_with_prop(self):
+        link_to = "Person"
+        self.assertTrue(self.create_facility(link_to, 'multi'))
+        try:
+            # query object without link
+            await self.assert_query_result(
+                r'''
+                SELECT
+                    Facility {
+                        fid, discount, name
+                    } FILTER .fid = 1;
+                ''',
+                [{
+                    'fid': 1,
+                    'discount': 5 / 25,
+                    'name': 'Tennis Court 2'
+                }]
+            )
+            await self.assert_query_result(
+                r'''
+                SELECT count(Person);
+                ''',
+                [32]
+            )
+            # query object with link
+            await self.assert_query_result(
+                r'''
+                SELECT distinct
+                    Facility {
+                        fid, name,
+                        bookedby: {
+                            mid,
+                            fullname := .surname ++ '.' ++ .firstname
+                        } ORDER BY .mid,
+                    } FILTER .fid=1;
+                ''',
+                [{
+                    'fid': 1,
+                    'name': 'Tennis Court 2',
+                    'bookedby': [
                         {'mid': 0, 'fullname': 'GUEST.GUEST'},
                         {'mid': 1, 'fullname': 'Smith.Darren'},
                         {'mid': 2, 'fullname': 'Smith.Tracy'},
+                        {'mid': 3, 'fullname': 'Rownam.Tim'},
+                        {'mid': 4, 'fullname': 'Joplette.Janice'},
+                        {'mid': 5, 'fullname': 'Butters.Gerald'},
+                        {'mid': 6, 'fullname': 'Tracy.Burton'},
+                        {'mid': 7, 'fullname': 'Dare.Nancy'},
+                        {'mid': 8, 'fullname': 'Boothe.Tim'},
+                        {'mid': 9, 'fullname': 'Stibbons.Ponder'},
+                        {'mid': 10, 'fullname': 'Owen.Charles'},
+                        {'mid': 11, 'fullname': 'Jones.David'},
+                        {'mid': 12, 'fullname': 'Baker.Anne'},
+                        {'mid': 13, 'fullname': 'Farrell.Jemima'},
+                        {'mid': 14, 'fullname': 'Smith.Jack'},
+                        {'mid': 15, 'fullname': 'Bader.Florence'},
+                        {'mid': 16, 'fullname': 'Baker.Timothy'},
+                        {'mid': 24, 'fullname': 'Sarwin.Ramnaresh'},
+                        {'mid': 27, 'fullname': 'Rumney.Henrietta'},
+                        {'mid': 28, 'fullname': 'Farrell.David'},
+                        {'mid': 30, 'fullname': 'Purview.Millicent'},
+                        {'mid': 35, 'fullname': 'Hunt.John'},
                     ]
                 }]
             )
 
             with self.assertRaisesRegex(
                 edgedb.ConstraintViolationError,
-                regex='.*Object is still referenced in link parent of Facility'
+                regex='deletion of .* is prohibited by link target policy'
             ):
                 await self.con.execute(
                     f'''
@@ -417,6 +567,23 @@ class TestHttpCreateType(tb.ExternTestCase):
     async def test_link_inner_outer(self):
         self.assertTrue(self.create_member_from_outer())
         try:
+            with self.assertRaisesRegex(
+                edgedb.SchemaDefinitionError,
+                regex="target_property is required in "
+                "create link 'member' from object type 'default::NameList' "
+                "to external object type 'default::Member'."
+            ):
+                await self.con.execute(
+                    '''
+                    create type NameList{
+                        create property _id -> std::int32 {
+                            create constraint std::exclusive;
+                        };
+                        create link member -> Member;
+                        create property alive -> std::bool;
+                    };
+                    '''
+                )
             await self.con.execute(
                 '''
                 create type NameList{
@@ -430,6 +597,19 @@ class TestHttpCreateType(tb.ExternTestCase):
                 };
                 '''
             )
+            with self.assertRaisesRegex(
+                edgedb.SchemaDefinitionError,
+                regex="target_property is required in "
+                "alter link 'member' from object type 'default::NameList' "
+                "to external object type 'default::Member'."
+            ):
+                await self.con.execute(
+                    '''
+                    alter type NameList{
+                        alter link member {on id to id};
+                    };
+                    '''
+                )
             await self.con.execute(
                 '''
                 insert NameList{
