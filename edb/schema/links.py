@@ -388,24 +388,6 @@ class LinkCommand(
 
         is_alter_link = isinstance(self, AlterLink)
 
-        # Get target ahead to valid appearence of target_property for external object
-        maybe_target_shell = self.get_local_attribute_value('target')
-
-        if maybe_target_shell is None and is_alter_link:
-            target = self.scls.get_target(schema)
-        elif maybe_target_shell is None:
-            target = self.get_attribute_value('target')
-        else:
-            if isinstance(maybe_target_shell, so.ObjectShell):
-                target = maybe_target_shell.resolve(schema)
-            else:
-                target = maybe_target_shell
-
-        if cmd_target_prop is None and target and target.get_external(schema):
-            raise errors.SchemaError(
-                "target_property is required in alter/create link to external table."
-            )
-
         if is_alter_link:
             if cmd_target_prop is not None:
                 cmd_target_prop.old_value = self.scls.get_explicit_field_value(
@@ -417,6 +399,19 @@ class LinkCommand(
         altered_props = {}
 
         if cmd_target_prop is not None:
+            if is_alter_link:
+                target_ref = self.get_local_attribute_value('target')
+                if target_ref is None:
+                    target = self.scls.get_target(schema)
+                else:
+                    target = target_ref.resolve(schema)
+            else:
+                target_shell = self.get_local_attribute_value('target')
+                if target_shell is None:
+                    target = self.get_attribute_value('target')
+                else:
+                    target = target_shell.resolve(schema)
+
             if target.is_compound_type(schema):
                 raise errors.UnsupportedFeatureError(
                     'Setting link path on compound type is not yet supported.',
