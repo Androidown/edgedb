@@ -564,6 +564,15 @@ class LinkCommand(
         schema: s_schema.Schema,
         context: sd.CommandContext,
     ):
+        if (
+            scls.get_target_property(schema) is None
+            and scls.get_target(schema).get_external(schema)
+        ):
+            raise errors.SchemaDefinitionError(
+                f"target_property is required in {self.get_friendly_description()} "
+                f"from {scls.get_source(schema).get_verbosename(schema)} "
+                f"to external {scls.get_target(schema).get_verbosename(schema, with_parent=True)}."
+            )
 
         if (
             (src_prop := scls.get_source_property(schema)) is not None
