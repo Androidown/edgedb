@@ -417,21 +417,6 @@ class TestHttpCreateType(tb.ExternTestCase):
     async def test_link_inner_outer(self):
         self.assertTrue(self.create_member_from_outer())
         try:
-            with self.assertRaisesRegex(
-                edgedb.SchemaError,
-                "target_property is required in alter/create link to external table."
-            ):
-                await self.con.execute(
-                    '''
-                    create type NameList{
-                        create property _id -> std::int32 {
-                            create constraint std::exclusive;
-                        };
-                        create link member -> Member;
-                        create property alive -> std::bool;
-                    };
-                    '''
-                )
             await self.con.execute(
                 '''
                 create type NameList{
