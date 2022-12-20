@@ -395,6 +395,11 @@ cdef class Database:
             logger.debug('Disk Cache: \n' + format_eqls(self._eql_to_compiled_disk.keys()))
             logger.debug(f'Obj id to Eql: \n{self._object_id_to_eql}')
 
+    def clear_caches(self):
+        self._eql_to_compiled.clear()
+        self._eql_to_compiled_disk.clear()
+        self._object_id_to_eql.clear()
+
     cdef _cache_compiled_query(self, key, compiled: dbstate.QueryUnitGroup):
         assert compiled.cacheable
 

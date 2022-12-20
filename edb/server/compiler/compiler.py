@@ -308,7 +308,7 @@ class Compiler:
         ref_ids = set()
         for ref in refs:
             if (
-                ref.is_type()
+                isinstance(ref.get_name(schema), s_name.QualName)
                 and ref.get_name(schema).module not in STD_MODULES_STR
             ):
                 ref_ids.add(ref.id)
