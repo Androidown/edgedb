@@ -620,6 +620,16 @@ cdef class HttpProtocol:
             response.status = http.HTTPStatus.OK
             response.close_connection = True
 
+        elif path_parts[0] == 'clear-cache' and request.method == b'GET':
+            dbname = path_parts[1]
+            db = self.server.maybe_get_db(dbname=dbname)
+            if db is None:
+                return self._not_found(request, response)
+            db.clear_caches()
+            response.body = b'Done'
+            response.status = http.HTTPStatus.OK
+            response.close_connection = True
+
         else:
             return self._not_found(request, response)
 
