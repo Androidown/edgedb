@@ -993,16 +993,21 @@ class TestLinkTargetDeleteDeclarative(stb.QueryTestCase):
 
     async def test_link_on_target_delete_loop_01(self):
         async with self._run_and_rollback():
+            await self.con.execute("insert Source1 { name := 'Source1.3' }")
+            await self.con.execute("""
+                insert Source1 {
+                    name := 'Source1.2',
+                    self_del_source := detached (
+                        select Source1 filter .name = 'Source1.3'
+                    )
+                }
+            """)
+
             await self.con.execute("""
                 insert Source1 {
                     name := 'Source1.1',
                     self_del_source := detached (
-                        insert Source1 {
-                            name := 'Source1.2',
-                            self_del_source := detached (
-                                insert Source1 { name := 'Source1.3' }
-                            )
-                        }
+                        select Source1 filter .name = 'Source1.2'
                     )
                 };
                 update Source1 filter .name = 'Source1.3' set {
@@ -1026,12 +1031,16 @@ class TestLinkTargetDeleteDeclarative(stb.QueryTestCase):
     async def test_link_on_source_delete_01(self):
         async with self._run_and_rollback():
             await self.con.execute("""
+                INSERT Target1 {
+                    name := 'Target1.1'
+                }
+            """)
+            await self.con.execute("""
                 INSERT Source1 {
                     name := 'Source1.1',
                     tgt1_del_target := (
-                        INSERT Target1 {
-                            name := 'Target1.1'
-                        }
+                        SELECT Target1
+                        FILTER .name = 'Target1.1'
                     )
                 };
             """)

@@ -370,7 +370,8 @@ def _process_view(
 
             _setup_shape_source(ptr_set, ctx=ctx)
 
-            if isinstance(ptrcls, s_links.Link) and exprtype.is_insert():
+            if isinstance(ptrcls, s_links.Link) and (
+                exprtype.is_insert() or exprtype.is_update()):
                 eq_ptr_set = _get_innermost_equivalent_set(ptr_set, ctx)
                 _, material_prtcls = ptrcls.material_type(ctx.env.schema)
                 ctx.inserting_links[eq_ptr_set] = cast(s_links.Link, material_prtcls)
@@ -1368,7 +1369,8 @@ def _get_shape_configuration_inner(
                 break
 
         if (
-            parent_view_type is s_types.ExprType.Insert
+            (parent_view_type is s_types.ExprType.Insert
+                or is_parent_update)
             and ir_set in ctx.inserting_links
         ):
             insert_link = ctx.inserting_links[ir_set]
@@ -1376,7 +1378,7 @@ def _get_shape_configuration_inner(
             if tgt_prop is not None:
                 for ptr in pointers:
                     _, material_ptr = ptr.material_type(ctx.env.schema)
-                    if tgt_prop == material_ptr:
+                    if material_ptr.issubclass(ctx.env.schema, tgt_prop):
                         idx_tp_replace = None
                         if ptr in view_shape_ptrs:
                             for idx, sptr in enumerate(shape_ptrs):

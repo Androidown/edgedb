@@ -1265,6 +1265,11 @@ def process_update_body(
             updvalue = shape_el.expr
             ptr_info = pg_types.get_ptrref_storage_info(
                 actual_ptrref, resolve_type=True, link_bias=False)
+            if actual_ptrref.target_property:
+                column_type = pg_types.get_ptrref_storage_info(
+                    actual_ptrref.target_property, resolve_type=True, link_bias=False).column_type
+            else:
+                column_type = ptr_info.column_type
 
             if ptr_info.table_type == 'ObjectType' and updvalue is not None:
                 with subctx.newscope() as scopectx:
@@ -1278,7 +1283,7 @@ def process_update_body(
                         val = relgen.set_as_subquery(
                             shape_el,
                             as_value=True,
-                            explicit_cast=ptr_info.column_type,
+                            explicit_cast=column_type,
                             ctx=scopectx,
                         )
                     else:
@@ -1313,7 +1318,7 @@ def process_update_body(
 
                         val = pgast.TypeCast(
                             arg=val,
-                            type_name=pgast.TypeName(name=ptr_info.column_type)
+                            type_name=pgast.TypeName(name=column_type)
                         )
 
                     if shape_op is qlast.ShapeOp.SUBTRACT:
