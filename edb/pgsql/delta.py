@@ -3519,8 +3519,20 @@ class DeleteObjectType(ObjectTypeMetaCommand,
         self.apply_scheduled_inhview_updates(schema, context)
 
         if is_external:
-            self.pgops.add(dbops.DropView(name=('edgedbpub', str(objtype.id))))
-            self.pgops.add(dbops.DropView(name=('edgedbpub', str(objtype.id) + '_t')))
+            view_name = ('edgedbpub', str(objtype.id))
+            view_name_t = ('edgedbpub', str(objtype.id) + '_t')
+            self.pgops.add(
+                dbops.DropView(
+                    name=view_name,
+                    conditions=[dbops.ViewExists(name=view_name)]
+                )
+            )
+            self.pgops.add(
+                dbops.DropView(
+                    name=view_name_t,
+                    conditions=[dbops.ViewExists(name=view_name_t)]
+                )
+            )
             return schema
 
         if has_table(objtype, orig_schema):
@@ -4711,6 +4723,24 @@ class CreateLink(LinkMetaCommand, adapts=s_links.CreateLink):
 
         link = self.scls
         if link in context.external_objs:
+            source = link.get_source(schema)
+            if source is None:
+                return schema
+
+            source_is_view = (
+                source.is_view(schema)
+                or source.is_compound_type(schema)
+                or source.get_is_derived(schema)
+            )
+
+            if (
+                not source_is_view
+                and not link.is_pure_computable(schema)
+            ):
+                self.schedule_endpoint_delete_action_update(
+                    link, orig_schema, schema, context
+                )
+
             return schema
 
         self.table_name = common.get_backend_name(schema, link, catenate=False)
@@ -5084,6 +5114,10 @@ class DeleteLink(LinkMetaCommand, adapts=s_links.DeleteLink):
         schema = super()._delete_innards(schema, context)
 
         if link.get_external(schema):
+            self.schedule_endpoint_delete_action_update(
+                link, orig_schema, schema, context
+            )
+
             return schema
 
         self._delete_link(link, schema, orig_schema, context)
@@ -5104,8 +5138,20 @@ class DeleteLink(LinkMetaCommand, adapts=s_links.DeleteLink):
 
         self.apply_scheduled_inhview_updates(schema, context)
         if has_extern_table:
-            self.pgops.add(dbops.DropView(name=('edgedbpub', str(link.id))))
-            self.pgops.add(dbops.DropView(name=('edgedbpub', str(link.id) + '_t')))
+            view_name = ('edgedbpub', str(link.id))
+            view_name_t = ('edgedbpub', str(link.id) + '_t')
+            self.pgops.add(
+                dbops.DropView(
+                    name=view_name,
+                    conditions=[dbops.ViewExists(name=view_name)]
+                )
+            )
+            self.pgops.add(
+                dbops.DropView(
+                    name=view_name_t,
+                    conditions=[dbops.ViewExists(name=view_name_t)]
+                )
+            )
             return schema
 
         return schema
@@ -6140,11 +6186,11 @@ class UpdateEndpointDeleteActions(MetaCommand):
             if action is DA.Restrict or action is DA.DeferredRestrict:
                 grp_key = lambda l: self._resolve_link_group(
                     l, schema,
-                    groupby=GB.SOURCE_T | GB.TARGET_T | GB.get_flag(near_endpoint),
+                    groupby=GB.TARGET_T | GB.get_flag(near_endpoint),
                     resolve_target=resolve_target
                 )
 
-                for idx, ((src_type, tgt_type, ne_field), links) in enumerate(
+                for idx, ((tgt_type, ne_field), links) in enumerate(
                     itertools.groupby(links, grp_key)
                 ):
                     # Inherited link targets with restrict actions are
@@ -6153,7 +6199,7 @@ class UpdateEndpointDeleteActions(MetaCommand):
                     srcid_placeholder = f'srcid_{idx}'
                     tgtid_placeholder = f'tgtid_{idx}'
                     defined_vars.extend([
-                        f"{srcid_placeholder} {src_type};",
+                        f"{srcid_placeholder} uuid;",
                         f"{tgtid_placeholder} {tgt_type};"
                     ])
                     tables = self._get_inline_link_table_union(
