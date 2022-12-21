@@ -6031,10 +6031,8 @@ class UpdateEndpointDeleteActions(MetaCommand):
                 for link in links:
                     link_table = common.get_backend_name(schema, link)
                     objs = self.get_target_objs(link, schema)
-                    src_field, tgt_field = self._resolve_link_group(
-                        link, schema, GB.SOURCE_F | GB.TARGET_F,
-                        resolve_target=resolve_target
-                    )
+                    src_field,  = self._resolve_link_group(
+                        link, schema, GB.SOURCE_F)
 
                     # If the link is DELETE TARGET IF ORPHAN, build
                     # filters to ignore any objects that aren't
@@ -6073,6 +6071,7 @@ class UpdateEndpointDeleteActions(MetaCommand):
                     parts = [prefix]
 
                     for i, obj in enumerate(objs):
+                        tgt_field = self._get_link_field(link, 'target', schema, target=obj)
                         tgt_table = common.get_backend_name(schema, obj)
                         text = textwrap.dedent(f'''\
                             d{i} AS (
@@ -6254,7 +6253,7 @@ class UpdateEndpointDeleteActions(MetaCommand):
                     source_table = common.get_backend_name(
                         schema, link.get_source(schema))
 
-                    link_src_field = self._get_link_field(link, 'source', schema)
+                    link_tgt_field = self._get_link_field(link, 'target', schema, target=target)
 
                     text = textwrap.dedent(f'''\
                         UPDATE
@@ -6262,7 +6261,7 @@ class UpdateEndpointDeleteActions(MetaCommand):
                         SET
                             {qi(link_col)} = NULL
                         WHERE
-                            {qi(link_col)} = OLD.{link_src_field};
+                            {qi(link_col)} = OLD.{link_tgt_field};
                     ''')
 
                     chunks.append(text)
@@ -6270,7 +6269,7 @@ class UpdateEndpointDeleteActions(MetaCommand):
             elif action == s_links.LinkTargetDeleteAction.DeleteSource:
                 sources = collections.defaultdict(list)
                 for link in links:
-                    link_tgt_field = self._get_link_field(link, 'target', schema)
+                    link_tgt_field = self._get_link_field(link, 'target', schema, target=target)
                     sources[(link_tgt_field, link.get_source(schema))].append(link)
 
                 for (tgt_field, source), source_links in sources.items():
@@ -6338,8 +6337,8 @@ class UpdateEndpointDeleteActions(MetaCommand):
                     ''').strip()
 
                     chunks.append(text)
-                    tgt_field = self._get_link_field(link, 'target', schema)
                     for obj in objs:
+                        tgt_field = self._get_link_field(link, 'target', schema, target=obj)
                         tgt_table = common.get_backend_name(schema, obj)
                         text = textwrap.dedent(f'''\
                             IF ok THEN
