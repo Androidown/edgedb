@@ -354,6 +354,27 @@ class GQLCoreSchema:
 
     _gql_ordertypes: Dict[str, GraphQLInputType]
 
+    _gql_interfaces_with_default_module: Dict[
+        s_name.QualName,
+        GraphQLInterfaceType,
+    ]
+
+    _gql_objtypes_with_default_module: Dict[
+        s_name.QualName,
+        GraphQLObjectType,
+    ]
+
+    _gql_inobjtypes_with_default_module: Dict[
+        str,
+        Union[
+            GraphQLInputObjectType,
+            GraphQLEnumType,
+            GraphQLScalarType,
+        ]
+    ]
+
+    _gql_ordertypes_with_default_module: Dict[str, GraphQLInputType]
+
     _gql_enums: Dict[str, GraphQLEnumType]
 
     _type_map: Dict[Tuple[str, bool], GQLBaseType]
@@ -374,6 +395,10 @@ class GQLCoreSchema:
         self._gql_objtypes = {}
         self._gql_inobjtypes = {}
         self._gql_ordertypes = {}
+        self._gql_interfaces_with_default_module = {}
+        self._gql_objtypes_with_default_module = {}
+        self._gql_inobjtypes_with_default_module = {}
+        self._gql_ordertypes_with_default_module = {}
         self._gql_enums = {}
 
         self._define_types()
@@ -404,7 +429,10 @@ class GQLCoreSchema:
         types = [
             objt for name, objt in
             itertools.chain(self._gql_objtypes.items(),
-                            self._gql_inobjtypes.items())
+                            self._gql_objtypes_with_default_module.items(),
+                            self._gql_inobjtypes.items(),
+                            self._gql_inobjtypes_with_default_module.items()
+            )
             # the Query is included separately
             if name not in TOP_LEVEL_TYPES
         ]
@@ -632,6 +660,7 @@ class GQLCoreSchema:
             # The fields here will come from abstract types and aliases.
             queryable: List[Tuple[s_name.QualName, GraphQLNamedType]] = []
             queryable.extend(self._gql_interfaces.items())
+            queryable.extend(self._gql_interfaces_with_default_module.items())
             queryable.extend(self._gql_objtypes_from_alias.items())
             queryable.sort(key=lambda x: x[1].name)
             for name, gqliface in queryable:
@@ -1286,6 +1315,8 @@ class GQLCoreSchema:
         for t in interface_types:
             t_name = t.get_name(self.edb_schema)
             gql_name = self.get_gql_name(t_name)
+            should_add_default_module = (isinstance(t_name, s_name.QualName)
+                                         and t_name.module in ['default', self.customized_module])
 
             if t_name in HIDDEN_TYPES:
                 continue
@@ -1312,6 +1343,13 @@ class GQLCoreSchema:
                     resolve_type=_type_resolver,
                     description=self._get_description(t),
                 )
+                if should_add_default_module:
+                    self._gql_interfaces_with_default_module[t_name] = GraphQLInterfaceType(
+                        name=f"{t_name.module}__{gql_name}",
+                        fields=partial(self.get_fields, t_name),
+                        resolve_type=_type_resolver,
+                        description=self._get_description(t),
+                    )
 
             # input object types corresponding to this interface
             gqlfiltertype = GraphQLInputObjectType(
@@ -1319,14 +1357,24 @@ class GQLCoreSchema:
                 fields=partial(self.get_filter_fields, t_name),
             )
             self._gql_inobjtypes[str(t_name)] = gqlfiltertype
-
+            if should_add_default_module:
+                gqlfiltertype = GraphQLInputObjectType(
+                    name=self.get_input_name('Filter', f"{t_name.module}__{gql_name}"),
+                    fields=partial(self.get_filter_fields, t_name),
+                )
+                self._gql_inobjtypes_with_default_module[str(t_name)] = gqlfiltertype
             # ordering input type
             gqlordertype = GraphQLInputObjectType(
                 name=self.get_input_name('Order', gql_name),
                 fields=partial(self.get_order_fields, t_name),
             )
             self._gql_ordertypes[str(t_name)] = gqlordertype
-
+            if should_add_default_module:
+                gqlordertype = GraphQLInputObjectType(
+                    name=self.get_input_name('Order', f"{t_name.module}__{gql_name}"),
+                    fields=partial(self.get_order_fields, t_name),
+                )
+                self._gql_ordertypes_with_default_module[str(t_name)] = gqlordertype
             # update object types corresponding to this object (all
             # non-views can appear as update types)
             if not t.is_view(self.edb_schema):
@@ -1340,12 +1388,20 @@ class GQLCoreSchema:
                         fields=partial(self.get_update_fields, t_name),
                     )
                     self._gql_inobjtypes[f'Update{t_name}'] = gqlupdatetype
+                    if should_add_default_module:
+                        gqlupdatetype = GraphQLInputObjectType(
+                            name=self.get_input_name('Update', f"{t_name.module}__{gql_name}"),
+                            fields=partial(self.get_update_fields, t_name),
+                        )
+                        self._gql_inobjtypes_with_default_module[f'Update{t_name}'] = gqlupdatetype
 
         # object types
         for t in obj_types:
             interfaces = []
             t_name = t.get_name(self.edb_schema)
             gql_name = self.get_gql_name(t_name)
+            should_add_default_module = (isinstance(t_name, s_name.QualName)
+                                         and t_name.module in ['default', self.customized_module])
 
             if t_name in HIDDEN_TYPES:
                 continue
@@ -1374,6 +1430,14 @@ class GQLCoreSchema:
                 description=self._get_description(t),
             )
             self._gql_objtypes[t_name] = gqltype
+            if should_add_default_module:
+                gqltype = GraphQLObjectType(
+                    name=f'{t_name.module}__{gql_name}_Type',
+                    fields=partial(self.get_fields, t_name),
+                    interfaces=interfaces,
+                    description=self._get_description(t),
+                )
+                self._gql_objtypes_with_default_module[t_name] = gqltype
 
             # input object types corresponding to this object (only
             # real objects can appear as input objects)
@@ -1382,6 +1446,12 @@ class GQLCoreSchema:
                 fields=partial(self.get_insert_fields, t_name),
             )
             self._gql_inobjtypes[f'Insert{t_name}'] = gqlinserttype
+            if should_add_default_module:
+                gqlinserttype = GraphQLInputObjectType(
+                    name=self.get_input_name('Insert', f"{t_name.module}__{gql_name}"),
+                    fields=partial(self.get_insert_fields, t_name),
+                )
+                self._gql_inobjtypes_with_default_module[f'Insert{t_name}'] = gqlinserttype
 
     def get(self, name: str, *, dummy: bool = False) -> GQLBaseType:
         '''Get a special GQL type either by name or based on EdgeDB type.'''

@@ -315,6 +315,32 @@ class TestGraphQLSchema(tb.GraphQLTestCase):
         for item in items:
             self.assertIn(item, types)
 
+        result = self.graphql_query(r"""
+            query {
+                other__Foo : __schema {
+                    types {
+                        kind
+                        name
+                    }
+                }
+            }
+        """)
+
+        types = [(t['kind'], t['name']) for t in result['other__Foo']['types']]
+
+        items = [
+            ('INPUT_OBJECT', 'other__FilterFoo'),
+            ('INPUT_OBJECT', 'other__OrderFoo'),
+            ('INTERFACE', 'other__Foo'),
+            ('OBJECT', 'other__Foo_Type'),
+            ('SCALAR', 'ID'),
+            ('ENUM', 'directionEnum'),
+            ('OBJECT', '__Schema'),
+        ]
+
+        for item in items:
+            self.assertIn(item, types)
+
     def test_graphql_schema_type_01(self):
         self.assert_graphql_query_result(r"""
             query {
@@ -412,7 +438,9 @@ class TestGraphQLSchema(tb.GraphQLTestCase):
                 "interfaces": [],
                 "possibleTypes": [
                     {"name": "Person_Type"},
-                    {"name": "User_Type"}
+                    {"name": "User_Type"},
+                    {"name": "default__Person_Type"},
+                    {"name": "default__User_Type"},
                 ],
                 "enumValues": None,
                 "inputFields": None,
@@ -1454,6 +1482,632 @@ class TestGraphQLSchema(tb.GraphQLTestCase):
                         "__typename": "__Type",
                         "kind": "OBJECT",
                         "name": "User_Type",
+                        "description": None,
+                        "fields": [
+                            {
+                                "__typename": "__Field",
+                                "name": "active",
+                                "description": None,
+                                "type": {
+                                    "__typename": "__Type",
+                                    "name": None,
+                                    "kind": "NON_NULL",
+                                    "ofType": {
+                                        "__typename": "__Type",
+                                        "name": "Boolean",
+                                        "kind": "SCALAR"
+                                    }
+                                },
+                                "isDeprecated": False,
+                                "deprecationReason": None
+                            },
+                            {
+                                "__typename": "__Field",
+                                "name": "age",
+                                "description": None,
+                                "type": {
+                                    "__typename": "__Type",
+                                    "name": None,
+                                    "kind": "NON_NULL",
+                                    "ofType": {
+                                        "__typename": "__Type",
+                                        "name": "Int64",
+                                        "kind": "SCALAR"
+                                    }
+                                },
+                                "isDeprecated": False,
+                                "deprecationReason": None
+                            },
+                            {
+                                "__typename": "__Field",
+                                "name": "groups",
+                                "description": None,
+                                "type": {
+                                    "__typename": "__Type",
+                                    "name": None,
+                                    "kind": "LIST",
+                                    "ofType": {
+                                        "__typename": "__Type",
+                                        "name": None,
+                                        "kind": "NON_NULL"
+                                    }
+                                },
+                                "isDeprecated": False,
+                                "deprecationReason": None
+                            },
+                            {
+                                "__typename": "__Field",
+                                "name": "id",
+                                "description": None,
+                                "type": {
+                                    "__typename": "__Type",
+                                    "name": None,
+                                    "kind": "NON_NULL",
+                                    "ofType": {
+                                        "__typename": "__Type",
+                                        "name": "ID",
+                                        "kind": "SCALAR"
+                                    }
+                                },
+                                "isDeprecated": False,
+                                "deprecationReason": None
+                            },
+                            {
+                                "__typename": "__Field",
+                                "name": "name",
+                                "description": None,
+                                "type": {
+                                    "__typename": "__Type",
+                                    "name": None,
+                                    "kind": "NON_NULL",
+                                    "ofType": {
+                                        "__typename": "__Type",
+                                        "name": "String",
+                                        "kind": "SCALAR"
+                                    }
+                                },
+                                "isDeprecated": False,
+                                "deprecationReason": None
+                            },
+                            {
+                                "__typename": "__Field",
+                                "name": "profile",
+                                "description": None,
+                                "type": {
+                                    "__typename": "__Type",
+                                    "name": "Profile",
+                                    "kind": "INTERFACE",
+                                    "ofType": None
+                                },
+                                "isDeprecated": False,
+                                "deprecationReason": None
+                            },
+                            {
+                                "__typename": "__Field",
+                                "name": "score",
+                                "description": None,
+                                "type": {
+                                    "__typename": "__Type",
+                                    "name": None,
+                                    "kind": "NON_NULL",
+                                    "ofType": {
+                                        "__typename": "__Type",
+                                        "name": "Float",
+                                        "kind": "SCALAR"
+                                    }
+                                },
+                                "isDeprecated": False,
+                                "deprecationReason": None
+                            }
+                        ],
+                        "interfaces": [
+                            {
+                                "__typename": "__Type",
+                                "name": "BaseObject",
+                                "kind": "INTERFACE"
+                            },
+                            {
+                                "__typename": "__Type",
+                                "name": "NamedObject",
+                                "kind": "INTERFACE"
+                            },
+                            {
+                                "__typename": "__Type",
+                                "name": "Object",
+                                "kind": "INTERFACE"
+                            },
+                            {
+                                "__typename": "__Type",
+                                "name": "User",
+                                "kind": "INTERFACE"
+                            },
+                        ],
+                        "possibleTypes": None,
+                        "enumValues": None,
+                        "inputFields": None,
+                        "ofType": None
+                    },
+                    {
+                        "__typename": "__Type",
+                        "kind": "OBJECT",
+                        "name": "default__Person_Type",
+                        "description": None,
+                        "fields": [
+                            {
+                                "__typename": "__Field",
+                                "name": "active",
+                                "description": None,
+                                "type": {
+                                    "__typename": "__Type",
+                                    "name": None,
+                                    "kind": "NON_NULL",
+                                    "ofType": {
+                                        "__typename": "__Type",
+                                        "name": "Boolean",
+                                        "kind": "SCALAR"
+                                    }
+                                },
+                                "isDeprecated": False,
+                                "deprecationReason": None
+                            },
+                            {
+                                "__typename": "__Field",
+                                "name": "age",
+                                "description": None,
+                                "type": {
+                                    "__typename": "__Type",
+                                    "name": None,
+                                    "kind": "NON_NULL",
+                                    "ofType": {
+                                        "__typename": "__Type",
+                                        "name": "Int64",
+                                        "kind": "SCALAR"
+                                    }
+                                },
+                                "isDeprecated": False,
+                                "deprecationReason": None
+                            },
+                            {
+                                "__typename": "__Field",
+                                "name": "groups",
+                                "description": None,
+                                "type": {
+                                    "__typename": "__Type",
+                                    "name": None,
+                                    "kind": "LIST",
+                                    "ofType": {
+                                        "__typename": "__Type",
+                                        "name": None,
+                                        "kind": "NON_NULL"
+                                    }
+                                },
+                                "isDeprecated": False,
+                                "deprecationReason": None
+                            },
+                            {
+                                "__typename": "__Field",
+                                "name": "id",
+                                "description": None,
+                                "type": {
+                                    "__typename": "__Type",
+                                    "name": None,
+                                    "kind": "NON_NULL",
+                                    "ofType": {
+                                        "__typename": "__Type",
+                                        "name": "ID",
+                                        "kind": "SCALAR"
+                                    }
+                                },
+                                "isDeprecated": False,
+                                "deprecationReason": None
+                            },
+                            {
+                                "__typename": "__Field",
+                                "name": "name",
+                                "description": None,
+                                "type": {
+                                    "__typename": "__Type",
+                                    "name": None,
+                                    "kind": "NON_NULL",
+                                    "ofType": {
+                                        "__typename": "__Type",
+                                        "name": "String",
+                                        "kind": "SCALAR"
+                                    }
+                                },
+                                "isDeprecated": False,
+                                "deprecationReason": None
+                            },
+                            {
+                                "__typename": "__Field",
+                                "name": "profile",
+                                "description": None,
+                                "type": {
+                                    "__typename": "__Type",
+                                    "name": "Profile",
+                                    "kind": "INTERFACE",
+                                    "ofType": None
+                                },
+                                "isDeprecated": False,
+                                "deprecationReason": None
+                            },
+                            {
+                                "__typename": "__Field",
+                                "name": "score",
+                                "description": None,
+                                "type": {
+                                    "__typename": "__Type",
+                                    "name": None,
+                                    "kind": "NON_NULL",
+                                    "ofType": {
+                                        "__typename": "__Type",
+                                        "name": "Float",
+                                        "kind": "SCALAR"
+                                    }
+                                },
+                                "isDeprecated": False,
+                                "deprecationReason": None
+                            }
+                        ],
+                        "interfaces": [
+                            {
+                                "__typename": "__Type",
+                                "name": "BaseObject",
+                                "kind": "INTERFACE"
+                            },
+                            {
+                                "__typename": "__Type",
+                                "name": "NamedObject",
+                                "kind": "INTERFACE"
+                            },
+                            {
+                                "__typename": "__Type",
+                                "name": "Object",
+                                "kind": "INTERFACE"
+                            },
+                            {
+                                "__typename": "__Type",
+                                "name": "Person",
+                                "kind": "INTERFACE"
+                            },
+                            {
+                                "__typename": "__Type",
+                                "name": "User",
+                                "kind": "INTERFACE"
+                            },
+                        ],
+                        "possibleTypes": None,
+                        "enumValues": None,
+                        "inputFields": None,
+                        "ofType": None
+                    },
+                    {
+                        "__typename": "__Type",
+                        "kind": "OBJECT",
+                        "name": "default__Profile_Type",
+                        "description": None,
+                        "fields": [
+                            {
+                                "__typename": "__Field",
+                                "name": "id",
+                                "description": None,
+                                "type": {
+                                    "__typename": "__Type",
+                                    "name": None,
+                                    "kind": "NON_NULL",
+                                    "ofType": {
+                                        "__typename": "__Type",
+                                        "name": "ID",
+                                        "kind": "SCALAR"
+                                    }
+                                },
+                                "isDeprecated": False,
+                                "deprecationReason": None
+                            },
+                            {
+                                "__typename": "__Field",
+                                "name": "name",
+                                "description": None,
+                                "type": {
+                                    "__typename": "__Type",
+                                    "name": None,
+                                    "kind": "NON_NULL",
+                                    "ofType": {
+                                        "__typename": "__Type",
+                                        "name": "String",
+                                        "kind": "SCALAR"
+                                    }
+                                },
+                                "isDeprecated": False,
+                                "deprecationReason": None
+                            },
+                            {
+                                "__typename": "__Field",
+                                "name": "odd",
+                                "description": None,
+                                "type": {
+                                    "__typename": "__Type",
+                                    "name": None,
+                                    "kind": "LIST",
+                                    "ofType": {
+                                        "__typename": "__Type",
+                                        "name": None,
+                                        "kind": "NON_NULL"
+                                    }
+                                },
+                                "isDeprecated": False,
+                                "deprecationReason": None
+                            },
+                            {
+                                "__typename": "__Field",
+                                "name": "owner_name",
+                                "description": None,
+                                "type": {
+                                    "__typename": "__Type",
+                                    "name": None,
+                                    "kind": "LIST",
+                                    "ofType": {
+                                        "__typename": "__Type",
+                                        "name": None,
+                                        "kind": "NON_NULL"
+                                    }
+                                },
+                                "isDeprecated": False,
+                                "deprecationReason": None
+                            },
+                            {
+                                "__typename": "__Field",
+                                "name": "owner_user",
+                                "description": None,
+                                "type": {
+                                    "__typename": "__Type",
+                                    "name": None,
+                                    "kind": "LIST",
+                                    "ofType": {
+                                        "__typename": "__Type",
+                                        "name": None,
+                                        "kind": "NON_NULL"
+                                    }
+                                },
+                                "isDeprecated": False,
+                                "deprecationReason": None
+                            },
+                            {
+                                "__typename": "__Field",
+                                "name": "tags",
+                                "description": None,
+                                "type": {
+                                    "__typename": "__Type",
+                                    "name": None,
+                                    "kind": "LIST",
+                                    "ofType": {
+                                        "__typename": "__Type",
+                                        "name": None,
+                                        "kind": "NON_NULL"
+                                    }
+                                },
+                                "isDeprecated": False,
+                                "deprecationReason": None
+                            },
+                            {
+                                "__typename": "__Field",
+                                "name": "value",
+                                "description": None,
+                                "type": {
+                                    "__typename": "__Type",
+                                    "name": None,
+                                    "kind": "NON_NULL",
+                                    "ofType": {
+                                        "__typename": "__Type",
+                                        "name": "String",
+                                        "kind": "SCALAR"
+                                    }
+                                },
+                                "isDeprecated": False,
+                                "deprecationReason": None
+                            }
+                        ],
+                        "interfaces": [
+                            {
+                                "__typename": "__Type",
+                                "name": "BaseObject",
+                                "kind": "INTERFACE"
+                            },
+                            {
+                                "__typename": "__Type",
+                                "name": "NamedObject",
+                                "kind": "INTERFACE"
+                            },
+                            {
+                                "__typename": "__Type",
+                                "name": "Object",
+                                "kind": "INTERFACE"
+                            },
+                            {
+                                "__typename": "__Type",
+                                "name": "Profile",
+                                "kind": "INTERFACE"
+                            },
+                        ],
+                        "possibleTypes": None,
+                        "enumValues": None,
+                        "inputFields": None,
+                        "ofType": None
+                    },
+                    {
+                        "__typename": "__Type",
+                        "kind": "OBJECT",
+                        "name": "default__Setting_Type",
+                        "description": None,
+                        "fields": [
+                            {
+                                "__typename": "__Field",
+                                "name": "id",
+                                "description": None,
+                                "type": {
+                                    "__typename": "__Type",
+                                    "name": None,
+                                    "kind": "NON_NULL",
+                                    "ofType": {
+                                        "__typename": "__Type",
+                                        "name": "ID",
+                                        "kind": "SCALAR"
+                                    }
+                                },
+                                "isDeprecated": False,
+                                "deprecationReason": None
+                            },
+                            {
+                                "__typename": "__Field",
+                                "name": "name",
+                                "description": None,
+                                "type": {
+                                    "__typename": "__Type",
+                                    "name": None,
+                                    "kind": "NON_NULL",
+                                    "ofType": {
+                                        "__typename": "__Type",
+                                        "name": "String",
+                                        "kind": "SCALAR"
+                                    }
+                                },
+                                "isDeprecated": False,
+                                "deprecationReason": None
+                            },
+                            {
+                                "__typename": "__Field",
+                                "name": "value",
+                                "description": None,
+                                "type": {
+                                    "__typename": "__Type",
+                                    "name": None,
+                                    "kind": "NON_NULL",
+                                    "ofType": {
+                                        "__typename": "__Type",
+                                        "name": "String",
+                                        "kind": "SCALAR"
+                                    }
+                                },
+                                "isDeprecated": False,
+                                "deprecationReason": None
+                            }
+                        ],
+                        "interfaces": [
+                            {
+                                "__typename": "__Type",
+                                "name": "BaseObject",
+                                "kind": "INTERFACE"
+                            },
+                            {
+                                "__typename": "__Type",
+                                "name": "NamedObject",
+                                "kind": "INTERFACE"
+                            },
+                            {
+                                "__typename": "__Type",
+                                "name": "Object",
+                                "kind": "INTERFACE"
+                            },
+                            {
+                                "__typename": "__Type",
+                                "name": "Setting",
+                                "kind": "INTERFACE"
+                            },
+                        ],
+                        "possibleTypes": None,
+                        "enumValues": None,
+                        "inputFields": None,
+                        "ofType": None
+                    },
+                    {
+                        "__typename": "__Type",
+                        "kind": "OBJECT",
+                        "name": "default__UserGroup_Type",
+                        "description": None,
+                        "fields": [
+                            {
+                                "__typename": "__Field",
+                                "name": "id",
+                                "description": None,
+                                "type": {
+                                    "__typename": "__Type",
+                                    "name": None,
+                                    "kind": "NON_NULL",
+                                    "ofType": {
+                                        "__typename": "__Type",
+                                        "name": "ID",
+                                        "kind": "SCALAR"
+                                    }
+                                },
+                                "isDeprecated": False,
+                                "deprecationReason": None
+                            },
+                            {
+                                "__typename": "__Field",
+                                "name": "name",
+                                "description": None,
+                                "type": {
+                                    "__typename": "__Type",
+                                    "name": None,
+                                    "kind": "NON_NULL",
+                                    "ofType": {
+                                        "__typename": "__Type",
+                                        "name": "String",
+                                        "kind": "SCALAR"
+                                    }
+                                },
+                                "isDeprecated": False,
+                                "deprecationReason": None
+                            },
+                            {
+                                "__typename": "__Field",
+                                "name": "settings",
+                                "description": None,
+                                "type": {
+                                    "__typename": "__Type",
+                                    "name": None,
+                                    "kind": "LIST",
+                                    "ofType": {
+                                        "__typename": "__Type",
+                                        "name": None,
+                                        "kind": "NON_NULL"
+                                    }
+                                },
+                                "isDeprecated": False,
+                                "deprecationReason": None
+                            }
+                        ],
+                        "interfaces": [
+                            {
+                                "__typename": "__Type",
+                                "name": "BaseObject",
+                                "kind": "INTERFACE"
+                            },
+                            {
+                                "__typename": "__Type",
+                                "name": "NamedObject",
+                                "kind": "INTERFACE"
+                            },
+                            {
+                                "__typename": "__Type",
+                                "name": "Object",
+                                "kind": "INTERFACE"
+                            },
+                            {
+                                "__typename": "__Type",
+                                "name": "UserGroup",
+                                "kind": "INTERFACE"
+                            },
+                        ],
+                        "possibleTypes": None,
+                        "enumValues": None,
+                        "inputFields": None,
+                        "ofType": None
+                    },
+                    {
+                        "__typename": "__Type",
+                        "kind": "OBJECT",
+                        "name": "default__User_Type",
                         "description": None,
                         "fields": [
                             {
