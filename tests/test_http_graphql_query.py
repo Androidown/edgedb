@@ -46,7 +46,7 @@ class TestGraphQLFunctional(tb.GraphQLTestCase):
                 req1_data = {
                     'query': '''
                         {
-                            Setting(order: {value: {dir: ASC}}) {
+                            default__Setting(order: {value: {dir: ASC}}) {
                                 value
                             }
                         }
@@ -60,7 +60,7 @@ class TestGraphQLFunctional(tb.GraphQLTestCase):
                     'application/json')
                 self.assertEqual(
                     json.loads(data)['data'],
-                    {'Setting': [{'value': 'blue'}, {'value': 'full'},
+                    {'default__Setting': [{'value': 'blue'}, {'value': 'full'},
                                  {'value': 'none'}]})
 
                 req2_data = {
@@ -134,13 +134,13 @@ class TestGraphQLFunctional(tb.GraphQLTestCase):
         for _ in range(10):  # repeat to test prepared pgcon statements
             self.assert_graphql_query_result(r"""
                 query {
-                    Setting {
+                    default__Setting {
                         name
                         value
                     }
                 }
             """, {
-                'Setting': [{
+                'default__Setting': [{
                     'name': 'template',
                     'value': 'blue',
                 }, {
@@ -196,7 +196,7 @@ class TestGraphQLFunctional(tb.GraphQLTestCase):
                 User {
                     name
                 }
-                Setting {
+                default__Setting {
                     name
                 }
             }
@@ -210,7 +210,7 @@ class TestGraphQLFunctional(tb.GraphQLTestCase):
             }, {
                 'name': 'John',
             }],
-            'Setting': [{
+            'default__Setting': [{
                 'name': 'perks',
             }, {
                 'name': 'template',
@@ -299,19 +299,19 @@ class TestGraphQLFunctional(tb.GraphQLTestCase):
         self.assert_graphql_query_result(
             r"""
                 query names {
-                    Setting {
+                    default__Setting {
                         name
                     }
                 }
 
                 query values {
-                    Setting {
+                    default__Setting {
                         value
                     }
                 }
             """,
             {
-                'Setting': [{
+                'default__Setting': [{
                     'name': 'perks',
                 }, {
                     'name': 'template',
@@ -326,19 +326,19 @@ class TestGraphQLFunctional(tb.GraphQLTestCase):
         self.assert_graphql_query_result(
             r"""
                 query names {
-                    Setting {
+                    default__Setting {
                         name
                     }
                 }
 
                 query values {
-                    Setting {
+                    default__Setting {
                         value
                     }
                 }
             """,
             {
-                'Setting': [{
+                'default__Setting': [{
                     'value': 'blue',
                 }, {
                     'value': 'full',
@@ -357,13 +357,13 @@ class TestGraphQLFunctional(tb.GraphQLTestCase):
 
             self.graphql_query('''
                 query names {
-                    Setting {
+                    default__Setting {
                         name
                     }
                 }
 
                 query values {
-                    Setting {
+                    default__Setting {
                         value
                     }
                 }
@@ -375,13 +375,13 @@ class TestGraphQLFunctional(tb.GraphQLTestCase):
 
             self.graphql_query('''
                 query names {
-                    Setting {
+                    default__Setting {
                         name
                     }
                 }
 
                 query values {
-                    Setting {
+                    default__Setting {
                         value
                     }
                 }
@@ -394,7 +394,7 @@ class TestGraphQLFunctional(tb.GraphQLTestCase):
                                     _line=4, _col=21):
             self.graphql_query(r"""
                 query {
-                    Setting {
+                    default__Setting {
                     }
                 }
             """)
@@ -414,7 +414,7 @@ class TestGraphQLFunctional(tb.GraphQLTestCase):
                 }
 
                 query settings {
-                    Setting {
+                    default__Setting {
                         name
                     }
                 }
@@ -625,7 +625,7 @@ class TestGraphQLFunctional(tb.GraphQLTestCase):
                         name
                         value
                     }
-                    Setting {
+                    default__Setting {
                         __typename
                         name
                         value
@@ -650,7 +650,7 @@ class TestGraphQLFunctional(tb.GraphQLTestCase):
                         "value": "none",
                     },
                 ],
-                "Setting": [
+                "default__Setting": [
                     {
                         "__typename": "Setting_Type",
                         "name": "template",
@@ -968,14 +968,14 @@ class TestGraphQLFunctional(tb.GraphQLTestCase):
 
         self.assert_graphql_query_result(f"""
             query {{
-                User(filter: {{id: {{eq: "{alice['id']}"}}}}) {{
+                default__User(filter: {{id: {{eq: "{alice['id']}"}}}}) {{
                     id
                     name
                     age
                 }}
             }}
         """, {
-            'User': [alice]
+            'default__User': [alice]
         })
 
     def test_graphql_functional_arguments_02(self):
@@ -1005,7 +1005,7 @@ class TestGraphQLFunctional(tb.GraphQLTestCase):
     def test_graphql_functional_arguments_03(self):
         self.assert_graphql_query_result(r"""
             query {
-                User(filter: {
+                default__User(filter: {
                     and: [{name: {eq: "Bob"}}, {active: {eq: true}}],
                     age: {eq: 21}
                 }) {
@@ -1014,7 +1014,7 @@ class TestGraphQLFunctional(tb.GraphQLTestCase):
                 }
             }
         """, {
-            'User': [{
+            'default__User': [{
                 'name': 'Bob',
                 'score': 4.2,
             }],
@@ -1038,7 +1038,7 @@ class TestGraphQLFunctional(tb.GraphQLTestCase):
     def test_graphql_functional_arguments_05(self):
         self.assert_graphql_query_result(r"""
             query {
-                User(
+                default__User(
                     filter: {
                         or: [
                             {not: {name: {eq: "Bob"}}},
@@ -1052,7 +1052,7 @@ class TestGraphQLFunctional(tb.GraphQLTestCase):
                 }
             }
         """, {
-            'User': [
+            'default__User': [
                 {'name': 'Alice', 'score': 5},
                 {'name': 'Jane', 'score': 1.23},
                 {'name': 'John', 'score': 3.14},
