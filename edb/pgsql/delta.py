@@ -6477,12 +6477,18 @@ class UpdateEndpointDeleteActions(MetaCommand):
                 ptr_stor_info = types.get_pointer_storage_info(
                     link, schema=schema)
 
-                if ptr_stor_info.table_type == 'link':
+                if (
+                    ptr_stor_info.table_type == 'link'
+                    and not (link.get_target(schema).get_external(schema)
+                             and link.get_on_source_delete(schema) !=
+                             s_links.LinkSourceDeleteAction.Allow)
+                ):
                     links.append(link)
                 elif (
                     isinstance(link, s_links.Link)
                     and link.get_on_source_delete(schema) !=
                     s_links.LinkSourceDeleteAction.Allow
+                    and not link.get_target(schema).get_external(schema)
                 ):
                     inline_links.append(link)
 
