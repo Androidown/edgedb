@@ -701,7 +701,6 @@ class TestHttpCreateType(tb.ExternTestCase):
                     },
                 ]
             )
-            # TODO 涉及外部表的级联DML操作都跳过，因此外部表数据量不变
             await self.assert_query_result(
                 r'''
                 SELECT count(Member);
@@ -728,6 +727,108 @@ class TestHttpCreateType(tb.ExternTestCase):
                 [
                     {
                         'member': {'mid': 2, 'fullname': 'Smith.Tracy'}
+                    },
+                ]
+            )
+            await self.assert_query_result(
+                r'''
+                SELECT count(Member);
+                ''',
+                [
+                    32
+                ]
+            )
+        finally:
+            await self.con.execute(
+                '''
+                Drop type NameList;
+                '''
+            )
+            await self.con.execute(
+                '''
+                Drop type Member;
+                '''
+            )
+
+    async def test_link_inner_outer_multi_link_on_source_delete(self):
+        self.assertTrue(self.create_member_from_outer())
+        try:
+            await self.con.execute(
+                '''
+                create type NameList{
+                    create property _id -> std::int32 {
+                        create constraint std::exclusive;
+                    };
+                    create multi link member -> Member {
+                        on _id to mid;
+                        on source delete delete target;
+                    };
+                    create property alive -> std::bool;
+                };
+                '''
+            )
+            await self.con.execute(
+                '''
+                insert NameList{
+                    _id := 0, alive := true,
+                    member:= (select Member filter .mid = 0)
+                };
+                insert NameList{
+                    _id := 1, alive := false,
+                    member:= (select Member filter .mid = 1)
+                };
+                insert NameList{
+                    _id := 2, alive := true,
+                    member:= (select Member filter .mid = 2)
+                };
+                '''
+            )
+            # query object with link
+            await self.assert_query_result(
+                r'''
+                SELECT NameList
+                 {
+                        member: {
+                            mid,
+                            fullname := .surname ++ '.' ++ .firstname
+                        } Limit 1
+                 } FILTER .alive=true;
+                ''',
+                [
+                    {
+                        'member': [{'mid': 0, 'fullname': 'GUEST.GUEST'}]
+                    },
+                    {
+                        'member': [{'mid': 2, 'fullname': 'Smith.Tracy'}]
+                    },
+                ]
+            )
+            await self.assert_query_result(
+                r'''
+                SELECT count(Member);
+                ''',
+                [
+                    32
+                ]
+            )
+            await self.con.execute(
+                f'''
+                delete NameList FILTER ._id=0;
+                '''
+            )
+            await self.assert_query_result(
+                r'''
+                SELECT NameList
+                 {
+                        member: {
+                            mid,
+                            fullname := .surname ++ '.' ++ .firstname
+                        } Limit 1
+                 } FILTER .alive=true;
+                ''',
+                [
+                    {
+                        'member': [{'mid': 2, 'fullname': 'Smith.Tracy'}]
                     },
                 ]
             )
