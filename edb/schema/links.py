@@ -566,7 +566,8 @@ class LinkCommand(
     ):
         if (
             scls.get_target_property(schema) is None
-            and scls.get_target(schema).get_external(schema)
+            and (scls.get_target(schema) is not None
+                 and scls.get_target(schema).get_external(schema))
         ):
             raise errors.SchemaDefinitionError(
                 f"target_property is required in {self.get_friendly_description()} "
