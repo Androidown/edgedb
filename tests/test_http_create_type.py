@@ -244,6 +244,25 @@ class TestHttpCreateType(tb.ExternTestCase):
                     'booked_by': {'mid': 3, 'fullname': 'Rownam.Tim'}
                 }]
             )
+            with self.assertRaisesRegex(
+                edgedb.InvalidTypeError,
+                regex="operator '=' cannot be applied to operands of type .*"
+            ):
+                await self.con.execute(
+                    r'''
+                    select Facility FILTER .fid = '1';
+                    '''
+                )
+            with self.assertRaisesRegex(
+                edgedb.InvalidTypeError,
+                regex="operator '=' cannot be applied to operands of type .*"
+            ):
+                await self.con.execute(
+                    r'''
+                    select Facility FILTER .booked_by.mid = '1';
+                    '''
+                )
+
         finally:
             await self.con.execute(
                 '''
@@ -292,6 +311,24 @@ class TestHttpCreateType(tb.ExternTestCase):
                     'bookedby': {'mid': 0, 'fullname': 'GUEST.GUEST'}
                 }]
             )
+            with self.assertRaisesRegex(
+                edgedb.InvalidTypeError,
+                regex="operator '=' cannot be applied to operands of type .*"
+            ):
+                await self.con.execute(
+                    r'''
+                    select Facility FILTER .fid = '1';
+                    '''
+                )
+            with self.assertRaisesRegex(
+                edgedb.InvalidTypeError,
+                regex="operator '=' cannot be applied to operands of type .*"
+            ):
+                await self.con.execute(
+                    r'''
+                    select Facility FILTER .bookedby.mid = '1';
+                    '''
+                )
         finally:
             await self.con.execute(
                 '''
@@ -364,6 +401,24 @@ class TestHttpCreateType(tb.ExternTestCase):
                     ]
                 }]
             )
+            with self.assertRaisesRegex(
+                edgedb.InvalidTypeError,
+                regex="operator '=' cannot be applied to operands of type .*"
+            ):
+                await self.con.execute(
+                    r'''
+                    select Facility FILTER .fid = '1';
+                    '''
+                )
+            with self.assertRaisesRegex(
+                edgedb.InvalidTypeError,
+                regex="operator '=' cannot be applied to operands of type .*"
+            ):
+                await self.con.execute(
+                    r'''
+                    select Facility FILTER .bookedby.mid = '1';
+                    '''
+                )
         finally:
             await self.con.execute(
                 '''
@@ -421,6 +476,24 @@ class TestHttpCreateType(tb.ExternTestCase):
                     delete {link_to} FILTER .mid=6;
                     '''
                 )
+            with self.assertRaisesRegex(
+                edgedb.InvalidTypeError,
+                regex="operator '=' cannot be applied to operands of type .*"
+            ):
+                await self.con.execute(
+                    r'''
+                    select Facility FILTER .fid = '1';
+                    '''
+                )
+            with self.assertRaisesRegex(
+                edgedb.InvalidTypeError,
+                regex="operator '=' cannot be applied to operands of type .*"
+            ):
+                await self.con.execute(
+                    r'''
+                    select Facility FILTER .booked_by.mid = '1';
+                    '''
+                )
         finally:
             await self.con.execute(
                 '''
@@ -471,6 +544,24 @@ class TestHttpCreateType(tb.ExternTestCase):
                 await self.con.execute(
                     f'''
                     delete {link_to} FILTER .mid=0;
+                    '''
+                )
+            with self.assertRaisesRegex(
+                edgedb.InvalidTypeError,
+                regex="operator '=' cannot be applied to operands of type .*"
+            ):
+                await self.con.execute(
+                    r'''
+                    select Facility FILTER .fid = '1';
+                    '''
+                )
+            with self.assertRaisesRegex(
+                edgedb.InvalidTypeError,
+                regex="operator '=' cannot be applied to operands of type .*"
+            ):
+                await self.con.execute(
+                    r'''
+                    select Facility FILTER .bookedby.mid = '1';
                     '''
                 )
         finally:
@@ -547,6 +638,24 @@ class TestHttpCreateType(tb.ExternTestCase):
                 await self.con.execute(
                     f'''
                     delete {link_to} FILTER .mid=5;
+                    '''
+                )
+            with self.assertRaisesRegex(
+                edgedb.InvalidTypeError,
+                regex="operator '=' cannot be applied to operands of type .*"
+            ):
+                await self.con.execute(
+                    r'''
+                    select Facility FILTER .fid = '1';
+                    '''
+                )
+            with self.assertRaisesRegex(
+                edgedb.InvalidTypeError,
+                regex="operator '=' cannot be applied to operands of type .*"
+            ):
+                await self.con.execute(
+                    r'''
+                    select Facility FILTER .bookedby.mid = '1';
                     '''
                 )
         finally:
@@ -635,6 +744,16 @@ class TestHttpCreateType(tb.ExternTestCase):
                     {'member': {'mid': 2, 'fullname': 'Smith.Tracy'}},
                 ]
             )
+
+            with self.assertRaisesRegex(
+                edgedb.InvalidTypeError,
+                regex="operator '=' cannot be applied to operands of type .*"
+            ):
+                await self.con.execute(
+                    r'''
+                    select NameList FILTER .member.mid = '1';
+                    '''
+                )
         finally:
             await self.con.execute(
                 '''
@@ -840,6 +959,16 @@ class TestHttpCreateType(tb.ExternTestCase):
                     32
                 ]
             )
+
+            with self.assertRaisesRegex(
+                edgedb.InvalidTypeError,
+                regex="operator '=' cannot be applied to operands of type .*"
+            ):
+                await self.con.execute(
+                    r'''
+                    select NameList FILTER .member.mid = '1';
+                    '''
+                )
         finally:
             await self.con.execute(
                 '''
