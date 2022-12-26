@@ -230,24 +230,24 @@ GraphQLDecimal = GraphQLScalarType(
 
 
 GraphQLDatetime = GraphQLScalarType(
-    name="Datetime",
-    description="The `Datetime` scalar type represents Datetime value.",
+    name="StdScalarDatetime",
+    description="The `StdScalarDatetime` scalar type represents Datetime value.",
     serialize=GraphQLString.serialize,
     parse_value=GraphQLString.parse_value,
     parse_literal=GraphQLString.parse_literal,
 )
 
 GraphQLDate = GraphQLScalarType(
-    name="Date",
-    description="The `Date` scalar type represents Date value.",
+    name="StdScalarDate",
+    description="The `StdScalarDate` scalar type represents Date value.",
     serialize=GraphQLString.serialize,
     parse_value=GraphQLString.parse_value,
     parse_literal=GraphQLString.parse_literal,
 )
 
 GraphQLTime = GraphQLScalarType(
-    name="Time",
-    description="The `Time` scalar type represents Time value.",
+    name="StdScalarTime",
+    description="The `StdScalarTime` scalar type represents Time value.",
     serialize=GraphQLString.serialize,
     parse_value=GraphQLString.parse_value,
     parse_literal=GraphQLString.parse_literal,
@@ -295,9 +295,9 @@ GQL_TO_EDB_SCALARS_MAP = {
     'Boolean': 'bool',
     'ID': 'uuid',
     'JSON': 'json',
-    'Date': 'cal::local_date',
-    'Datetime': 'cal::local_datetime',
-    'Time': 'cal::local_time'
+    'StdScalarDate': 'cal::local_date',
+    'StdScalarDatetime': 'cal::local_datetime',
+    'StdScalarTime': 'cal::local_time'
 }
 
 
