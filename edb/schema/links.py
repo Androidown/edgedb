@@ -235,9 +235,13 @@ def merge_source_property(
             raise_linkpath_overload_prohibited(
                 ours, last, field_name, schema)
 
-        link_source = target.get_source_type(schema)
-        src_prop = link_source.maybe_get_ptr(
-            schema, source_field, type=properties.Property)
+        link_source = target.get_source(schema)
+
+        if link_source is not None:
+            src_prop = link_source.maybe_get_ptr(
+                schema, source_field, type=properties.Property)
+        else:
+            src_prop = None
     else:
         src_prop = None
 

@@ -200,7 +200,7 @@ def merge_required(
             f=max,
             type=bool,
         )
-    elif local_required:
+    elif local_required or ptr.is_pure_computable(schema):
         # If set locally and True, just use that.
         assert isinstance(local_required, bool)
         return local_required

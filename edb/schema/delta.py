@@ -4333,3 +4333,26 @@ def apply(
         root = delta
 
     return root.apply(schema, context)
+
+
+def is_deleting_in_context_stack(obj: so.Object, ctx: CommandContext):
+    def _is_deleting_in_children(op: Command):
+        return any(
+            isinstance(cmd, DeleteObject) and cmd.scls == obj
+            for cmd in op.get_subcommands()
+        )
+
+    def visit_op(op: Command):
+        for sub in op.get_subcommands():
+            yield sub
+            yield from visit_op(sub)
+
+    for ctx in ctx.stack:
+        if _is_deleting_in_children(ctx.op):
+            return True
+
+        for op in visit_op(ctx.op):
+            if _is_deleting_in_children(op):
+                return True
+
+    return False
