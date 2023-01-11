@@ -257,18 +257,21 @@ def merge_target(
 
     if not ignore_local:
         local_target = ptr.get_target(schema)
-        if target is None or ptr.is_pure_computable(schema):
+        if target is None:
             target = local_target
         elif local_target is not None:
             assert current_source is not None
-            schema, target = _merge_types(
-                schema,
-                ptr,
-                target,
-                local_target,
-                t1_source=current_source,
-                t2_source=None,
-            )
+            if ptr.is_pure_computable(schema):
+                target = local_target
+            else:
+                schema, target = _merge_types(
+                    schema,
+                    ptr,
+                    target,
+                    local_target,
+                    t1_source=current_source,
+                    t2_source=None,
+                )
 
     return target
 
