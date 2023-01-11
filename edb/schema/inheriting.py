@@ -849,16 +849,6 @@ class CreateInheritingObject(
         group = sd.CommandGroup()
 
         for create_cmd, astnode, bases in refs.values():
-            from . import pointers
-            from . import constraints
-
-            if (
-                isinstance(scls, pointers.Pointer)
-                and scls.is_pure_computable(schema)
-                and issubclass(create_cmd, constraints.CreateConstraint)
-            ):
-                bases = [schema.get('std::exclusive')]
-
             cmd = create_cmd.as_inherited_ref_cmd(
                 schema=schema,
                 context=context,

@@ -697,6 +697,7 @@ class ConstraintCommand(
         from . import links as s_links
         from . import scalars as s_scalars
 
+
         bases = self.get_resolved_attribute_value(
             'bases', schema=schema, context=context,
         )
@@ -1086,6 +1087,14 @@ class CreateConstraint(
             )
 
             self.set_attribute_value('subject', subject)
+
+            from . import pointers
+
+            if (
+                isinstance(subject, pointers.Pointer)
+                and subject.is_pure_computable(schema)
+            ):
+                bases = [schema.get('std::exclusive')]
 
         return super()._create_begin(schema, context)
 
