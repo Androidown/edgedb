@@ -1088,14 +1088,6 @@ class CreateConstraint(
 
             self.set_attribute_value('subject', subject)
 
-            from . import pointers
-
-            if (
-                isinstance(subject, pointers.Pointer)
-                and subject.is_pure_computable(schema)
-            ):
-                bases = [schema.get('std::exclusive')]
-
         return super()._create_begin(schema, context)
 
     @classmethod
