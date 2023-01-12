@@ -1039,7 +1039,10 @@ cdef class DatabaseConnectionView:
             side_effects = self._on_success(query_unit, new_types)
 
         if not self._in_tx and side_effects and (side_effects & SideEffects.SchemaChanges):
-            await self.update_compiler_user_schema(query_unit.user_schema_mutation)
+            await self.update_compiler_user_schema(
+                query_unit.user_schema_mutation,
+                query_unit.user_schema_mutation_obj,
+            )
         return side_effects
 
     def _on_success(self, query_unit, new_types):
@@ -1274,11 +1277,12 @@ cdef class DatabaseConnectionView:
             extra_blobs=source.extra_blobs(),
         )
 
-    async def update_compiler_user_schema(self, mutation):
+    async def update_compiler_user_schema(self, mut_bytes, mutation: s_schema.SchemaMutationLogger):
         compiler_pool = self._db._index._server.get_compiler_pool()
 
         await compiler_pool.apply_user_schema_mutation_for_all(
             self.dbname,
+            mut_bytes,
             mutation,
             self.get_user_schema(),
             self.get_global_schema(),

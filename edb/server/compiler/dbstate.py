@@ -294,6 +294,7 @@ class QueryUnit:
     cached_reflection: Optional[bytes] = None
     # The pickled user_shema mutation log, aim to replace user_schema
     user_schema_mutation: Optional[bytes] = None
+    user_schema_mutation_obj: Optional[s_schema.SchemaMutationLogger] = None
     # Record affected object ids for cache clear
     affected_obj_ids: Optional[Set[uuid.UUID]] = None
 
@@ -308,6 +309,7 @@ class QueryUnit:
     def update_user_schema(self, base_schema: s_schema.FlatSchema):
         if self.user_schema_mutation is not None:
             mut: s_schema.SchemaMutationLogger = pickle.loads(self.user_schema_mutation)
+            self.user_schema_mutation_obj = mut
             return mut.apply(base_schema)
         else:
             return base_schema
