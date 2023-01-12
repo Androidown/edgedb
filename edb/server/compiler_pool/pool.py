@@ -74,6 +74,78 @@ def _pickle_memoized(schema):
         return pickle.dumps(schema, -1)
 
 
+class _SchemaMutation(NamedTuple):
+    base: int
+    target: int
+    bytes: bytes
+    obj: s_schema.SchemaMutationLogger
+
+    def __repr__(self):
+        return f"<MUT {self.base} -> {self.target}>"
+
+
+class MutationHistory:
+    def __init__(self, dbname: str):
+        self._history: List[_SchemaMutation] = []
+        self._index: Dict[int, int] = {}
+        self._cursor: Dict[int, int] = {}
+        self._db = dbname
+
+    def _get_index_start(self, worker: Worker):
+        usid = worker.get_store_user_schema_id(self._db)
+        return self._index.get(usid, 0)
+
+    def get_pickled_mutation(self, worker: Worker) -> Optional[bytes]:
+        start = self._cursor.get(worker.get_store_user_schema_id(self._db))
+        if start is None:
+            return
+
+        if start == len(self._history) - 1:
+            mut_bytes = self._history[start].bytes
+            mut = self._history[start].obj
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    f"::CPOOL:: WOKER<{worker.identifier}> | DB<{self._db}> "
+                    f"Using stored <MUT {mut.id} -> {mut.generation}> to update."
+                )
+        else:
+            mut = s_schema.SchemaMutationLogger.merge([m.obj for m in self._history[start: ]])
+            logger.info(
+                f"::CPOOL:: WOKER<{worker.identifier}> | DB<{self._db}> "
+                f"Using merged <MUT {mut.id} -> {mut.generation}> to update."
+            )
+            mut_bytes = pickle.dumps(mut)
+        return mut_bytes
+
+    def append(self, mut: _SchemaMutation):
+        self._history.append(mut)
+        self._index[mut.target] = len(self._history)
+        self._cursor[mut.base] = len(self._history) - 1
+
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Mutation history appended to {self}")
+
+    def try_trim_history(self, workers: Iterable[Worker]):
+        start = min(self._get_index_start(w) for w in workers)
+        for _ in range(start):
+            mut = self._history.pop(0)
+            self._index.pop(mut.target, None)
+            self._cursor.pop(mut.base, None)
+
+        if start > 0:
+            for k in self._index:
+                self._index[k] -= start
+
+            for k in self._cursor:
+                self._cursor[k] -= start
+
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Mutation history trimmed to {self}")
+
+    def __repr__(self):
+        return f"<cursor: {self._cursor} | index: {self._index} | history: {self._history}>"
+
+
 class BaseWorker:
 
     _dbs: state.DatabasesState
@@ -205,6 +277,7 @@ class AbstractPool:
         self._std_schema = std_schema
         self._refl_schema = refl_schema
         self._schema_class_layout = schema_class_layout
+        self._mut_history: Dict[str, MutationHistory] = {}
 
     @functools.lru_cache(maxsize=None)
     def _get_init_args(self):
@@ -411,17 +484,28 @@ class AbstractPool:
         db_states = db_states._replace(user_schema_version=ver_id)
         worker._dbs = worker._dbs.set(dbname, db_states)
 
-    async def _apply_user_schema_mutation(self, pid, dbname, mutation_pickled):
+    async def _apply_user_schema_mutation(self, pid, dbname):
         worker = await self._acquire_worker(condition=lambda w: w.get_pid() == pid)
         try:
+            mutation_pickled = self._mut_history[dbname].get_pickled_mutation(worker)
+            if mutation_pickled is None:
+                logger.info(
+                    f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
+                    f"No schema mutation available. "
+                    f"Schema <{worker.get_store_user_schema_id(dbname)}> is "
+                    f"probably already up to date."
+                )
+                return pid, True
+
             status, ver_id = await worker.call('apply_schema_mutation', dbname, mutation_pickled)
 
             if status is True:
-                logger.info(
-                    f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
-                    f"user schema version updated from "
-                    f"{worker.get_store_user_schema_id(dbname)} to {ver_id}"
-                )
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
+                        f"user schema version updated from "
+                        f"{worker.get_store_user_schema_id(dbname)} to {ver_id}"
+                    )
                 self._update_user_schema_ver_id(worker, dbname, ver_id)
             else:
                 logger.info(
@@ -488,7 +572,8 @@ class AbstractPool:
     async def apply_user_schema_mutation_for_all(
         self,
         dbname,
-        mutation,
+        mut_bytes,
+        mutation: s_schema.SchemaMutationLogger,
         user_schema,
         global_schema,
         reflection_cache,
@@ -499,17 +584,27 @@ class AbstractPool:
         db_init_pids = []
         full_schema_replace_pids = []
 
+        if dbname not in self._mut_history:
+            self._mut_history[dbname] = MutationHistory(dbname)
+
+        self._mut_history[dbname].append(_SchemaMutation(
+            base=mutation.id,
+            target=user_schema.version_id,
+            bytes=mut_bytes,
+            obj=mutation
+        ))
+
         # -----------------------------------------------------------------------------
         # general mutation update
         for pid, worker in self._workers.items():
             if dbname not in worker._dbs:
                 db_init_pids.append(pid)
             elif (
-                mutation is not None
+                mut_bytes is not None
                 and worker.get_store_user_schema_id(dbname) is not None
             ):
                 mutation_tasks.append(
-                    self._apply_user_schema_mutation(pid, dbname, mutation))
+                    self._apply_user_schema_mutation(pid, dbname))
             else:
                 full_schema_replace_pids.append(pid)
 
@@ -847,6 +942,7 @@ class BaseLocalPool(
 
         self._stats_spawned = 0
         self._stats_killed = 0
+        self._worker_locks = {}
 
     def is_running(self):
         return bool(self._running)
@@ -866,6 +962,7 @@ class BaseLocalPool(
         self._report_worker(worker)
 
         self._workers[pid] = worker
+        self._worker_locks[pid] = asyncio.Lock()
         self._workers_queue.release(worker)
         self._worker_attached()
 
@@ -894,6 +991,7 @@ class BaseLocalPool(
     def worker_disconnected(self, pid):
         logger.debug("Worker with PID %s disconnected.", pid)
         self._workers.pop(pid, None)
+        self._worker_locks.pop(pid, None)
         metrics.current_compiler_processes.dec()
 
     async def start(self):
@@ -998,6 +1096,18 @@ class BaseLocalPool(
         # Skip disconnected workers
         if worker.get_pid() in self._workers:
             self._workers_queue.release(worker, put_in_front=put_in_front)
+
+    async def _apply_schema_full_update(self, pid, dbname, schema_pickled):
+        async with self._worker_locks[pid]:
+            return await super()._apply_schema_full_update(pid, dbname, schema_pickled)
+
+    async def _apply_user_schema_mutation(self, pid, dbname):
+        async with self._worker_locks[pid]:
+            return await super()._apply_user_schema_mutation(pid, dbname)
+
+    def _update_user_schema_ver_id(self, worker, dbname, ver_id):
+        super()._update_user_schema_ver_id(worker, dbname, ver_id)
+        self._mut_history[dbname].try_trim_history(self._workers.values())
 
 
 @srvargs.CompilerPoolMode.Fixed.assign_implementation
