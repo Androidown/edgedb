@@ -15,7 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-
+import pickle
 from typing import (
     Any,
     Mapping,
@@ -300,8 +300,13 @@ async def execute_script(
     else:
         if not in_tx:
             group_mutation = unit_group.user_schema_mutation
+            if group_mutation is None:
+                gmut_unpickled = None
+            else:
+                gmut_unpickled = pickle.loads(group_mutation)
+
             side_effects = dbv.commit_implicit_tx(
-                user_schema, user_schema_unpacked, group_mutation,
+                user_schema, user_schema_unpacked, gmut_unpickled,
                 global_schema, cached_reflection
             )
             if side_effects:
@@ -310,7 +315,7 @@ async def execute_script(
                     side_effects & dbview.SideEffects.SchemaChanges
                     and group_mutation is not None
                 ):
-                    await dbv.update_compiler_user_schema(group_mutation)
+                    await dbv.update_compiler_user_schema(group_mutation, gmut_unpickled)
 
             state = dbv.serialize_state()
             if state is not orig_state:

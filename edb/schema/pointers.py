@@ -905,6 +905,15 @@ class Pointer(referencing.ReferencedInheritingObject,
             and src.is_external(schema, context)
         )
 
+    def get_first_non_derived_computable(self, schema: s_schema.Schema) -> Pointer:
+        obj = self
+        while obj.is_pure_computable(schema):
+            if obj.get_name(schema).module != '__derived__':
+                return obj
+            obj = obj.get_bases(schema).first(schema)
+
+        return obj
+
 
 class PseudoPointer(s_abc.Pointer):
     # An abstract base class for pointer-like objects, i.e.

@@ -682,6 +682,10 @@ def resolve_ptr(
                 _add_target_schema_refs(
                     ref.get_target(ctx.env.schema), ctx=ctx)
 
+                if ptr.is_pure_computable(ctx.env.schema):
+                    r = ptr.get_first_non_derived_computable(ctx.env.schema)
+                    ctx.env.add_schema_ref(r, track_ref)
+
     else:
         ptrs = near_endpoint.getrptrs(ctx.env.schema, pointer_name,
                                       sources=far_endpoints)
@@ -710,6 +714,10 @@ def resolve_ptr(
                     ctx.env.add_schema_ref(p, track_ref)
                     _add_target_schema_refs(
                         p.get_source(ctx.env.schema), ctx=ctx)
+
+                    if p.is_pure_computable(ctx.env.schema):
+                        r = ptr.get_first_non_derived_computable(ctx.env.schema)
+                        ctx.env.add_schema_ref(r, track_ref)
 
             # We can only compute backlinks for non-computed pointers,
             # but we need to make sure that a computed pointer doesn't

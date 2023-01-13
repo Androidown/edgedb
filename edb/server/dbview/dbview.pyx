@@ -1159,8 +1159,7 @@ cdef class DatabaseConnectionView:
                 user_schema = user_schema_unpacked
             elif user_schema_mutation is not None:
                 base_user_schema = self._db.user_schema
-                mut = pickle.loads(user_schema_mutation)
-                user_schema = mut.apply(base_user_schema)
+                user_schema = user_schema_mutation.apply(base_user_schema)
             else:
                 user_schema = pickle.loads(user_schema)
 

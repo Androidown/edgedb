@@ -46,19 +46,25 @@ class TestDbviewCache(tb.QueryTestCase):
     missed = None
 
     @contextmanager
-    def check_cache_missed(self):
+    def _check_cache(self, is_missed):
         compiler_count = get_compiler_count(self.fetch_metrics())
         yield
-        self.missed = (get_compiler_count(self.fetch_metrics()) - compiler_count > 0)
+        missed = (get_compiler_count(self.fetch_metrics()) - compiler_count > 0)
+        self.assertEqual(missed, is_missed)
+
+    def assert_cache_missed(self):
+        return self._check_cache(True)
+
+    def assert_cache_hit(self):
+        return self._check_cache(False)
 
     async def test_dbview_get_cache_common_01(self):
         # query first time, should compile
         await self.con._fetchall_json('select User.deck;')
 
         # query second time, should read cache
-        with self.check_cache_missed():
+        with self.assert_cache_hit():
             await self.con._fetchall_json('select User.deck;')
-        self.assertFalse(self.missed)
 
     async def test_dbview_partly_clear_cache_01(self):
         await self.con._fetchall_json('select Bot;')
@@ -74,14 +80,12 @@ class TestDbviewCache(tb.QueryTestCase):
         )
 
         # cache for SpecialCard should be cleared, so should compile
-        with self.check_cache_missed():
+        with self.assert_cache_missed():
             await self.con._fetchall_json('select SpecialCard;')
-        self.assertTrue(self.missed)
 
         # cache for Bot remained, so should read from cache
-        with self.check_cache_missed():
+        with self.assert_cache_hit():
             await self.con._fetchall_json('select Bot;')
-        self.assertFalse(self.missed)
 
         await self.con.execute(
             '''
@@ -105,14 +109,12 @@ class TestDbviewCache(tb.QueryTestCase):
         )
 
         # cache for Card should be cleared, so should compile
-        with self.check_cache_missed():
+        with self.assert_cache_missed():
             await self.con._fetchall_json('select Card;')
-        self.assertTrue(self.missed)
 
         # cache for Bot&Card should be cleared, so should compile
-        with self.check_cache_missed():
+        with self.assert_cache_missed():
             await self.con._fetchall_json('select Bot.deck;')
-        self.assertTrue(self.missed)
 
         await self.con.execute(
             '''
@@ -147,6 +149,140 @@ class TestDbviewCache(tb.QueryTestCase):
                     """
         )
         self.assertGreater(get_dump_count(self.fetch_metrics()), 0)
+
+    async def test_computable_property(self):
+        await self.con._fetchall_json("SELECT User {deck_cost}")
+
+        # -----------------------------------------------------------------------------
+        # alter computable here
+        await self.con.execute('''
+            ALTER TYPE User {
+                ALTER property deck_cost using (count(.deck));
+            };
+        ''')
+        with self.assert_cache_missed():
+            await self.con._fetchall_json("SELECT User {deck_cost}")
+
+        with self.assert_cache_hit():
+            await self.con._fetchall_json("SELECT User {deck_cost}")
+
+        await self.con.execute('''
+            ALTER TYPE User {
+                ALTER property deck_cost using (sum(.deck.cost));
+            };
+        ''')
+        with self.assert_cache_missed():
+            await self.con._fetchall_json("SELECT User {deck_cost}")
+
+    async def test_chained_computable_property(self):
+        # -----------------------------------------------------------------------------
+        # create chained computable here
+        await self.con.execute('''
+            ALTER TYPE User {
+                CREATE property deck_cost_alias := .deck_cost;
+                CREATE property deck_cost_alias2 := .deck_cost_alias;
+            };
+        ''')
+
+        await self.con._fetchall_json("SELECT User {deck_cost_alias2}")
+
+        # -----------------------------------------------------------------------------
+        # alter computable here
+        await self.con.execute('''
+            ALTER TYPE User {
+                ALTER property deck_cost using (count(.deck));
+            };
+        ''')
+        with self.assert_cache_missed():
+            await self.con._fetchall_json("SELECT User {deck_cost_alias2}")
+
+        await self.con.execute('''
+            ALTER TYPE User {
+                ALTER property deck_cost_alias using (.deck_cost + 1);
+            };
+        ''')
+        with self.assert_cache_missed():
+            await self.con._fetchall_json("SELECT User {deck_cost_alias2}")
+
+        await self.con.execute('''
+            ALTER TYPE User {
+                DROP property deck_cost_alias2;
+                DROP property deck_cost_alias;
+                ALTER property deck_cost using (sum(.deck.cost));
+            };
+        ''')
+
+    async def test_computable_single_link_outbound(self):
+        await self.con._fetchall_json("SELECT Card {best_award}")
+
+        # -----------------------------------------------------------------------------
+        # alter computable here
+        await self.con.execute('''
+            ALTER TYPE Card {
+                ALTER link best_award using
+                (select .awards limit 1);
+            };
+        ''')
+
+        with self.assert_cache_missed():
+            await self.con._fetchall_json("SELECT Card {best_award}")
+
+        await self.con.execute('''
+            ALTER TYPE Card {
+                ALTER link best_award using
+                (select .awards order by .name limit 1);
+            };
+        ''')
+        with self.assert_cache_missed():
+            await self.con._fetchall_json("SELECT Card {best_award}")
+
+    async def test_computable_multi_link_outbound(self):
+        await self.con._fetchall_json("SELECT Card {good_awards}")
+
+        # -----------------------------------------------------------------------------
+        # alter computable here
+        await self.con.execute('''
+            ALTER TYPE Card {
+                ALTER link good_awards using
+                (SELECT .awards FILTER .name != '1st');
+            };
+        ''')
+
+        with self.assert_cache_missed():
+            await self.con._fetchall_json("SELECT Card {good_awards}")
+
+        await self.con.execute('''
+            ALTER TYPE Card {
+                ALTER link good_awards using
+                (SELECT .awards FILTER .name != '3rd');
+            };
+        ''')
+        with self.assert_cache_missed():
+            await self.con._fetchall_json("SELECT Card {good_awards}")
+
+    async def test_computable_link_inbound(self):
+        await self.con._fetchall_json("SELECT Card {owners}")
+
+        # -----------------------------------------------------------------------------
+        # alter computable here
+        await self.con.execute('''
+            ALTER TYPE Card {
+                ALTER link owners using
+                (.<deck);
+            };
+        ''')
+
+        with self.assert_cache_missed():
+            await self.con._fetchall_json("SELECT Card {owners}")
+
+        await self.con.execute('''
+            ALTER TYPE Card {
+                ALTER link owners using
+                (.<deck[IS User]);
+            };
+        ''')
+        with self.assert_cache_missed():
+            await self.con._fetchall_json("SELECT Card {owners}")
 
 
 session_config1 = immutables.Map({'name': 'k', 'value': 'o'})

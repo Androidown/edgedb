@@ -1265,6 +1265,7 @@ class SoloPool(BaseLocalPool):
         metrics.compiler_process_spawns.inc()
         metrics.current_compiler_processes.inc()
         self._workers[pid] = self._worker
+        self._worker_locks[pid] = asyncio.Lock()
 
     def worker_disconnected(self, pid):
         self._worker.connected = False
