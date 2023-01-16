@@ -1318,6 +1318,32 @@ class CommandContext:
         return any(isinstance(ctx.op, DeleteObject)
                    for ctx in self.stack[:-offset])
 
+    def is_deleting_referrer(
+        self,
+        obj: so.Object,
+        schema: s_schema.Schema,
+        including_self: bool = True
+    ) -> bool:
+        """Return True if *obj* or its source is being deleted in this context.
+
+        :param obj:
+            The object in question.
+
+        :returns:
+            True if *obj* or its source  is being deleted in this context.
+        """
+        from . import referencing
+
+        if including_self and self.is_deleting(obj):
+            return True
+
+        while isinstance(obj, referencing.ReferencedObject):
+            obj = obj.get_referrer(schema)
+            if self.is_deleting(obj):
+                return True
+
+        return False
+
     def is_deleting(self, obj: so.Object) -> bool:
         """Return True if *obj* is being deleted in this context.
 
@@ -1976,6 +2002,9 @@ class ObjectCommand(Command, Generic[so.Object_T]):
 
             ref_desc = []
             for ref in sorted_ref_objs:
+                if context.is_deleting_referrer(ref, schema):
+                    continue
+
                 cmd_drop: Command
                 cmd_create: Command
 

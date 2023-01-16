@@ -453,6 +453,31 @@ class AlterProperty(
         else:
             return super()._get_ast(schema, context, parent_node=parent_node)
 
+    def clear_base(
+        self,
+        schema: s_schema.Schema,
+        context: sd.CommandContext,
+    ):
+        if context.canonical:
+            return
+
+        scls = self.scls
+        base = scls.get_bases(schema).first(schema)
+
+        for inh_field in scls.get_inherited_fields(schema):
+            self.set_attribute_value(inh_field, None)
+
+        for cons in scls.get_constraints(schema).objects(schema):
+            if (
+                (cbase := cons.get_bases(schema).first(schema))
+                and cbase.get_subject(schema) is base
+            ):
+                delta_del, _, _ = cons.init_delta_branch(
+                    schema, context, constraints.DeleteConstraint)
+                self.add(delta_del)
+
+        self.set_attribute_value('bases', [schema.get('std::property')])
+
 
 class DeleteProperty(
     PropertyCommand,

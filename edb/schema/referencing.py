@@ -1415,6 +1415,7 @@ class DeleteReferencedInheritingObject(
             and (referrer_ctx := self.get_referrer_context(context))
             and isinstance(referrer := referrer_ctx.scls, so.InheritingObject)
             and self.scls.should_propagate(schema)
+            and not context.is_deleting_referrer(self.scls, schema)
         ):
             self._propagate_ref_deletion(schema, context, referrer)
 
