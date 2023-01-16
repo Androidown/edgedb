@@ -1148,6 +1148,7 @@ class PointerCommandOrFragment(
         if (
             base is None
             and isinstance(self, AlterPointer)
+            and self.scls.is_pure_computable(schema)
             and self.scls.get_bases(schema)
             and not context.is_deleting_referrer(self.scls, schema)
         ):
