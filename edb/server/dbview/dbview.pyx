@@ -400,6 +400,13 @@ cdef class Database:
         self._eql_to_compiled_disk.clear()
         self._object_id_to_eql.clear()
 
+    def view_caches(self):
+        return '\n\n'.join([
+            f'LRU CACHE: \n{format_eqls(self._eql_to_compiled._dict.keys())}',
+            f'Disk CACHE: \n{format_eqls(self._eql_to_compiled_disk.keys())}',
+            f'Obj id to Eql: \n{self._object_id_to_eql}',
+        ])
+
     cdef _cache_compiled_query(self, key, compiled: dbstate.QueryUnitGroup):
         assert compiled.cacheable
 
