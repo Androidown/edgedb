@@ -630,6 +630,15 @@ cdef class HttpProtocol:
             response.status = http.HTTPStatus.OK
             response.close_connection = True
 
+        elif path_parts[0] == 'view-cache' and request.method == b'GET':
+            dbname = path_parts[1]
+            db = self.server.maybe_get_db(dbname=dbname)
+            if db is None:
+                return self._not_found(request, response)
+            response.body = db.view_caches().encode()
+            response.status = http.HTTPStatus.OK
+            response.close_connection = True
+
         else:
             return self._not_found(request, response)
 
