@@ -1146,7 +1146,8 @@ class PointerCommandOrFragment(
             self.set_attribute_value('computable', True)
 
         if (
-            base is None
+            isinstance(target_ref, ComputableRef)
+            and base is None
             and isinstance(self, AlterPointer)
             and self.scls.is_pure_computable(schema)
             and self.scls.get_bases(schema)
