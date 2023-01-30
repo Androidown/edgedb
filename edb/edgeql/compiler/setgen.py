@@ -716,7 +716,7 @@ def resolve_ptr(
                         p.get_source(ctx.env.schema), ctx=ctx)
 
                     if p.is_pure_computable(ctx.env.schema):
-                        r = ptr.get_first_non_derived_computable(ctx.env.schema)
+                        r = p.get_first_non_derived_computable(ctx.env.schema)
                         ctx.env.add_schema_ref(r, track_ref)
 
             # We can only compute backlinks for non-computed pointers,

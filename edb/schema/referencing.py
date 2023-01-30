@@ -1415,7 +1415,6 @@ class DeleteReferencedInheritingObject(
             and (referrer_ctx := self.get_referrer_context(context))
             and isinstance(referrer := referrer_ctx.scls, so.InheritingObject)
             and self.scls.should_propagate(schema)
-            and not context.is_deleting_referrer(self.scls, schema)
         ):
             self._propagate_ref_deletion(schema, context, referrer)
 
@@ -1471,7 +1470,7 @@ class DeleteReferencedInheritingObject(
                 schema, fq_refname_in_child)
             existing = child_coll.get(schema, child_refname, None)
 
-            if existing is not None:
+            if existing is not None and not context.is_deleting_referrer(existing, schema):
                 alter_root, alter_leaf, ctx_stack = (
                     existing.init_parent_delta_branch(
                         schema, context, referrer=child))
