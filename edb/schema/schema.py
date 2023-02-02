@@ -181,6 +181,13 @@ class SchemaMutationLogger:
         self.id = None
         self.parent: Optional[SchemaMutationLogger] = None
 
+    def copy(self):
+        new = self.__class__()
+        new.ops = self.ops.copy()
+        new.id = self.id
+        new.parent = self.parent
+        return new
+
     def set_parent(self, parent: SchemaMutationLogger):
         self.parent = parent
 
@@ -262,9 +269,10 @@ class SchemaMutationLogger:
             parent = parent.parent
 
         if not mut_history:
-            return self
+            return self.copy()
 
         mut_history.append(self)
+        mut_history[0] = mut_history[0].copy()
         return self.merge(mut_history)
 
     @staticmethod

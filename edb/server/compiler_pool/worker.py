@@ -22,7 +22,6 @@ from typing import *  # NoQA
 
 import pickle
 import os
-import sys
 
 import immutables
 from loguru import logger
@@ -252,14 +251,11 @@ def compile_in_tx(cstate, dbname, user_schema_pickled, *args, **kwargs):
     if cstate == state.REUSE_LAST_STATE_MARKER:
         cstate = LAST_STATE
     else:
-        cstate = pickle.loads(cstate)
+        cstate: compiler.CompilerConnectionState = pickle.loads(cstate)
 
         if user_schema_pickled is not None:
             with util.disable_gc():
                 user_schema: s_schema.FlatSchema = pickle.loads(user_schema_pickled)
-            db = DBS.get(dbname)
-            db = db._replace(user_schema=user_schema)
-            DBS = DBS.set(dbname, db)
         else:
             user_schema = DBS.get(dbname).user_schema
 

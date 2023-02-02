@@ -608,7 +608,6 @@ def _log_schema_version_change(
     version_id,
     ori_version_id
 ):
-    from loguru import logger
     from contextlib import redirect_stdout
     from io import StringIO
 
@@ -617,7 +616,7 @@ def _log_schema_version_change(
     with redirect_stdout(dumpio):
         ddl_stmt.dump_edgeql()
 
-    logger.info(
+    print(
         f"{version_name} change from "
         f"<{ori_version_id}> to {version_id}. "
         f"excute ddl: {dumpio.getvalue()}"

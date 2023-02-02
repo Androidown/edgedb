@@ -95,6 +95,11 @@ class MutationHistory:
         usid = worker.get_store_user_schema_id(self._db)
         return self._index.get(usid, 0)
 
+    def clear(self):
+        self._history.clear()
+        self._index.clear()
+        self._cursor.clear()
+
     def get_pickled_mutation(self, worker: Worker) -> Optional[bytes]:
         start = self._cursor.get(worker.get_store_user_schema_id(self._db))
         if start is None:
@@ -484,18 +489,27 @@ class AbstractPool:
         db_states = db_states._replace(user_schema_version=ver_id)
         worker._dbs = worker._dbs.set(dbname, db_states)
 
-    async def _apply_user_schema_mutation(self, pid, dbname):
+    async def _apply_user_schema_mutation(self, pid, dbname, target_id):
         worker = await self._acquire_worker(condition=lambda w: w.get_pid() == pid)
         try:
             mutation_pickled = self._mut_history[dbname].get_pickled_mutation(worker)
             if mutation_pickled is None:
-                logger.info(
-                    f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
-                    f"No schema mutation available. "
-                    f"Schema <{worker.get_store_user_schema_id(dbname)}> is "
-                    f"probably already up to date."
-                )
-                return pid, True
+                suid = worker.get_store_user_schema_id(dbname)
+                if suid == target_id:
+                    logger.info(
+                        f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
+                        f"No schema mutation available. "
+                        f"Schema <{suid}> is already up to date."
+                    )
+                    return pid, True
+                else:
+                    logger.warning(
+                        f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
+                        f"No schema mutation available. "
+                        f"Schema <{suid}> is outdated, will issue a full update."
+                    )
+                    self._mut_history[dbname].clear()
+                    return pid, False
 
             status, ver_id = await worker.call('apply_schema_mutation', dbname, mutation_pickled)
 
@@ -604,7 +618,7 @@ class AbstractPool:
                 and worker.get_store_user_schema_id(dbname) is not None
             ):
                 mutation_tasks.append(
-                    self._apply_user_schema_mutation(pid, dbname))
+                    self._apply_user_schema_mutation(pid, dbname, user_schema.version_id))
             else:
                 full_schema_replace_pids.append(pid)
 
@@ -1101,9 +1115,9 @@ class BaseLocalPool(
         async with self._worker_locks[pid]:
             return await super()._apply_schema_full_update(pid, dbname, schema_pickled)
 
-    async def _apply_user_schema_mutation(self, pid, dbname):
+    async def _apply_user_schema_mutation(self, pid, dbname, target_id):
         async with self._worker_locks[pid]:
-            return await super()._apply_user_schema_mutation(pid, dbname)
+            return await super()._apply_user_schema_mutation(pid, dbname, target_id)
 
     def _update_user_schema_ver_id(self, worker, dbname, ver_id):
         super()._update_user_schema_ver_id(worker, dbname, ver_id)

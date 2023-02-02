@@ -770,6 +770,9 @@ class CompilerConnectionState:
         new._tx_count = self._tx_count
         return new
 
+    def reset_mutation(self):
+        self._mutations = self._mutations[:1]
+
     def get_mutation(self) -> Optional[s_schema.SchemaMutationLogger]:
         valid_mutations = self._mutations[1:]
         if valid_mutations:

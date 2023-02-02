@@ -24,7 +24,7 @@ from .compiler import CompileContext, CompilerDatabaseState
 from .compiler import compile_edgeql_script
 from .compiler import load_std_schema
 from .compiler import new_compiler, new_compiler_context
-from .dbstate import QueryUnit, QueryUnitGroup
+from .dbstate import QueryUnit, QueryUnitGroup, CompilerConnectionState
 from .enums import Capability, Cardinality
 from .enums import InputFormat, OutputFormat
 
@@ -43,4 +43,5 @@ __all__ = (
     'load_std_schema',
     'new_compiler',
     'new_compiler_context',
+    'CompilerConnectionState',
 )

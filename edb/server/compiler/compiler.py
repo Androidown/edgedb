@@ -1123,7 +1123,8 @@ class Compiler:
                 allow_dml_in_functions=(
                     self.get_config_val(ctx, 'allow_dml_in_functions')),
             )
-
+            schema.get_top_schema().rebase_mutation()
+            target_schema.get_top_schema().rebase_mutation()
             current_tx.update_migration_state(
                 dbstate.MigrationState(
                     parent_migration=schema.get_last_migration(),
@@ -1173,6 +1174,11 @@ class Compiler:
 
             delta_context = self._new_delta_context(ctx)
             schema = diff.apply(schema, delta_context)
+            assert isinstance(schema, s_schema.ChainedSchema)
+            user_schema = schema.get_top_schema()
+            mut = user_schema.get_mutation()
+            ctx.state.record_mutation(mut)
+            user_schema.rebase_mutation()
             current_tx.update_schema(schema)
 
             query = dbstate.MigrationControlQuery(
@@ -1429,6 +1435,8 @@ class Compiler:
 
             current_tx.update_schema(mstate.initial_schema)
             ctx.state.sync_mutation(mstate.initial_savepoint)
+            if not ctx.in_tx:
+                ctx.state.reset_mutation()
             current_tx.update_migration_state(None)
 
             ddl_query = self._compile_and_apply_ddl_stmt(
