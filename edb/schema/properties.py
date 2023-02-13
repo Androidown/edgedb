@@ -42,6 +42,22 @@ if TYPE_CHECKING:
     from . import schema as s_schema
 
 
+def ast_alter_to_create(
+    astnode: qlast.AlterConcreteProperty,
+) -> qlast.CreateConcreteProperty:
+    return qlast.CreateConcreteProperty(
+        commands=astnode.commands,
+        name=astnode.name,
+        target=qlast.get_ddl_field_command(astnode, 'expr').value
+    )
+
+
+def ast_alter_to_delete(
+    astnode: qlast.AlterConcreteProperty,
+) -> qlast.DropConcreteProperty:
+    return qlast.DropConcreteProperty(name=astnode.name)
+
+
 class Property(
     pointers.Pointer,
     s_abc.Property,
@@ -419,6 +435,23 @@ class AlterProperty(
             cmd._process_create_or_alter_ast(schema, astnode, context)
         else:
             cmd._process_alter_ast(schema, astnode, context)
+            expr_cmd = qlast.get_ddl_field_command(astnode, 'expr')
+            if (
+                expr_cmd is not None
+                and expr_cmd.value is not None
+                and isinstance(astnode, qlast.AlterConcreteProperty)
+            ):
+                # Alter Computable
+                cmd_group = sd.CommandGroup()
+                new_ast = ast_alter_to_create(astnode)
+                create_cmd = CreateProperty._cmd_tree_from_ast(
+                    schema, ast_alter_to_create(astnode), context)
+                delete_cmd = DeleteProperty._cmd_tree_from_ast(
+                    schema, ast_alter_to_delete(astnode), context)
+                cmd_group.add(delete_cmd)
+                cmd_group.add(create_cmd)
+                return cmd_group
+
         return cmd
 
     def _apply_field_ast(
@@ -452,31 +485,6 @@ class AlterProperty(
             return None
         else:
             return super()._get_ast(schema, context, parent_node=parent_node)
-
-    def clear_base(
-        self,
-        schema: s_schema.Schema,
-        context: sd.CommandContext,
-    ):
-        if context.canonical:
-            return
-
-        scls = self.scls
-        base = scls.get_bases(schema).first(schema)
-
-        for inh_field in scls.get_inherited_fields(schema):
-            self.set_attribute_value(inh_field, None)
-
-        for cons in scls.get_constraints(schema).objects(schema):
-            if (
-                (cbase := cons.get_bases(schema).first(schema))
-                and cbase.get_subject(schema) is base
-            ):
-                delta_del, _, _ = cons.init_delta_branch(
-                    schema, context, constraints.DeleteConstraint)
-                self.add(delta_del)
-
-        self.set_attribute_value('bases', [schema.get('std::property')])
 
 
 class DeleteProperty(

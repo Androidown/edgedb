@@ -14,18 +14,58 @@ class TestEdgeQLComputablesDDL(tb.DDLTestCase):
                     };
                     property nickname := .name;
                     property gender -> str;
+                    property point -> int32 {
+                        constraint max_value(100);
+                    };
+                    link obj -> Obj;
                 };
+                type Obj;
             };
         };
         POPULATE MIGRATION;
         COMMIT MIGRATION;
     """
+
+    async def assert_property_has_contraints(self, prop, n_cons):
+        eql = f"""
+             select count(
+                schema::Constraint
+                filter .subject.name='{prop}'
+             );
+        """
+        await self.assert_query_result(eql, [n_cons])
+
+    async def test_alter_alias_computable_change_required(self):
+        await self.con.execute("""
+            ALTER type User {
+                ALTER property nickname {
+                    using ((select User filter ( not exists .obj)).name)
+                };
+            };
+        """)
+        await self.assert_property_has_contraints('nickname', 2)
+
+    async def test_alter_alias_computable_change_to_another_alias(self):
+        await self.con.execute("""
+            ALTER type User {
+                ALTER property nickname using (.point)
+            };
+        """)
+        await self.assert_property_has_contraints('nickname', 1)
+        await self.con.execute("""
+            ALTER type User {
+                ALTER property nickname using (.gender)
+            };
+        """)
+        await self.assert_property_has_contraints('nickname', 0)
+
     async def test_alter_alias_computable_change_type(self):
         await self.con.execute("""
             ALTER type User {
                 ALTER property nickname using (len(.name))
             };
         """)
+        await self.assert_property_has_contraints('nickname', 0)
 
     async def test_alter_alias_computable_change_cardinality(self):
         # -----------------------------------------------------------------------------

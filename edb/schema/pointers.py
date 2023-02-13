@@ -200,7 +200,7 @@ def merge_required(
             f=max,
             type=bool,
         )
-    elif local_required:
+    elif local_required or ptr.is_pure_computable(schema):
         # If set locally and True, just use that.
         assert isinstance(local_required, bool)
         return local_required
@@ -1145,17 +1145,6 @@ class PointerCommandOrFragment(
             # There is an expression, therefore it is a computable.
             self.set_attribute_value('computable', True)
 
-        if (
-            isinstance(target_ref, ComputableRef)
-            and base is None
-            and isinstance(self, AlterPointer)
-            and self.scls.is_pure_computable(schema)
-            and self.scls.get_bases(schema)
-            and not context.is_deleting_referrer(self.scls, schema)
-        ):
-            # computable changed from an alias to simple expr
-            self.clear_base(schema, context)
-
         return schema
 
     def _parse_computable(
@@ -2036,13 +2025,6 @@ class AlterPointer(
             inherited=pointer.field_is_inherited(schema, 'target'),
             computed=pointer.field_is_computed(schema, 'target'),
         )
-
-    def clear_base(
-        self,
-        schema: s_schema.Schema,
-        context: sd.CommandContext,
-    ):
-        return
 
 
 class DeletePointer(
