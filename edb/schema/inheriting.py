@@ -1248,7 +1248,7 @@ class RebaseInheritingObject(
 def _needs_refdict(
     refdict: so.RefDict,
     context: sd.CommandContext,
-    check_refdict: bool
+    check_refdict: bool = True
 ) -> bool:
     inheritance_refdicts = context.inheritance_refdicts
     return (
