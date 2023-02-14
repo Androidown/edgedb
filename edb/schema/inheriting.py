@@ -189,6 +189,11 @@ class InheritingObjectCommand(sd.ObjectCommand[so.InheritingObjectT]):
         from . import referencing as s_referencing
 
         attr = refdict.attr
+        if attr == 'constraints':
+            skipped = self.maybe_get_object_aux_data('skip_constraints_creation') or []
+        else:
+            skipped = []
+
         bases = self.scls.get_bases(schema)
         refs: Dict[
             sn.QualName,
@@ -225,6 +230,9 @@ class InheritingObjectCommand(sd.ObjectCommand[so.InheritingObjectT]):
                 }
 
             for k, v in base_refs.items():
+                if v in skipped:
+                    continue
+
                 if not v.should_propagate(schema):
                     continue
                 if base == self.scls and not v.get_owned(schema):
@@ -545,6 +553,51 @@ class InheritingObjectCommand(sd.ObjectCommand[so.InheritingObjectT]):
         else:
             return super().get_ast_attr_for_field(field, astnode)
 
+    def inherit_classref_dict(
+        self,
+        schema: s_schema.Schema,
+        context: sd.CommandContext,
+        refdict: so.RefDict,
+    ) -> sd.CommandGroup:
+        scls = self.scls
+        refs = self.get_inherited_ref_layout(schema, context, refdict)
+        group = sd.CommandGroup()
+
+        for create_cmd, astnode, bases in refs.values():
+            cmd = create_cmd.as_inherited_ref_cmd(
+                schema=schema,
+                context=context,
+                astnode=astnode,
+                bases=bases,
+                referrer=scls,
+            )
+
+            cmd.set_attribute_value(refdict.backref_attr, scls)
+
+            group.add(cmd)
+
+        return group
+
+    def attach_ref_create_cmd(
+        self,
+        schema: s_schema.Schema,
+        context: sd.CommandContext,
+        check_refdict: bool = True,
+        prepend: bool = True,
+   ):
+        cmd = sd.CommandGroup()
+        mcls = self.get_schema_metaclass()
+        for refdict in mcls.get_refdicts():
+            if _needs_refdict(refdict, context, check_refdict):
+                cmd.add(
+                    self.inherit_classref_dict(
+                        schema, context, refdict
+                    )
+                )
+        if prepend:
+            self.prepend(cmd)
+        else:
+            self.add(cmd)
 
 BaseDeltaItem_T = Tuple[
     List[so.ObjectShell[so.InheritingObjectT]],
@@ -735,16 +788,7 @@ class CreateInheritingObject(
         self, schema: s_schema.Schema, context: sd.CommandContext
     ) -> s_schema.Schema:
         if not context.canonical:
-            cmd = sd.CommandGroup()
-            mcls = self.get_schema_metaclass()
-
-            for refdict in mcls.get_refdicts():
-                if _needs_refdict(refdict, context):
-                    cmd.add(self.inherit_classref_dict(
-                        schema, context, refdict))
-
-            self.prepend(cmd)
-
+            self.attach_ref_create_cmd(schema, context)
         return super()._create_innards(schema, context)
 
     @classmethod
@@ -837,31 +881,6 @@ class CreateInheritingObject(
         ]
 
         return explicit_bases
-
-    def inherit_classref_dict(
-        self,
-        schema: s_schema.Schema,
-        context: sd.CommandContext,
-        refdict: so.RefDict,
-    ) -> sd.CommandGroup:
-        scls = self.scls
-        refs = self.get_inherited_ref_layout(schema, context, refdict)
-        group = sd.CommandGroup()
-
-        for create_cmd, astnode, bases in refs.values():
-            cmd = create_cmd.as_inherited_ref_cmd(
-                schema=schema,
-                context=context,
-                astnode=astnode,
-                bases=bases,
-                referrer=scls,
-            )
-
-            cmd.set_attribute_value(refdict.backref_attr, scls)
-
-            group.add(cmd)
-
-        return group
 
 
 class AlterInheritingObjectOrFragment(
@@ -1226,9 +1245,13 @@ class RebaseInheritingObject(
         return tuple(b for b in bases if b.name not in roots)
 
 
-def _needs_refdict(refdict: so.RefDict, context: sd.CommandContext) -> bool:
+def _needs_refdict(
+    refdict: so.RefDict,
+    context: sd.CommandContext,
+    check_refdict: bool
+) -> bool:
     inheritance_refdicts = context.inheritance_refdicts
     return (
-        inheritance_refdicts is None
-        or refdict.attr in inheritance_refdicts
+        (inheritance_refdicts is None
+        or refdict.attr in inheritance_refdicts) or not check_refdict
     ) and (context.inheritance_merge is None or context.inheritance_merge)

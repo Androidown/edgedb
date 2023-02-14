@@ -1128,6 +1128,42 @@ class PointerCommandOrFragment(
                     'declared_overloaded', True
                 )
 
+        if (
+            isinstance(target_ref, ComputableRef)
+            # and self.scls.is_pure_computable(schema)
+            and isinstance(self, AlterPointer)
+            and not context.is_deleting_referrer(self.scls, schema)
+        ):
+            if not self.scls.is_pure_computable(schema):
+                if base is not None:
+                    self.set_object_aux_data('new_computable_base', True)
+            else:
+                std_property = schema.get('std::property')
+                try:
+                    orig_base = self.scls.get_bases(schema).first(schema)
+                    if orig_base is std_property:
+                        orig_base = None
+                except (AttributeError, IndexError):
+                    orig_base = None
+
+                if orig_base is not None:
+                    if orig_base is not base:
+                        # 原来的属性是computable-alias，
+                        # 而且本次修改base发生变化，原有的从base继承过来的
+                        # 属性及约束等需要删除
+                        self._clear_base(orig_base, base, schema, context)
+                    if base is None:
+                        # 新的计算字段不是computable-alias，重置base
+                        self.set_attribute_value(
+                            'bases', so.ObjectList.create(schema, [std_property]))
+                    elif orig_base is not base:
+                        self.set_object_aux_data('new_computable_base', True)
+                else:
+                    # 原来的属性是computable或者普通属性
+                    if base is not None:
+                        # 修改后是computable-alias，需要继承base字段的属性
+                        self.set_object_aux_data('new_computable_base', True)
+
         if inf_target_ref is not None:
             srcctx = self.get_attribute_source_context('target')
             self.set_attribute_value(
@@ -1146,6 +1182,52 @@ class PointerCommandOrFragment(
             self.set_attribute_value('computable', True)
 
         return schema
+
+    def _clear_base(
+        self,
+        base: Pointer,
+        new_base: Pointer,
+        schema: s_schema.Schema,
+        context: sd.CommandContext,
+    ):
+        if context.canonical:
+            return
+
+        from .constraints import ConstraintCommand
+        scls = self.scls
+
+        for inh_field in scls.get_inherited_fields(schema):
+            self.set_attribute_value(inh_field, None)
+
+        if new_base is not None:
+            cons_field = 'constraints'
+            ref_field_type = type(new_base).get_field(cons_field).type
+
+        for cons in scls.get_constraints(schema).objects(schema):
+            if new_base is not None:
+                fq_name_in_new_base = ConstraintCommand._classname_from_name(
+                    cons.get_name(schema), new_base.get_name(schema))
+                refname = ref_field_type.get_key_for_name(schema, fq_name_in_new_base)
+                constrains_in_new_base = new_base.get_field_value(schema, cons_field)
+                dup_cons = constrains_in_new_base.get(schema, refname, default=None)
+                if (
+                    dup_cons is not None
+                    and dup_cons.should_propagate(schema)
+                    and not context.is_deleting(dup_cons)
+                ):
+                    skipped_cons = self.maybe_get_object_aux_data('skip_constraints_creation')
+                    if skipped_cons is None:
+                        skipped_cons = []
+                        self.set_object_aux_data('skip_constraints_creation', skipped_cons)
+                    skipped_cons.append(dup_cons)
+                    continue
+
+            if (
+                (cbase := cons.get_bases(schema).first(schema))
+                and cbase.get_subject(schema) is base
+            ):
+                delta_del = cons.init_delta_command(schema, constraints.DeleteConstraint)
+                self.add(delta_del)
 
     def _parse_computable(
         self,
@@ -1979,6 +2061,13 @@ class AlterPointer(
                     and not self.has_attribute_value('cardinality')
                 ):
                     self.set_attribute_value('cardinality', None)
+
+            std_property = schema.get('std::property')
+            if pointer.get_bases(schema).first(schema) is not std_property:
+                self._clear_base(pointer, None, schema, context)
+                self.set_attribute_value(
+                    'bases', so.ObjectList.create(schema, [std_property])
+                )
 
             # Clear the placeholder value for 'expr'.
             self.set_attribute_value('expr', None)

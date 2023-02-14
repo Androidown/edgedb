@@ -14,10 +14,15 @@ class TestEdgeQLComputablesDDL(tb.DDLTestCase):
                     };
                     property nickname := .name;
                     property gender -> str;
+                    property sex -> str;
                     property point -> int32 {
                         constraint max_value(100);
                     };
                     link obj -> Obj;
+                    required property code -> int32 {
+                        constraint exclusive
+                    };
+                    required property identifier -> int32;
                 };
                 type Obj;
             };
@@ -35,7 +40,7 @@ class TestEdgeQLComputablesDDL(tb.DDLTestCase):
         """
         await self.assert_query_result(eql, [n_cons])
 
-    async def test_alter_alias_computable_change_required(self):
+    async def test_alter_alias_computable_keep_base(self):
         await self.con.execute("""
             ALTER type User {
                 ALTER property nickname {
@@ -45,7 +50,21 @@ class TestEdgeQLComputablesDDL(tb.DDLTestCase):
         """)
         await self.assert_property_has_contraints('nickname', 2)
 
-    async def test_alter_alias_computable_change_to_another_alias(self):
+    async def test_alter_alias_computable_change_to_diff_alias(self):
+        await self.con.execute("""
+            ALTER type User {
+                ALTER property nickname using (.code)
+            };
+        """)
+        await self.assert_property_has_contraints('nickname', 1)
+        await self.con.execute("""
+            ALTER type User {
+                ALTER property nickname using (.name)
+            };
+        """)
+        await self.assert_property_has_contraints('nickname', 2)
+
+    async def test_alter_alias_computable_change_to_diff_alias_dup_constraint(self):
         await self.con.execute("""
             ALTER type User {
                 ALTER property nickname using (.point)
@@ -78,7 +97,7 @@ class TestEdgeQLComputablesDDL(tb.DDLTestCase):
             };
         """)
 
-    async def test_alter_alias_computable_add_dep(self):
+    async def test_alter_alias_computable_change_optionality(self):
         # -----------------------------------------------------------------------------
         # change from required to optional
         await self.con.execute("""
@@ -88,6 +107,15 @@ class TestEdgeQLComputablesDDL(tb.DDLTestCase):
                 )
             };
         """)
+    async def test_alter_normal_to_alias_computable(self):
+        # -----------------------------------------------------------------------------
+        # change a normal property to computable-alias
+        await self.con.execute("""
+            ALTER type User {
+                ALTER property identifier using (.code)
+            };
+        """)
+        await self.assert_property_has_contraints('identifier', 1)
 
     async def test_drop_alias_computable(self):
         # -----------------------------------------------------------------------------
