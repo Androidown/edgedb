@@ -111,13 +111,13 @@ class MutationHistory:
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(
                     f"::CPOOL:: WOKER<{worker.identifier}> | DB<{self._db}> "
-                    f"Using stored <MUT {mut.id} -> {mut.generation}> to update."
+                    f"Using stored <MUT {mut.id} -> {mut.target}> to update."
                 )
         else:
             mut = s_schema.SchemaMutationLogger.merge([m.obj for m in self._history[start: ]])
             logger.info(
                 f"::CPOOL:: WOKER<{worker.identifier}> | DB<{self._db}> "
-                f"Using merged <MUT {mut.id} -> {mut.generation}> to update."
+                f"Using merged <MUT {mut.id} -> {mut.target}> to update."
             )
             mut_bytes = pickle.dumps(mut)
         return mut_bytes

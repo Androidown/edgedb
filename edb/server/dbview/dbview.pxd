@@ -159,7 +159,7 @@ cdef class DatabaseConnectionView:
         uint64_t _capability_mask
 
         object _last_comp_state
-        int _last_comp_state_id
+        object _last_comp_state_id
 
         object __weakref__
 

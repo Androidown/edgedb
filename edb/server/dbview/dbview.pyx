@@ -519,7 +519,7 @@ cdef class DatabaseConnectionView:
         self._db_config_dbver = None
 
         self._last_comp_state = None
-        self._last_comp_state_id = 0
+        self._last_comp_state_id = None
 
         # Whenever we are in a transaction that had executed a
         # DDL command, we use this cache for compiled queries.

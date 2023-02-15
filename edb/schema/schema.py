@@ -19,9 +19,7 @@
 
 from __future__ import annotations
 
-import contextlib
 import enum
-import time
 from typing import *
 
 import abc
@@ -30,10 +28,9 @@ import functools
 import itertools
 
 import immutables as immu
-from edb.errors import SchemaError
 
 from edb import errors
-from edb.common import english, util
+from edb.common import english, util, uuidgen
 
 from . import casts as s_casts
 from . import functions as s_func
@@ -178,6 +175,7 @@ class SchemaMutationLogger:
     def __init__(self):
         self.ops: Dict[SC, List[T_Ops]] = collections.defaultdict(list)
         self.generation = 0
+        self.target = None
         self.id = None
         self.parent: Optional[SchemaMutationLogger] = None
 
@@ -191,8 +189,11 @@ class SchemaMutationLogger:
     def set_parent(self, parent: SchemaMutationLogger):
         self.parent = parent
 
-    def set_id(self, ver_id: int):
+    def set_id(self, ver_id: uuid.UUID):
         self.id = ver_id
+
+    def set_target(self, ver_id: uuid.UUID):
+        self.target = ver_id
 
     def set_generation(self, n: int):
         self.generation = n
@@ -280,6 +281,7 @@ class SchemaMutationLogger:
         mut = functools.reduce(lambda x, y: x._merge(y), mutations)
         mut.id = mutations[0].id
         mut.generation = mutations[-1].generation
+        mut.target = mutations[-1].target
         mut.parent = None
         return mut
 
@@ -709,9 +711,11 @@ class FlatSchema(Schema):
 
     @functools.cached_property
     def version_id(self):
-        if self._generation == 1:
-            return max(time.monotonic_ns() % 100_000_000, 1)
-        return max(self._generation % 100_000_000, 1)
+        sv = self.get_global(s_ver.SchemaVersion, '__schema_version__', None)
+        if sv is None:
+            return uuidgen.uuid4()
+        else:
+            return sv.get_version(self)
 
     def rebase_mutation(self):
         self._mut = SchemaMutationLogger()
@@ -779,6 +783,7 @@ class FlatSchema(Schema):
         new._generation = self._generation + 1
         new._mut.set_parent(self._mut)
         new._mut.set_generation(new._generation)
+        new._mut.set_target(new.version_id)
         self._mut_next = SchemaMutationLogger()  # reset mut_next
         return new
 
