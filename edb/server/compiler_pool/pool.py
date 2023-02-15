@@ -18,6 +18,8 @@
 
 
 from __future__ import annotations
+
+import uuid
 from typing import *  # NoQA
 
 import asyncio
@@ -74,14 +76,18 @@ def _pickle_memoized(schema):
         return pickle.dumps(schema, -1)
 
 
+def _trim_uuid(uid: uuid.UUID):
+    return hex(uid.int & 0xFFFFFFFF)[2:]
+
+
 class _SchemaMutation(NamedTuple):
-    base: int
-    target: int
+    base: uuid.UUID
+    target: uuid.UUID
     bytes: bytes
     obj: s_schema.SchemaMutationLogger
 
     def __repr__(self):
-        return f"<MUT {self.base} -> {self.target}>"
+        return f"<MUT {_trim_uuid(self.base)} -> {_trim_uuid(self.target)}>"
 
 
 class MutationHistory:
@@ -110,14 +116,14 @@ class MutationHistory:
             mut = self._history[start].obj
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(
-                    f"::CPOOL:: WOKER<{worker.identifier}> | DB<{self._db}> "
-                    f"Using stored <MUT {mut.id} -> {mut.target}> to update."
+                    f"::CPOOL:: WOKER<{worker.identifier}> | DB<{self._db}> - "
+                    f"Using stored <MUT {_trim_uuid(mut.id)} -> {_trim_uuid(mut.target)}> to update."
                 )
         else:
             mut = s_schema.SchemaMutationLogger.merge([m.obj for m in self._history[start: ]])
             logger.info(
-                f"::CPOOL:: WOKER<{worker.identifier}> | DB<{self._db}> "
-                f"Using merged <MUT {mut.id} -> {mut.target}> to update."
+                f"::CPOOL:: WOKER<{worker.identifier}> | DB<{self._db}> - "
+                f"Using merged <MUT {_trim_uuid(mut.id)} -> {_trim_uuid(mut.target)}> to update."
             )
             mut_bytes = pickle.dumps(mut)
         return mut_bytes
@@ -418,13 +424,13 @@ class AbstractPool:
                     )
                     logger.info(
                         f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
-                        f"Initialize db <{dbname}> schema version to: {user_schema.version_id}"
+                        f"Initialize db <{dbname}> schema version to: [{user_schema.version_id}]"
                     )
                 else:
                     logger.warning(
                         f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
-                        f"Stored schema version: {worker_db.user_schema_version} "
-                        f"is not consistent with server schema version: {user_schema.version_id}"
+                        f"Stored schema version: [{worker_db.user_schema_version}] "
+                        f"is not consistent with server schema version: [{user_schema.version_id}]"
                     )
                 preargs += (
                     _pickle_memoized(user_schema),
@@ -518,13 +524,13 @@ class AbstractPool:
                     logger.debug(
                         f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
                         f"user schema version updated from "
-                        f"{worker.get_store_user_schema_id(dbname)} to {ver_id}"
+                        f"<{worker.get_store_user_schema_id(dbname)}> to <{ver_id}>"
                     )
                 self._update_user_schema_ver_id(worker, dbname, ver_id)
             else:
                 logger.info(
                     f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
-                    f"Cannot update user schema for version {worker.get_store_user_schema_id(dbname)}, "
+                    f"Cannot update user schema for version <{worker.get_store_user_schema_id(dbname)}>"
                 )
             return pid, status
         finally:
@@ -536,7 +542,7 @@ class AbstractPool:
             status, ver_id = await worker.call('set_user_schema', dbname, schema_pickled)
             logger.info(
                 f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
-                f"DB<{dbname}> user schema version set to {ver_id}, is success: {status}"
+                f"DB<{dbname}> user schema version set to <{ver_id}>, is success: {status}"
             )
             if status is True:
                 self._update_user_schema_ver_id(worker, dbname, ver_id)
@@ -557,7 +563,7 @@ class AbstractPool:
         worker = await self._acquire_worker(condition=lambda w: w.get_pid() == pid)
         logger.info(
             f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
-            f"Initialize user_schema as version: {user_schema.version_id}, "
+            f"Initialize user_schema as version: <{user_schema.version_id}> "
         )
         try:
             await worker.call(
