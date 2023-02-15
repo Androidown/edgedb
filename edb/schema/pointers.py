@@ -2062,8 +2062,13 @@ class AlterPointer(
                 ):
                     self.set_attribute_value('cardinality', None)
 
+            from .properties import Property
             std_property = schema.get('std::property')
-            if pointer.get_bases(schema).first(schema) is not std_property:
+            if (
+                isinstance(pointer, Property)
+                and pointer.get_owned(schema)
+                and pointer.get_bases(schema).first(schema) is not std_property
+            ):
                 self._clear_base(pointer, None, schema, context)
                 self.set_attribute_value(
                     'bases', so.ObjectList.create(schema, [std_property])
