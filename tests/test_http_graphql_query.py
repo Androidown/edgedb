@@ -3631,32 +3631,33 @@ class TestGraphQLFunctional(tb.GraphQLTestCase):
         )
 
     def test_graphql_functional_variables_50(self):
+        # 可兼容使用String类型查询local_datetime
         self.assert_graphql_query_result(
             r"""
                 query($val: String!) {
-                    ScalarTest(filter: {p_datetime: {eq: $val}}) {
-                        p_datetime
+                    ScalarTest(filter: {p_local_datetime: {eq: $val}}) {
+                        p_local_datetime
                     }
                 }
             """, {
                 "ScalarTest": [{
-                    'p_datetime': "2018-05-07T20:01:22.306916+00:00",
+                    'p_local_datetime': '2018-05-07T20:01:22.306916',
                 }]
             },
-            variables={"val": "2018-05-07T20:01:22.306916+00:00"},
+            variables={"val": '2018-05-07T20:01:22.306916'},
         )
         self.assert_graphql_query_result(
             r"""
                 query($val: String!) {
-                    ScalarTest(filter: {p_datetime: {eq: $val}}) {
-                        p_datetime
+                    ScalarTest(filter: {p_local_datetime: {eq: $val}}) {
+                        p_local_datetime
                     }
                 }
             """, {
                 "ScalarTest": []
             },
             # 只有string值完全一致才可以查询到
-            variables={"val": "2018-05-07 20:01:22.306916+00:00"},
+            variables={"val": '2018-05-07 20:01:22.306916'},
         )
 
     def test_graphql_functional_variables_51(self):
