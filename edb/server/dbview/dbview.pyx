@@ -370,7 +370,7 @@ cdef class Database:
         self._state_serializers.clear()
 
         if self._should_log:
-            logger.debug(f'Ids to drop: {drop_ids}')
+            logger.debug(f'Ids to drop: {drop_ids}.')
 
         for obj_id in drop_ids:
             if obj_id not in self._object_id_to_eql:
@@ -1145,7 +1145,8 @@ cdef class DatabaseConnectionView:
 
     cdef commit_implicit_tx(
         self, user_schema, user_schema_unpacked,
-        user_schema_mutation, global_schema, cached_reflection
+        user_schema_mutation, global_schema,
+        cached_reflection, affecting_ids
     ):
         assert self._in_tx
         side_effects = 0
@@ -1175,7 +1176,10 @@ cdef class DatabaseConnectionView:
                 user_schema,
                 pickle.loads(cached_reflection)
                     if cached_reflection is not None
-                    else None
+                    else None,
+                None,
+                None,
+                affecting_ids
             )
             side_effects |= SideEffects.SchemaChanges
         if self._in_tx_with_sysconfig:

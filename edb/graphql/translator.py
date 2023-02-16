@@ -1257,6 +1257,26 @@ class GraphQLTranslator:
                 # JSON can only come as a variable and will already be
                 # converted appropriately.
                 return val
+            # DeepModel未用到datetime类型
+            # 该类型在GQL->EQL过程中保持原逻辑
+            # datetime <-> str
+            # 而在SCALARS_MAP中为
+            # StdScalarDatetime<->local_datetime
+            # 则受此影响的<cal::local_datetime> gql value部分
+            # 需被改回为<std::str> gql value
+            elif (
+                target.edb_base_name == 'std::datetime'
+                and isinstance(node, gql_ast.VariableNode)
+            ):
+                res = val
+                res.type.maintype.name = 'std::str'
+                return qlast.TypeCast(
+                    expr=res,
+                    type=qlast.TypeName(
+                        maintype=target.edb_base_name_ast
+                    )
+                )
+
             elif target.edb_base_name != 'std::str':
 
                 # bigint data would require a bigint input, so
@@ -1461,6 +1481,19 @@ class GraphQLTranslator:
                     type=qlast.TypeName(maintype=qlast.ObjectRef(name='str')),
                 )
 
+
+        # DeepModel未用到datetime类型
+        # 该类型在GQL->EQL过程中保持原逻辑
+        # datetime <-> str
+        # 则产生的等式应为
+        # <str> edb_type [op] <str> gql_value
+        # 此处逻辑对应等式左边
+        if typename == 'std::datetime':
+            name = qlast.TypeCast(
+                expr=name,
+                type=qlast.TypeName(maintype=qlast.ObjectRef(name='str')),
+            )
+
         # ### Set up context for the nested visitor ###
         self._context.base_expr = name
         # potentially the right-hand-side needs to be cast into a float
@@ -1493,6 +1526,18 @@ class GraphQLTranslator:
                 expr=value.right,
                 type=qlast.TypeName(maintype=ftype.edb_base_name_ast),
             )
+        # DeepModel未用到datetime类型
+        # 该类型在GQL->EQL过程中保持原逻辑
+        # datetime <-> str
+        # 则产生的等式应为
+        # <str> edb_type [op] <str> gql_value
+        # 此处逻辑对应等式右边
+        elif (
+            typename == 'std::datetime'
+            and isinstance(value.right, qlast.TypeCast)
+        ):
+            value.right.type.maintype.name = 'std::str'
+
         elif ftype.is_enum:
             value.right = qlast.TypeCast(
                 expr=value.right,

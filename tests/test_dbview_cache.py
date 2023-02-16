@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import unittest
@@ -9,6 +10,7 @@ import immutables
 from edb.server.dbview.dbview import EqlDict, RankedDiskCache
 from edb.server import defines
 from edb.testbase import server as tb
+from edb.testbase.server import _call_system_api
 
 RE_COMPILER = re.compile(r"edgedb_server_edgeql_query_compilations_total{path=\"compiler\"} ([0-9]+\.0)?")
 RE_PICKLE_DUMP = re.compile(r"edgedb_server_edgeql_cache_pickle_dump_duration_seconds_count ([0-9]+\.0)?")
@@ -44,6 +46,17 @@ class TestDbviewCache(tb.QueryTestCase):
     )
     TRANSACTION_ISOLATION = False
     missed = None
+
+    def tearDown(self):
+        try:
+            self.clear_cache()
+        finally:
+            super().tearDown()
+
+    def clear_cache(self):
+        conargs = self.cluster.get_connect_args()
+        host, port = conargs['host'], conargs['port']
+        _call_system_api(host, port, f'/view-cache/{self.get_database_name()}', False)
 
     @contextmanager
     def _check_cache(self, is_missed):
@@ -155,84 +168,100 @@ class TestDbviewCache(tb.QueryTestCase):
 
         # -----------------------------------------------------------------------------
         # alter computable here
-        await self.con.execute('''
-            ALTER TYPE User {
-                ALTER property deck_cost using (count(.deck));
-            };
-        ''')
+        await self.con.execute(
+            '''
+                        ALTER TYPE User {
+                            ALTER property deck_cost using (count(.deck));
+                        };
+                    '''
+        )
         with self.assert_cache_missed():
             await self.con._fetchall_json("SELECT User {deck_cost}")
 
         with self.assert_cache_hit():
             await self.con._fetchall_json("SELECT User {deck_cost}")
 
-        await self.con.execute('''
-            ALTER TYPE User {
-                ALTER property deck_cost using (sum(.deck.cost));
-            };
-        ''')
+        await self.con.execute(
+            '''
+                        ALTER TYPE User {
+                            ALTER property deck_cost using (sum(.deck.cost));
+                        };
+                    '''
+        )
         with self.assert_cache_missed():
             await self.con._fetchall_json("SELECT User {deck_cost}")
 
     async def test_chained_computable_property(self):
         # -----------------------------------------------------------------------------
         # create chained computable here
-        await self.con.execute('''
-            ALTER TYPE User {
-                CREATE property deck_cost_alias := .deck_cost;
-                CREATE property deck_cost_alias2 := .deck_cost_alias;
-            };
-        ''')
+        await self.con.execute(
+            '''
+                        ALTER TYPE User {
+                            CREATE property deck_cost_alias := .deck_cost;
+                            CREATE property deck_cost_alias2 := .deck_cost_alias;
+                        };
+                    '''
+        )
 
         await self.con._fetchall_json("SELECT User {deck_cost_alias2}")
 
         # -----------------------------------------------------------------------------
         # alter computable here
-        await self.con.execute('''
-            ALTER TYPE User {
-                ALTER property deck_cost using (count(.deck));
-            };
-        ''')
+        await self.con.execute(
+            '''
+                        ALTER TYPE User {
+                            ALTER property deck_cost using (count(.deck));
+                        };
+                    '''
+        )
         with self.assert_cache_missed():
             await self.con._fetchall_json("SELECT User {deck_cost_alias2}")
 
-        await self.con.execute('''
-            ALTER TYPE User {
-                ALTER property deck_cost_alias using (.deck_cost + 1);
-            };
-        ''')
+        await self.con.execute(
+            '''
+                        ALTER TYPE User {
+                            ALTER property deck_cost_alias using (.deck_cost + 1);
+                        };
+                    '''
+        )
         with self.assert_cache_missed():
             await self.con._fetchall_json("SELECT User {deck_cost_alias2}")
 
-        await self.con.execute('''
-            ALTER TYPE User {
-                DROP property deck_cost_alias2;
-                DROP property deck_cost_alias;
-                ALTER property deck_cost using (sum(.deck.cost));
-            };
-        ''')
+        await self.con.execute(
+            '''
+                        ALTER TYPE User {
+                            DROP property deck_cost_alias2;
+                            DROP property deck_cost_alias;
+                            ALTER property deck_cost using (sum(.deck.cost));
+                        };
+                    '''
+        )
 
     async def test_computable_single_link_outbound(self):
         await self.con._fetchall_json("SELECT Card {best_award}")
 
         # -----------------------------------------------------------------------------
         # alter computable here
-        await self.con.execute('''
-            ALTER TYPE Card {
-                ALTER link best_award using
-                (select .awards limit 1);
-            };
-        ''')
+        await self.con.execute(
+            '''
+                        ALTER TYPE Card {
+                            ALTER link best_award using
+                            (select .awards limit 1);
+                        };
+                    '''
+        )
 
         with self.assert_cache_missed():
             await self.con._fetchall_json("SELECT Card {best_award}")
 
-        await self.con.execute('''
-            ALTER TYPE Card {
-                ALTER link best_award using
-                (select .awards order by .name limit 1);
-            };
-        ''')
+        await self.con.execute(
+            '''
+                        ALTER TYPE Card {
+                            ALTER link best_award using
+                            (select .awards order by .name limit 1);
+                        };
+                    '''
+        )
         with self.assert_cache_missed():
             await self.con._fetchall_json("SELECT Card {best_award}")
 
@@ -241,22 +270,26 @@ class TestDbviewCache(tb.QueryTestCase):
 
         # -----------------------------------------------------------------------------
         # alter computable here
-        await self.con.execute('''
-            ALTER TYPE Card {
-                ALTER link good_awards using
-                (SELECT .awards FILTER .name != '1st');
-            };
-        ''')
+        await self.con.execute(
+            '''
+                        ALTER TYPE Card {
+                            ALTER link good_awards using
+                            (SELECT .awards FILTER .name != '1st');
+                        };
+                    '''
+        )
 
         with self.assert_cache_missed():
             await self.con._fetchall_json("SELECT Card {good_awards}")
 
-        await self.con.execute('''
-            ALTER TYPE Card {
-                ALTER link good_awards using
-                (SELECT .awards FILTER .name != '3rd');
-            };
-        ''')
+        await self.con.execute(
+            '''
+                        ALTER TYPE Card {
+                            ALTER link good_awards using
+                            (SELECT .awards FILTER .name != '3rd');
+                        };
+                    '''
+        )
         with self.assert_cache_missed():
             await self.con._fetchall_json("SELECT Card {good_awards}")
 
@@ -265,24 +298,48 @@ class TestDbviewCache(tb.QueryTestCase):
 
         # -----------------------------------------------------------------------------
         # alter computable here
-        await self.con.execute('''
-            ALTER TYPE Card {
-                ALTER link owners using
-                (.<deck);
-            };
-        ''')
+        await self.con.execute(
+            '''
+                        ALTER TYPE Card {
+                            ALTER link owners using
+                            (.<deck);
+                        };
+                    '''
+        )
 
         with self.assert_cache_missed():
             await self.con._fetchall_json("SELECT Card {owners}")
 
-        await self.con.execute('''
-            ALTER TYPE Card {
-                ALTER link owners using
-                (.<deck[IS User]);
-            };
-        ''')
+        await self.con.execute(
+            '''
+                        ALTER TYPE Card {
+                            ALTER link owners using
+                            (.<deck[IS User]);
+                        };
+                    '''
+        )
         with self.assert_cache_missed():
             await self.con._fetchall_json("SELECT Card {owners}")
+
+    async def test_execute_script(self):
+        await self.con.execute(
+            "CREATE TYPE CacheInv_01 {CREATE REQUIRED PROPERTY prop1 -> std::str;};"
+            "INSERT CacheInv_01 {prop1 := 'aaa'};"
+        )
+
+        res = await self.con._fetchall_json("SELECT CacheInv_01.prop1")
+
+        self.assertEqual(json.loads(res), ['aaa'])
+
+        await self.con.execute("DELETE (SELECT CacheInv_01);"
+                               "ALTER TYPE CacheInv_01 {DROP PROPERTY prop1;};"
+                               "ALTER TYPE CacheInv_01 {CREATE REQUIRED PROPERTY prop1 -> std::int64;};"
+                               "INSERT CacheInv_01 {prop1 := 123};")
+
+        with self.assert_cache_missed():
+            res = await self.con._fetchall_json("SELECT CacheInv_01.prop1")
+
+        self.assertEqual(json.loads(res), [123])
 
 
 session_config1 = immutables.Map({'name': 'k', 'value': 'o'})

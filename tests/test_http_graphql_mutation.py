@@ -81,16 +81,21 @@ class TestGraphQLMutation(tb.GraphQLTestCase):
             }
         """
 
-        self.assert_graphql_query_result(r"""
-            mutation insert_ScalarTest {
+        self.assert_graphql_query_result(
+            r"""
+            mutation insert_ScalarTest(
+                           $datetime: StdScalarDatetime!,
+                           $date: StdScalarDate!,
+                           $time: StdScalarTime!,
+                           $local_datetime: StdScalarDatetime!) {
                 insert_ScalarTest(
                     data: [{
                         p_bool: false,
                         p_str: "New ScalarTest01",
-                        p_datetime: "2019-05-01T01:02:35.196811+00:00",
-                        p_local_datetime: "2019-05-01T01:02:35.196811",
-                        p_local_date: "2019-05-01",
-                        p_local_time: "01:02:35.196811",
+                        p_datetime: $datetime,
+                        p_local_datetime: $local_datetime,
+                        p_local_date: $date,
+                        p_local_time: $time,
                         p_duration: "21:30:00",
                         p_int16: 12345,
                         p_int32: 1234567890,
@@ -118,9 +123,14 @@ class TestGraphQLMutation(tb.GraphQLTestCase):
                     p_decimal
                 }
             }
-        """, {
-            "insert_ScalarTest": [data]
-        })
+            """,
+            {
+                "insert_ScalarTest": [data]
+            },
+            variables={"date": "2019-05-01", "time": "01:02:35.196811",
+                       "datetime": "2019-05-01T01:02:35.196811+00:00",
+                       "local_datetime": "2019-05-01T01:02:35.196811"}
+        )
 
         self.assert_graphql_query_result(validation_query, {
             "ScalarTest": [data]
@@ -1739,16 +1749,21 @@ class TestGraphQLMutation(tb.GraphQLTestCase):
             "ScalarTest": [orig_data]
         })
 
-        self.assert_graphql_query_result(r"""
-            mutation update_ScalarTest {
+        self.assert_graphql_query_result(
+            r"""
+            mutation update_ScalarTest(
+                           $datetime: StdScalarDatetime!,
+                           $date: StdScalarDate!,
+                           $time: StdScalarTime!,
+                           $local_datetime: StdScalarDatetime!) {
                 update_ScalarTest(
                     data: {
                         p_bool: {set: false},
                         p_str: {set: "Update ScalarTest01"},
-                        p_datetime: {set: "2019-05-01T01:02:35.196811+00:00"},
-                        p_local_datetime: {set: "2019-05-01T01:02:35.196811"},
-                        p_local_date: {set: "2019-05-01"},
-                        p_local_time: {set: "01:02:35.196811"},
+                        p_datetime: {set: $datetime},
+                        p_local_datetime: {set: $local_datetime},
+                        p_local_date: {set: $date},
+                        p_local_time: {set: $time},
                         p_duration: {set: "PT21H30M"},
                         p_int16: {set: 4321},
                         p_int32: {set: 876543210},
@@ -1779,9 +1794,16 @@ class TestGraphQLMutation(tb.GraphQLTestCase):
                     p_decimal
                 }
             }
-        """, {
-            "update_ScalarTest": [data]
-        })
+            """,
+            {
+                "update_ScalarTest": [data]
+            },
+            variables={
+                "date": "2019-05-01", "time": "01:02:35.196811",
+                "datetime": "2019-05-01T01:02:35.196811+00:00",
+                "local_datetime": "2019-05-01T01:02:35.196811"
+            }
+        )
 
         self.assert_graphql_query_result(validation_query, {
             "ScalarTest": [data]
@@ -1791,10 +1813,10 @@ class TestGraphQLMutation(tb.GraphQLTestCase):
             mutation update_ScalarTest(
                 $p_bool: Boolean,
                 $p_str: String,
-                $p_datetime: String,
-                $p_local_datetime: String,
-                $p_local_date: String,
-                $p_local_time: String,
+                $p_datetime: StdScalarDatetime,
+                $p_local_datetime: StdScalarDatetime,
+                $p_local_date: StdScalarDate,
+                $p_local_time: StdScalarTime,
                 $p_duration: String,
                 $p_int16: Int,
                 $p_int32: Int,
