@@ -84,7 +84,6 @@ class TestGraphQLMutation(tb.GraphQLTestCase):
         self.assert_graphql_query_result(
             r"""
             mutation insert_ScalarTest(
-                           $datetime: StdScalarDatetime!,
                            $date: StdScalarDate!,
                            $time: StdScalarTime!,
                            $local_datetime: StdScalarDatetime!) {
@@ -92,7 +91,7 @@ class TestGraphQLMutation(tb.GraphQLTestCase):
                     data: [{
                         p_bool: false,
                         p_str: "New ScalarTest01",
-                        p_datetime: $datetime,
+                        p_datetime: "2019-05-01T01:02:35.196811+00:00",
                         p_local_datetime: $local_datetime,
                         p_local_date: $date,
                         p_local_time: $time,
@@ -128,7 +127,6 @@ class TestGraphQLMutation(tb.GraphQLTestCase):
                 "insert_ScalarTest": [data]
             },
             variables={"date": "2019-05-01", "time": "01:02:35.196811",
-                       "datetime": "2019-05-01T01:02:35.196811+00:00",
                        "local_datetime": "2019-05-01T01:02:35.196811"}
         )
 
@@ -1752,7 +1750,6 @@ class TestGraphQLMutation(tb.GraphQLTestCase):
         self.assert_graphql_query_result(
             r"""
             mutation update_ScalarTest(
-                           $datetime: StdScalarDatetime!,
                            $date: StdScalarDate!,
                            $time: StdScalarTime!,
                            $local_datetime: StdScalarDatetime!) {
@@ -1760,7 +1757,7 @@ class TestGraphQLMutation(tb.GraphQLTestCase):
                     data: {
                         p_bool: {set: false},
                         p_str: {set: "Update ScalarTest01"},
-                        p_datetime: {set: $datetime},
+                        p_datetime: {set: "2019-05-01T01:02:35.196811+00:00"},
                         p_local_datetime: {set: $local_datetime},
                         p_local_date: {set: $date},
                         p_local_time: {set: $time},
@@ -1800,7 +1797,6 @@ class TestGraphQLMutation(tb.GraphQLTestCase):
             },
             variables={
                 "date": "2019-05-01", "time": "01:02:35.196811",
-                "datetime": "2019-05-01T01:02:35.196811+00:00",
                 "local_datetime": "2019-05-01T01:02:35.196811"
             }
         )
@@ -1813,7 +1809,7 @@ class TestGraphQLMutation(tb.GraphQLTestCase):
             mutation update_ScalarTest(
                 $p_bool: Boolean,
                 $p_str: String,
-                $p_datetime: StdScalarDatetime,
+                $p_datetime: String,
                 $p_local_datetime: StdScalarDatetime,
                 $p_local_date: StdScalarDate,
                 $p_local_time: StdScalarTime,

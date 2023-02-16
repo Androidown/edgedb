@@ -271,7 +271,7 @@ EDB_TO_GQL_SCALARS_MAP = {
     'std::decimal': GraphQLDecimal,
     'std::bool': GraphQLBoolean,
     'std::uuid': GraphQLID,
-    'std::datetime': GraphQLDatetime,
+    'std::datetime': GraphQLString,
     'std::duration': GraphQLString,
     'std::bytes': None,
 

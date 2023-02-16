@@ -3633,7 +3633,7 @@ class TestGraphQLFunctional(tb.GraphQLTestCase):
     def test_graphql_functional_variables_50(self):
         self.assert_graphql_query_result(
             r"""
-                query($val: StdScalarDatetime!) {
+                query($val: String!) {
                     ScalarTest(filter: {p_datetime: {eq: $val}}) {
                         p_datetime
                     }
@@ -3647,7 +3647,7 @@ class TestGraphQLFunctional(tb.GraphQLTestCase):
         )
         self.assert_graphql_query_result(
             r"""
-                query($val: StdScalarDatetime!) {
+                query($val: String!) {
                     ScalarTest(filter: {p_datetime: {eq: $val}}) {
                         p_datetime
                     }
