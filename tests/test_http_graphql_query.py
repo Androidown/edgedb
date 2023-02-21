@@ -3630,6 +3630,67 @@ class TestGraphQLFunctional(tb.GraphQLTestCase):
             variables={'color': 'GREEN', 'after': 'b'},
         )
 
+    def test_graphql_functional_variables_50(self):
+        # 可兼容使用String类型查询local_datetime
+        self.assert_graphql_query_result(
+            r"""
+                query($val: String!) {
+                    ScalarTest(filter: {p_local_datetime: {eq: $val}}) {
+                        p_local_datetime
+                    }
+                }
+            """, {
+                "ScalarTest": [{
+                    'p_local_datetime': '2018-05-07T20:01:22.306916',
+                }]
+            },
+            variables={"val": '2018-05-07T20:01:22.306916'},
+        )
+        self.assert_graphql_query_result(
+            r"""
+                query($val: String!) {
+                    ScalarTest(filter: {p_local_datetime: {eq: $val}}) {
+                        p_local_datetime
+                    }
+                }
+            """, {
+                "ScalarTest": []
+            },
+            # 只有string值完全一致才可以查询到
+            variables={"val": '2018-05-07 20:01:22.306916'},
+        )
+
+    def test_graphql_functional_variables_51(self):
+        self.assert_graphql_query_result(
+            r"""
+                query($val: StdScalarDatetime!) {
+                    ScalarTest(filter: {p_local_datetime: {eq: $val}}) {
+                        p_local_datetime
+                    }
+                }
+            """, {
+                "ScalarTest": [{
+                    'p_local_datetime': "2018-05-07T20:01:22.306916",
+                }]
+            },
+            variables={"val": "2018-05-07T20:01:22.306916"},
+        )
+        self.assert_graphql_query_result(
+            r"""
+                query($val: StdScalarDatetime!) {
+                    ScalarTest(filter: {p_local_datetime: {eq: $val}}) {
+                        p_local_datetime
+                    }
+                }
+            """, {
+                "ScalarTest": [{
+                    'p_local_datetime': "2018-05-07T20:01:22.306916",
+                }]
+            },
+            # 符合时间类型的cast条件时可以兼容查询
+            variables={"val": "2018-05-07 20:01:22.306916"},
+        )
+
     def test_graphql_functional_inheritance_01(self):
         # ISSUE: #709
         #

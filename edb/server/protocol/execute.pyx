@@ -33,6 +33,7 @@ from edb.common import debug
 from edb import edgeql
 from edb.edgeql import qltypes
 
+from edb.schema import schema as s_schema
 from edb.server import compiler
 from edb.server import config
 from edb.server import defines as edbdef
@@ -307,7 +308,7 @@ async def execute_script(
 
             side_effects = dbv.commit_implicit_tx(
                 user_schema, user_schema_unpacked, gmut_unpickled,
-                global_schema, cached_reflection
+                global_schema, cached_reflection, unit_group.affected_obj_ids
             )
             if side_effects:
                 signal_side_effects(dbv, side_effects)

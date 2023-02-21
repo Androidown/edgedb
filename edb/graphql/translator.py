@@ -84,7 +84,7 @@ INT_FLOAT_ERROR = re.compile(
 )
 STRING_DATELIKE_ERROR = re.compile(
     r"Variable '\$[^']+' of type 'String!?'"
-    r" used in position expecting type '(?:Datetime!?|Date!?|Time!?)'"
+    r" used in position expecting type '(?:StdScalarDatetime!?|StdScalarDate!?|StdScalarTime!?)'"
 )
 
 

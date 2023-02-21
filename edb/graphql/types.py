@@ -271,7 +271,7 @@ EDB_TO_GQL_SCALARS_MAP = {
     'std::decimal': GraphQLDecimal,
     'std::bool': GraphQLBoolean,
     'std::uuid': GraphQLID,
-    'std::datetime': GraphQLDatetime,
+    'std::datetime': GraphQLString,
     'std::duration': GraphQLString,
     'std::bytes': None,
 
@@ -296,6 +296,11 @@ GQL_TO_EDB_SCALARS_MAP = {
     'ID': 'uuid',
     'JSON': 'json',
     'StdScalarDate': 'cal::local_date',
+    # DeepModel只用到local_datetime类型
+    # 且需保证作为参数时
+    # 有字符串值->local_datetime值的类型转换支持
+    # 因此在SCALARS_MAP中为
+    # StdScalarDatetime<->local_datetime
     'StdScalarDatetime': 'cal::local_datetime',
     'StdScalarTime': 'cal::local_time'
 }
