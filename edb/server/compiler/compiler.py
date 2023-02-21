@@ -1957,8 +1957,13 @@ class Compiler:
                 unit.has_role_ddl = comp.has_role_ddl
                 unit.ddl_stmt_id = comp.ddl_stmt_id
                 if comp.user_schema is not None:
+                    if ctx.in_tx:
+                        mutation = ctx.state.get_mutation()
+                    else:
+                        mutation = comp.user_schema.get_mutation()
+
                     self.gather_affected_obj_ids(
-                        comp.user_schema, ctx, unit
+                        mutation, unit
                     )
                     self.send_schema_change(
                         comp.user_schema,
@@ -1975,8 +1980,12 @@ class Compiler:
                 unit.sql = comp.sql
                 unit.cacheable = comp.cacheable
                 if comp.user_schema is not None:
+                    if ctx.in_tx:
+                        mutation = ctx.state.get_mutation()
+                    else:
+                        mutation = comp.user_schema.get_mutation()
                     self.gather_affected_obj_ids(
-                        comp.user_schema, ctx, unit
+                        mutation, unit
                     )
                     self.send_schema_change(
                         comp.user_schema,
@@ -2009,8 +2018,12 @@ class Compiler:
                 unit.sql = comp.sql
                 unit.cacheable = comp.cacheable
                 if comp.user_schema is not None:
+                    if ctx.in_tx:
+                        mutation = ctx.state.get_mutation()
+                    else:
+                        mutation = comp.user_schema.get_mutation()
                     self.gather_affected_obj_ids(
-                        comp.user_schema, ctx, unit
+                        mutation, unit
                     )
                     self.send_schema_change(
                         comp.user_schema,
@@ -2130,8 +2143,9 @@ class Compiler:
                     f'unit has invalid "cardinality": {unit!r}')
 
         if mutations:
-            rv.user_schema_mutation = pickle.dumps(
-                s_schema.SchemaMutationLogger.merge(mutations), -1)
+            mutation = s_schema.SchemaMutationLogger.merge(mutations)
+            self.gather_affected_obj_ids(mutation, rv)
+            rv.user_schema_mutation = pickle.dumps(mutation, -1)
 
         return rv
 
@@ -2155,15 +2169,9 @@ class Compiler:
 
     @staticmethod
     def gather_affected_obj_ids(
-        user_schema: s_schema.FlatSchema,
-        ctx: CompileContext,
-        unit: dbstate.QueryUnit
+        mutation: s_schema.SchemaMutationLogger,
+        unit: Union[dbstate.QueryUnit, dbstate.QueryUnitGroup]
     ):
-        if ctx.in_tx:
-            mutation = ctx.state.get_mutation()
-        else:
-            mutation = user_schema.get_mutation()
-
         if mutation is None:
             return
 

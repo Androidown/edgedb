@@ -354,6 +354,8 @@ class QueryUnitGroup:
     units: List[QueryUnit] = dataclasses.field(default_factory=list)
     # Set of object ids that used in this Query
     ref_ids: Optional[Set[uuid.UUID]] = None
+    # Record affected object ids for cache clear
+    affected_obj_ids: Optional[Set[uuid.UUID]] = None
 
     def __iter__(self):
         return iter(self.units)

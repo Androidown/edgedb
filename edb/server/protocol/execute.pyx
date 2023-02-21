@@ -306,15 +306,9 @@ async def execute_script(
             else:
                 gmut_unpickled = pickle.loads(group_mutation)
 
-            affected_ids = set()
-            if gmut_unpickled and gmut_unpickled.ops and gmut_unpickled.ops[s_schema.SC.ITD]:
-                id_to_data_ops = gmut_unpickled.ops[s_schema.SC.ITD]
-                for op in id_to_data_ops:
-                    affected_ids.add(op.key)
-
             side_effects = dbv.commit_implicit_tx(
                 user_schema, user_schema_unpacked, gmut_unpickled,
-                global_schema, cached_reflection, affected_ids
+                global_schema, cached_reflection, unit_group.affected_obj_ids
             )
             if side_effects:
                 signal_side_effects(dbv, side_effects)
