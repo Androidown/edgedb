@@ -25,20 +25,15 @@ from edb.testbase import http as tb
 
 
 class TestHttpEdgeQL(tb.EdgeQLTestCase):
-    SCHEMA_DEFAULT = os.path.join(
-        os.path.dirname(__file__), 'schemas',
-        'graphql.esdl'
-    )
 
-    SCHEMA_OTHER = os.path.join(
-        os.path.dirname(__file__), 'schemas',
-        'graphql_other.esdl'
-    )
+    SCHEMA_DEFAULT = os.path.join(os.path.dirname(__file__), 'schemas',
+                                  'graphql.esdl')
 
-    SETUP = os.path.join(
-        os.path.dirname(__file__), 'schemas',
-        'graphql_setup.edgeql'
-    )
+    SCHEMA_OTHER = os.path.join(os.path.dirname(__file__), 'schemas',
+                                'graphql_other.esdl')
+
+    SETUP = os.path.join(os.path.dirname(__file__), 'schemas',
+                         'graphql_setup.edgeql')
 
     # EdgeQL/HTTP queries cannot run in a transaction
     TRANSACTION_ISOLATION = False
@@ -46,8 +41,7 @@ class TestHttpEdgeQL(tb.EdgeQLTestCase):
     def test_http_edgeql_proto_errors_01(self):
         with self.http_con() as con:
             data, headers, status = self.http_con_request(
-                con, {}, path='non-existant'
-            )
+                con, {}, path='non-existant')
 
             self.assertEqual(status, 404)
             self.assertEqual(headers['connection'], 'close')
@@ -71,8 +65,7 @@ class TestHttpEdgeQL(tb.EdgeQLTestCase):
         with self.http_con() as con:
             con.send(b'blah\r\n\r\n\r\n\r\n')
             data, headers, status = self.http_con_request(
-                con, {'query': 'blah', 'variables': 'bazz'}
-            )
+                con, {'query': 'blah', 'variables': 'bazz'})
 
             self.assertEqual(status, 400)
             self.assertEqual(headers['connection'], 'close')
@@ -135,9 +128,8 @@ class TestHttpEdgeQL(tb.EdgeQLTestCase):
 
     def test_http_edgeql_query_04(self):
         with self.assertRaisesRegex(
-            edgedb.QueryError,
-            r'parameter \$name is required'
-        ):
+                edgedb.QueryError,
+                r'parameter \$name is required'):
             self.edgeql_query(
                 r"""
                     SELECT Setting {
@@ -149,9 +141,8 @@ class TestHttpEdgeQL(tb.EdgeQLTestCase):
             )
 
         with self.assertRaisesRegex(
-            edgedb.QueryError,
-            r'parameter \$name is required'
-        ):
+                edgedb.QueryError,
+                r'parameter \$name is required'):
             self.edgeql_query(
                 r"""
                     SELECT Setting {
@@ -160,14 +151,11 @@ class TestHttpEdgeQL(tb.EdgeQLTestCase):
                     }
                     FILTER .name = <str>$name;
                 """,
-                variables={'name': None}
-            )
+                variables={'name': None})
 
     def test_http_edgeql_query_05(self):
-        with self.assertRaisesRegex(
-            edgedb.InvalidReferenceError,
-            r'UNRECOGNIZABLE'
-        ):
+        with self.assertRaisesRegex(edgedb.InvalidReferenceError,
+                                    r'UNRECOGNIZABLE'):
             self.edgeql_query(
                 r"""
                     SELECT UNRECOGNIZABLE {
@@ -255,18 +243,16 @@ class TestHttpEdgeQL(tb.EdgeQLTestCase):
         )
 
         with self.assertRaisesRegex(
-            edgedb.QueryError,
-            r'parameter \$x is required'
-        ):
+                edgedb.QueryError,
+                r'parameter \$x is required'):
             self.edgeql_query(
                 r'''SELECT <REQUIRED str>$x ?? '-default' ''',
                 variables={'x': None},
             )
 
         with self.assertRaisesRegex(
-            edgedb.QueryError,
-            r'parameter \$x is required'
-        ):
+                edgedb.QueryError,
+                r'parameter \$x is required'):
             self.edgeql_query(
                 r'''SELECT <str>$x ?? '-default' ''',
                 variables={'x': None},
