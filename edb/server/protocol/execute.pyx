@@ -33,7 +33,6 @@ from edb.common import debug
 from edb import edgeql
 from edb.edgeql import qltypes
 
-from edb.schema import schema as s_schema
 from edb.server import compiler
 from edb.server import config
 from edb.server import defines as edbdef
@@ -447,6 +446,7 @@ async def parse_execute_json(
     globals_: Mapping[str, Any] = immutables.Map(),
     output_format: compiler.OutputFormat = compiler.OutputFormat.JSON,
     query_cache_enabled: Optional[bool] = None,
+    query_only: bool = False
 ) -> bytes:
     if query_cache_enabled is None:
         query_cache_enabled = not (
@@ -459,12 +459,14 @@ async def parse_execute_json(
         protocol_version=edbdef.CURRENT_PROTOCOL,
     )
 
+    allow_cap = compiler.Capability(0) if query_only else compiler.Capability.MODIFICATIONS
+
     query_req = dbview.QueryRequestInfo(
         edgeql.Source.from_string(query),
         protocol_version=edbdef.CURRENT_PROTOCOL,
         input_format=compiler.InputFormat.JSON,
         output_format=output_format,
-        allow_capabilities=compiler.Capability.MODIFICATIONS,
+        allow_capabilities=allow_cap,
     )
 
     compiled = await dbv.parse(query_req)

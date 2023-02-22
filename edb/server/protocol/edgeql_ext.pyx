@@ -48,7 +48,12 @@ async def handle_request(
     list args,
     object server,
 ):
-    if args != []:
+    query_only = False
+
+    if args == ['query']:
+        query_only = True
+
+    elif args != []:
         response.body = b'Unknown path'
         response.status = http.HTTPStatus.NOT_FOUND
         response.close_connection = True
@@ -126,6 +131,7 @@ async def handle_request(
             query,
             variables=variables or {},
             globals_=globals_ or {},
+            query_only=query_only
         )
     except Exception as ex:
         if debug.flags.server:
