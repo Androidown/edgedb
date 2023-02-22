@@ -317,3 +317,20 @@ class TestHttpEdgeQL(tb.EdgeQLTestCase):
                 globals={'default::test_global_str': 'foo'},
                 use_http_post=use_http_post,
             )
+
+
+class TestHttpEdgeQLReadOnly(TestHttpEdgeQL):
+    @classmethod
+    def get_extension_path(cls):
+        return 'edgeql/query'
+
+    def test_http_edgeql_query_readonly(self):
+        with self.assertRaisesRegex(
+            edgedb.DisabledCapabilityError,
+            r'cannot execute data modification queries'
+        ):
+            self.edgeql_query(
+                r"""
+                   select (delete ScalarTest filter .p_bool=true);
+                """
+            )
