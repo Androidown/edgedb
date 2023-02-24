@@ -446,7 +446,7 @@ async def parse_execute_json(
     globals_: Mapping[str, Any] = immutables.Map(),
     output_format: compiler.OutputFormat = compiler.OutputFormat.JSON,
     query_cache_enabled: Optional[bool] = None,
-    query_only: bool = False
+    read_only: bool = False
 ) -> bytes:
     if query_cache_enabled is None:
         query_cache_enabled = not (
@@ -459,7 +459,7 @@ async def parse_execute_json(
         protocol_version=edbdef.CURRENT_PROTOCOL,
     )
 
-    allow_cap = compiler.Capability(0) if query_only else compiler.Capability.MODIFICATIONS
+    allow_cap = compiler.Capability(0) if read_only else compiler.Capability.MODIFICATIONS
 
     query_req = dbview.QueryRequestInfo(
         edgeql.Source.from_string(query),
@@ -467,6 +467,7 @@ async def parse_execute_json(
         input_format=compiler.InputFormat.JSON,
         output_format=output_format,
         allow_capabilities=allow_cap,
+        read_only=read_only
     )
 
     compiled = await dbv.parse(query_req)

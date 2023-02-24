@@ -48,10 +48,10 @@ async def handle_request(
     list args,
     object server,
 ):
-    query_only = False
+    read_only = False
 
     if args == ['query']:
-        query_only = True
+        read_only = True
 
     elif args != []:
         response.body = b'Unknown path'
@@ -131,7 +131,7 @@ async def handle_request(
             query,
             variables=variables or {},
             globals_=globals_ or {},
-            query_only=query_only
+            read_only=read_only
         )
     except Exception as ex:
         if debug.flags.server:

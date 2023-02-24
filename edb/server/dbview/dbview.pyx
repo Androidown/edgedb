@@ -114,6 +114,7 @@ cdef class QueryRequestInfo:
             self.inline_typenames,
             self.inline_objectids,
             self.module,
+            self.read_only
         ))
 
     def __hash__(self):
@@ -130,7 +131,8 @@ cdef class QueryRequestInfo:
             self.inline_typeids == other.inline_typeids and
             self.inline_typenames == other.inline_typenames and
             self.inline_objectids == other.inline_objectids and
-            self.module == other.module
+            self.module == other.module and
+            self.read_only == other.read_only
         )
 
 
