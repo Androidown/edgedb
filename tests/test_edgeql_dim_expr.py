@@ -870,6 +870,61 @@ class TestDimExpr(tb.QueryTestCase):
             ]
         )
 
+    async def test_edgeql_tree_bounded_attr(self):
+        await self.assert_query_result(
+            r"""
+                SELECT Tree {
+                    name,
+                    bases := array_agg(cal::base(
+                        (select Tree filter .name = .name)
+                    ).name)
+                }
+                ORDER BY .name;
+            """,
+            [
+                {"name": "0", "bases": ["02", "000", "010"]},
+                {"name": "00", "bases": ["000"]},
+                {"name": "000", "bases": ["000"]},
+                {"name": "01", "bases": ["010"]},
+                {"name": "010", "bases": ["010"]},
+                {"name": "02", "bases": ["02"]},
+                {"name": "1", "bases": ["10", "11", "12", "13"]},
+                {"name": "10", "bases": ["10"]},
+                {"name": "11", "bases": ["11"]},
+                {"name": "12", "bases": ["12"]},
+                {"name": "13", "bases": ["13"]},
+            ]
+        )
+
+    async def test_edgeql_graph_bounded_attr(self):
+        await self.assert_query_result(
+            r"""
+                SELECT Graph {
+                    name,
+                    bases := array_agg(cal::base(
+                        (select Graph filter .name = .name)
+                    ).name)
+                }
+                ORDER BY .name;
+            """,
+            [
+                {"name": '0', "bases": ['0001', '0002', '0003', '0004', '0005', '0006']},
+                {"name": '0001', "bases": ['0001']},
+                {"name": '0002', "bases": ['0002']},
+                {"name": '0003', "bases": ['0003']},
+                {"name": '0004', "bases": ['0004']},
+                {"name": '0005', "bases": ['0005']},
+                {"name": '0006', "bases": ['0006']},
+                {"name": '01', "bases": ['0001', '0002', '0003']},
+                {"name": '02', "bases": ['0004']},
+                {"name": '03', "bases": ['0005', '0006']},
+                {"name": '1', "bases": ['0001', '0002', '0003', '0004', '0005', '0006']},
+                {"name": '11', "bases": ['0001', '0004', '0005']},
+                {"name": '12', "bases": ['0002', '0004', '0006']},
+                {"name": '13', "bases": ['0003', '0004', '0006']},
+            ]
+        )
+
 
 class TestDimExprSourceProp(TestDimExpr):
     SCHEMA = os.path.join(

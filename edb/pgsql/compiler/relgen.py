@@ -3765,7 +3765,7 @@ def process_set_as_traverse_function(
 
         cte_src_query.from_clause.append(src_table)
 
-        ctx2 = cstack.enter_context(ctx1.newrel())
+        ctx2 = cstack.enter_context(ctx.subrel())
         rvar = get_set_rvar(rel_src, ctx=ctx2)
 
         sub_query = ctx2.rel
@@ -3844,7 +3844,7 @@ def process_set_as_traverse_function(
         )
     )
 
-    new_rvars = new_stmt_set_rvar(ir_set, stmt, ctx=ctx)
+    new_rvars = new_stmt_set_rvar(ir_set, stmt, ctx=ctx, aspects=('source', 'value'))
     main_query = pgast.SelectStmt()
 
     main_query.append_cte(cte)
@@ -3853,7 +3853,6 @@ def process_set_as_traverse_function(
         relation=pgast.Relation(name=cte_name),
         alias=pgast.Alias(aliasname=cte_name)
     ))
-
 
     if function_name in ('cal::base', 'cal::ibase'):
         main_query.where_clause = pgast.Expr(
