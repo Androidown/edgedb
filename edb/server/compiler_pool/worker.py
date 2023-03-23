@@ -197,7 +197,7 @@ def compile(
         LAST_STATE = cstate
         pickled_state = None
         if cstate is not None:
-            pickled_state = pickle.dumps(cstate, -1)
+            pickled_state = pickle.dumps(cstate.compress(), -1)
 
         return units, pickled_state
 
