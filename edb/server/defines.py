@@ -55,7 +55,7 @@ _MAX_QUERIES_CACHE = 1000
 # size for pgsql bytes length to be stored to disk cache
 SQL_BYTES_LENGTH_DISK_CACHE = 5000
 # max count for eql in disk cache per db index
-DISK_CACHE_MAX_COUNT = 10000
+DISK_CACHE_MAX_COUNT = 500
 # special constant for mark object id refs for eql as needed to be dropped as soon as schema delta happened
 DROP_IN_SCHEMA_DELTA = 'DROP_IN_SCHEMA_DELTA'
 

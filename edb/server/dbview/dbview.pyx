@@ -486,6 +486,18 @@ cdef class Database:
                 if self.user_schema is None:
                     await self._index._server.introspect_db(self.name)
 
+    async def persist_schema(self):
+        async with self._introspection_lock:
+            await self._index._server.persist_user_schema(self.name)
+
+    def schedule_schema_persistence(self):
+        asyncio.create_task(self.persist_schema())
+
+    def schedule_stdobj_inhview_update(self, sql):
+        asyncio.create_task(
+            self._index._server
+              .update_std_object_inhview(self.name, sql)
+        )
 
 cdef class DatabaseConnectionView:
 
@@ -554,6 +566,8 @@ cdef class DatabaseConnectionView:
         self._in_tx_state_serializer = None
         self._tx_error = False
         self._in_tx_dbver = 0
+        self._in_tx_stdview_sqls = None
+        self._in_tx_sp_sqls = []
         self._invalidate_local_cache()
 
     cdef clear_tx_error(self):
@@ -1030,6 +1044,10 @@ cdef class DatabaseConnectionView:
         if query_unit.global_schema is not None:
             self._in_tx_global_schema_pickled = query_unit.global_schema
             self._in_tx_global_schema = None
+        if query_unit.stdview_sqls is not None:
+            self._in_tx_stdview_sqls = query_unit.stdview_sqls
+        if query_unit.schema_refl_sqls is not None:
+            self._in_tx_sp_sqls.append(query_unit.schema_refl_sqls)
 
     cdef start_implicit(self, query_unit):
         if self._tx_error:
@@ -1042,6 +1060,13 @@ cdef class DatabaseConnectionView:
 
     cdef on_error(self):
         self.tx_error()
+
+    async def in_tx_persist_schema(self, be_conn):
+        sqls = sum(self._in_tx_sp_sqls, ())
+        if not sqls:
+            return
+        await be_conn.sql_execute(sqls)
+        self._in_tx_sp_sqls.clear()
 
     async def on_success(self, query_unit, new_types):
         with util.disable_gc():
@@ -1077,6 +1102,9 @@ cdef class DatabaseConnectionView:
                     None,
                     query_unit.affected_obj_ids
                 )
+                self._db.schedule_schema_persistence()
+                if query_unit.stdview_sqls:
+                    self._db.schedule_stdobj_inhview_update(query_unit.stdview_sqls)
                 side_effects |= SideEffects.SchemaChanges
             if query_unit.system_config:
                 side_effects |= SideEffects.InstanceConfigChanges
@@ -1120,6 +1148,9 @@ cdef class DatabaseConnectionView:
                     None,
                     query_unit.affected_obj_ids
                 )
+                self._db.schedule_schema_persistence()
+                if self._in_tx_stdview_sqls:
+                    self._db.schedule_stdobj_inhview_update(self._in_tx_stdview_sqls)
                 side_effects |= SideEffects.SchemaChanges
             if self._in_tx_with_sysconfig:
                 side_effects |= SideEffects.InstanceConfigChanges

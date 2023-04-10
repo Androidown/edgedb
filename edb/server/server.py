@@ -653,6 +653,8 @@ class Server(ha_base.ClusterProtocol):
         self._fetch_roles()
 
     async def introspect_user_schema(self, conn):
+        await self._persist_user_schema(conn)
+
         json_data = await conn.sql_fetch_val(self._local_intro_query)
 
         base_schema = s_schema.ChainedSchema(
@@ -754,6 +756,42 @@ class Server(ha_base.ClusterProtocol):
                 reflection_cache=reflection_cache,
                 backend_ids=backend_ids,
             )
+        finally:
+            self.release_pgcon(dbname, conn)
+
+    async def _persist_user_schema(self, conn):
+        persist_sqls = await conn.sql_fetch(
+            b'''\
+            SELECT "version_id", convert_from("sql", 'utf8') from
+            edgedbinstdata.schema_persist_history ORDER BY "timestamp"
+        '''
+        )
+        if not persist_sqls:
+            logger.debug(f"No schema persistence to do.")
+            return
+
+        for vid, sql in persist_sqls:
+            await conn.sql_execute(sql)
+            logger.debug(f"Finish schema persistence for <{uuid.UUID(bytes=vid)}>")
+
+    async def persist_user_schema(self, dbname):
+        conn = await self._acquire_intro_pgcon(dbname)
+        if not conn:
+            return
+
+        try:
+            await self._persist_user_schema(conn)
+        finally:
+            self.release_pgcon(dbname, conn)
+
+    async def update_std_object_inhview(self, dbname, sql):
+        conn = await self._acquire_intro_pgcon(dbname)
+        if not conn:
+            return
+
+        try:
+            await conn.sql_execute(sql)
+            logger.debug(f"Finish std object inhview update for <{dbname}>")
         finally:
             self.release_pgcon(dbname, conn)
 

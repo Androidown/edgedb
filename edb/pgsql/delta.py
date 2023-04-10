@@ -2914,6 +2914,7 @@ class CompositeMetaCommand(MetaCommand):
         exclude_children: FrozenSet[s_sources.Source] = frozenset(),
         exclude_ptrs: FrozenSet[s_pointers.Pointer] = frozenset(),
         exclude_self: bool = False,
+        self_only: bool = False,
         pg_schema: Optional[str] = None,
         from_command: Optional[sd.Command] = None,
         context: Optional[sd.CommandContext] = None
@@ -3005,14 +3006,15 @@ class CompositeMetaCommand(MetaCommand):
             ptrs[sn.UnqualName('source')] = ('source', ('uuid',))
 
         components = []
-        if not exclude_self:
+        if self_only or not exclude_self:
             components.append(
                 cls._get_select_from(schema, obj, ptrs, pg_schema))
 
-        components.extend(
-            cls._get_select_from(schema, child, ptrs, pg_schema)
-            for child in descendants
-        )
+        if not self_only:
+            components.extend(
+                cls._get_select_from(schema, child, ptrs, pg_schema)
+                for child in descendants
+            )
 
         query = '\nUNION ALL\n'.join(filter(None, components))
 
@@ -3125,8 +3127,27 @@ class CompositeMetaCommand(MetaCommand):
             context=context
         )
         if inhview is not None:
-            self.pgops.add(dbops.CreateView(view=inhview, or_replace=True))
-            self.pgops.add(dbops.Comment(
+            if (
+                not context.stdmode
+                and not context.testmode
+                and obj.get_name(schema) in (
+                    sn.QualName('std', 'Object'),
+                    sn.QualName('std', 'BaseObject')
+                )
+            ):
+                pgops = context.top().op.std_inhview_updates
+                tmp_inhview = self.get_inhview(
+                    schema,
+                    obj,
+                    self_only=True,
+                    context=context
+                )
+                self.pgops.add(dbops.CreateView(view=tmp_inhview, or_replace=True))
+            else:
+                pgops = self.pgops
+
+            pgops.add(dbops.CreateView(view=inhview, or_replace=True))
+            pgops.add(dbops.Comment(
                 object=inhview,
                 text=(
                     f"{obj.get_verbosename(schema, with_parent=True)} "
@@ -7200,6 +7221,8 @@ class DeltaRoot(MetaCommand, adapts=sd.DeltaRoot):
         super().__init__(**kwargs)
         self._renames = {}
         self.config_ops = []
+        # op for recreating std::Object and std::BaseObject view
+        self.std_inhview_updates = ordered.OrderedSet()
 
     def apply(
         self,
@@ -7223,6 +7246,10 @@ class DeltaRoot(MetaCommand, adapts=sd.DeltaRoot):
 
     def generate(self, block: dbops.PLBlock) -> None:
         for op in self.pgops:
+            op.generate(block)
+
+    def generate_std_inhview(self, block: dbops.PLBlock) -> None:
+        for op in self.std_inhview_updates:
             op.generate(block)
 
 

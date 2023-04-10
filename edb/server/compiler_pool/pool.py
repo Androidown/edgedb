@@ -35,6 +35,7 @@ import sys
 import time
 
 import immutables
+from edb.common.util import stopwatch
 
 from edb.common import debug
 from edb.common import taskgroup
@@ -336,6 +337,7 @@ class AbstractPool:
     def get_template_pid(self):
         return None
 
+    @stopwatch
     async def _compute_compile_preargs(
         self,
         worker,
@@ -494,6 +496,13 @@ class AbstractPool:
         db_states: state.DatabaseState = worker._dbs.get(dbname)
         db_states = db_states._replace(user_schema_version=ver_id)
         worker._dbs = worker._dbs.set(dbname, db_states)
+
+    async def get_worker_schema_id_coro_safe(self, pid, dbname):
+        worker = await self._acquire_worker(condition=lambda w: w.get_pid() == pid)
+        try:
+            return worker.get_store_user_schema_id(dbname)
+        finally:
+            self._release_worker(worker)
 
     async def _apply_user_schema_mutation(self, pid, dbname, target_id):
         worker = await self._acquire_worker(condition=lambda w: w.get_pid() == pid)
@@ -663,6 +672,7 @@ class AbstractPool:
 
             await asyncio.gather(*db_init_tasks)
 
+    @stopwatch
     async def compile(
         self,
         dbname,
@@ -1128,6 +1138,10 @@ class BaseLocalPool(
     def _update_user_schema_ver_id(self, worker, dbname, ver_id):
         super()._update_user_schema_ver_id(worker, dbname, ver_id)
         self._mut_history[dbname].try_trim_history(self._workers.values())
+
+    async def get_worker_schema_id_coro_safe(self, pid, dbname):
+        async with self._worker_locks[pid]:
+            return await super().get_worker_schema_id_coro_safe(pid, dbname)
 
 
 @srvargs.CompilerPoolMode.Fixed.assign_implementation

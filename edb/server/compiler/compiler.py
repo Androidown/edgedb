@@ -33,6 +33,7 @@ import textwrap
 import uuid
 
 import immutables
+from edb.common.util import stopwatch
 
 from edb import errors
 
@@ -56,6 +57,8 @@ from edb.ir import staeval as ireval
 from edb.ir import ast as irast
 
 from edb.schema import database as s_db
+from edb.schema import extensions as s_ext
+from edb.schema import roles as s_roles
 from edb.schema import ddl as s_ddl
 from edb.schema import delta as s_delta
 from edb.schema import expr as s_expr
@@ -382,11 +385,13 @@ class Compiler:
         context.external_view = ctx.external_view
         return context
 
+    @stopwatch
     def _process_delta(self, ctx: CompileContext, delta):
         """Adapt and process the delta command."""
 
         current_tx = ctx.state.current_tx()
         schema = current_tx.get_schema(self._std_schema)
+        ver_id = current_tx.get_user_schema().version_id
 
         if debug.flags.delta_plan:
             debug.header('Canonical Delta Plan')
@@ -408,33 +413,88 @@ class Compiler:
 
         if db_cmd:
             block = pg_dbops.SQLBlock()
-            new_types = frozenset()
+            new_be_types = new_types = frozenset()
         else:
             block = pg_dbops.PLTopBlock()
+
+            def may_has_backend_id(_id):
+                obj = schema.get_by_id(_id, None)
+                if obj is None:
+                    return False
+                return not isinstance(obj, (s_objtypes.ObjectType, s_pointers.Pointer))
+
             new_types = frozenset(str(tid) for tid in pgdelta.new_types)
+            new_be_types = frozenset(
+                str(tid) for tid in pgdelta.new_types
+                if may_has_backend_id(tid)
+            )
 
         # Generate SQL DDL for the delta.
         pgdelta.generate(block)
 
-        # Generate schema storage SQL (DML into schema storage tables).
+        # schema persistence asynchronizable
+        schema_peristence_async = (
+            not db_cmd
+            and not new_be_types
+            and not any(
+                isinstance(c, (s_ext.ExtensionCommand,
+                               s_ext.ExtensionPackageCommand,
+                               s_roles.RoleCommand))
+                for c in pgdelta.get_subcommands()
+            )
+            and not context.testmode
+        )
+
         subblock = block.add_block()
+
+        # Generate schema storage SQL (DML into schema storage tables).
+        if schema_peristence_async:
+            refl_block = pg_dbops.PLTopBlock()
+        else:
+            refl_block = None
+
         self._compile_schema_storage_in_delta(
-            ctx, pgdelta, subblock, context=context)
+            ctx, pgdelta, subblock, context=context,
+            schema_persist_block=refl_block
+        )
 
-        return block, new_types, pgdelta.config_ops
+        if schema_peristence_async:
+            refl_block.add_command(f"""\
+                DELETE FROM "edgedbinstdata"."schema_persist_history"
+                WHERE version_id = '{str(ver_id)}'::uuid;\
+            """)
+            main_block_sub = block.add_block()
+            main_block_sub.add_command(f"""\
+                INSERT INTO "edgedbinstdata"."schema_persist_history"
+                ("version_id", "sql") values (
+                    '{str(ver_id)}'::uuid,
+                    {pg_common.quote_bytea_literal(refl_block.to_string().encode())}
+                );\
+            """)
 
+        if pgdelta.std_inhview_updates:
+            stdview_block = pg_dbops.PLTopBlock()
+            pgdelta.generate_std_inhview(stdview_block)
+        else:
+            stdview_block = None
+
+        return block, refl_block, stdview_block, new_types, new_be_types, pgdelta.config_ops
+
+    @stopwatch
     def _compile_schema_storage_in_delta(
         self,
         ctx: CompileContext,
         delta: s_delta.Command,
         block: pg_dbops.SQLBlock,
         context: Optional[s_delta.CommandContext] = None,
+        schema_persist_block: Optional[pg_dbops.SQLBlock] = None,
     ):
 
         current_tx = ctx.state.current_tx()
         schema = current_tx.get_schema(self._std_schema)
 
         meta_blocks: List[Tuple[str, Dict[str, Any]]] = []
+        sp_block = schema_persist_block or block
 
         # Use a provided context if one was passed in, which lets us
         # used the cached values for resolved properties. (Which is
@@ -492,9 +552,12 @@ class Compiler:
                 for argname in argnames:
                     argvals.append(pg_common.quote_literal(args[argname]))
 
-                block.add_command(f'''
-                    PERFORM {pg_common.qname(*fname)}({", ".join(argvals)});
-                ''')
+                cmd = f'PERFORM {pg_common.qname(*fname)}({", ".join(argvals)});\n'
+                if args.get('__classname') == '"__schema_version__"':
+                    # schema version update should always goes to main block
+                    block.add_command(cmd)
+                else:
+                    sp_block.add_command(cmd)
 
         ctx.state.current_tx().update_cached_reflection(cache_mm.finish())
 
@@ -985,7 +1048,10 @@ class Compiler:
 
         # Apply and adapt delta, build native delta plan, which
         # will also update the schema.
-        block, new_types, config_ops = self._process_delta(ctx, delta)
+        (
+            block, refl_block, stdview_block,
+            new_types, new_be_types, config_ops
+        ) = self._process_delta(ctx, delta)
 
         ddl_stmt_id: Optional[str] = None
 
@@ -1000,30 +1066,54 @@ class Compiler:
                 # Inject a query returning backend OIDs for the newly
                 # created types.
                 ddl_stmt_id = str(uuidgen.uuid1mc())
-                new_type_ids = [
-                    f'{pg_common.quote_literal(tid)}::uuid'
-                    for tid in new_types
-                ]
+
+                if new_be_types:
+                    new_type_ids = [
+                        f'{pg_common.quote_literal(tid)}::uuid'
+                        for tid in new_types
+                    ]
+                    json_build_sql = f'''\
+                        SELECT
+                            json_object_agg(
+                                "id"::text,
+                                "backend_id"
+                            )
+                        FROM
+                            edgedb."_SchemaType"
+                        WHERE
+                                "id" = any(ARRAY[
+                                    {', '.join(new_type_ids)}
+                                ])
+                    '''
+                else:
+                    id_list = ','.join((
+                        f'{pg_common.quote_literal(tid)},null'
+                        for tid in new_types
+                    ))
+
+                    json_build_sql = f'''\
+                        SELECT json_build_object({id_list})
+                    '''
+
                 sql += (textwrap.dedent(f'''\
                     SELECT
                         json_build_object(
                             'ddl_stmt_id',
                             {pg_common.quote_literal(ddl_stmt_id)},
                             'new_types',
-                            (SELECT
-                                json_object_agg(
-                                    "id"::text,
-                                    "backend_id"
-                                )
-                                FROM
-                                edgedb."_SchemaType"
-                                WHERE
-                                    "id" = any(ARRAY[
-                                        {', '.join(new_type_ids)}
-                                    ])
-                            )
+                            ({json_build_sql})
                         )::text;
                 ''').encode('utf-8'),)
+
+        if refl_block is not None:
+            schema_refl_sqls = (refl_block.to_string().encode('utf-8'),)
+        else:
+            schema_refl_sqls = None
+
+        if stdview_block is not None:
+            stdview_sqls = (stdview_block.to_string().encode('utf-8'),)
+        else:
+            stdview_sqls = None
 
         create_db = None
         drop_db = None
@@ -1056,6 +1146,8 @@ class Compiler:
             cached_reflection=current_tx.get_cached_reflection_if_updated(),
             global_schema=current_tx.get_global_schema_if_updated(),
             config_ops=config_ops,
+            schema_refl_sqls=schema_refl_sqls,
+            stdview_sqls=stdview_sqls
         )
 
     def _compile_ql_migration(
@@ -1732,6 +1824,7 @@ class Compiler:
             globals=globals,
         )
 
+    @stopwatch
     def _compile_dispatch_ql(
         self,
         ctx: CompileContext,
@@ -1951,6 +2044,9 @@ class Compiler:
 
             elif isinstance(comp, dbstate.DDLQuery):
                 unit.sql = comp.sql
+                unit.schema_refl_sqls = comp.schema_refl_sqls
+                if not is_script or is_trailing_stmt:
+                    unit.stdview_sqls = comp.stdview_sqls
                 unit.create_db = comp.create_db
                 unit.drop_db = comp.drop_db
                 unit.create_db_template = comp.create_db_template
@@ -2298,6 +2394,7 @@ class Compiler:
 
         return result
 
+    @stopwatch
     def compile(
         self,
         user_schema: s_schema.Schema,

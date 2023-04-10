@@ -147,6 +147,8 @@ cdef class DatabaseConnectionView:
         object _in_tx_global_schema_pickled
         object _in_tx_global_schema
         object _in_tx_new_types
+        object _in_tx_stdview_sqls
+        object _in_tx_sp_sqls
         int _in_tx_dbver
         bint _in_tx
         bint _in_tx_with_ddl

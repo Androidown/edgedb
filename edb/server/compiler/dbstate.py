@@ -140,6 +140,8 @@ class DDLQuery(BaseQuery):
     has_role_ddl: bool = False
     ddl_stmt_id: Optional[str] = None
     config_ops: List[config.Operation] = dataclasses.field(default_factory=list)
+    schema_refl_sqls: Tuple[bytes, ...] = None
+    stdview_sqls: Tuple[bytes, ...] = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -301,6 +303,9 @@ class QueryUnit:
     # If present, represents the future global schema state
     # after the command is run. The schema is pickled.
     global_schema: Optional[bytes] = None
+    # schema reflection sqls, only available if this is a ddl stmt.
+    schema_refl_sqls: Tuple[bytes, ...] = None
+    stdview_sqls: Tuple[bytes, ...] = None
 
     @property
     def has_ddl(self) -> bool:

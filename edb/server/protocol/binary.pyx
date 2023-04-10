@@ -2096,6 +2096,9 @@ cdef class EdgeConnection(frontend.FrontendConnection):
                             ddl_ret = await pgcon.run_ddl(query_unit)
                             if ddl_ret and ddl_ret['new_types']:
                                 new_types = ddl_ret['new_types']
+                            if query_unit.schema_refl_sqls:
+                                # no performance optimization
+                                await pgcon.sql_execute(query_unit.schema_refl_sqls)
                         else:
                             await pgcon.sql_execute(query_unit.sql)
                 except Exception:

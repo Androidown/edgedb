@@ -48,7 +48,7 @@ class MessageStream:
                 else:
                     return
 
-            if self._curmsg_len > 0 and len(self._buffer) >= self._curmsg_len:
+            if 0 < self._curmsg_len <= len(self._buffer):
                 msg = self._buffer[:self._curmsg_len]
                 self._buffer = self._buffer[self._curmsg_len:]
                 self._curmsg_len = -1

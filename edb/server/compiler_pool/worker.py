@@ -22,8 +22,10 @@ from typing import *  # NoQA
 
 import pickle
 import os
+import sys
 
 import immutables
+from edb.common.util import stopwatch, GlobalWatch
 from loguru import logger
 
 from edb import edgeql, errors
@@ -50,6 +52,8 @@ GLOBAL_SCHEMA: s_schema.FlatSchema
 INSTANCE_CONFIG: immutables.Map[str, config.SettingValue]
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 LOG_FILE = os.path.join(PROJECT_ROOT, 'edb_compiler.log')
+
+sys.setrecursionlimit(100000)
 
 
 def __init_worker__(
@@ -104,6 +108,7 @@ def __init_worker__(
     )
 
 
+@stopwatch
 def __sync__(
     dbname: str,
     user_schema: Optional[bytes],
@@ -163,6 +168,7 @@ def __sync__(
         return db
 
 
+@stopwatch
 def compile(
     dbname: str,
     user_schema: Optional[bytes],

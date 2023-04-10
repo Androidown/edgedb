@@ -23,6 +23,8 @@
 from __future__ import annotations
 from typing import *
 
+from edb.common.util import stopwatch, GlobalWatch
+
 from edb import errors
 
 from edb.edgeql import ast as qlast
@@ -81,6 +83,7 @@ class CreateMigration(MigrationCommand, sd.CreateObject[Migration]):
     astnode = qlast.CreateMigration
 
     @classmethod
+    @stopwatch
     def _cmd_from_ast(
         cls,
         schema: s_schema.Schema,

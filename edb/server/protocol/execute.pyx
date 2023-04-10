@@ -26,6 +26,7 @@ import decimal
 import json
 
 import immutables
+from edb.common.util import stopwatch
 
 from edb import errors
 from edb.common import debug
@@ -46,6 +47,7 @@ from edb.server.pgcon cimport pgcon
 cdef object FMT_NONE = compiler.OutputFormat.NONE
 
 
+@stopwatch(is_coro=True)
 async def execute(
     be_conn: pgcon.PGConnection,
     dbv: dbview.DatabaseConnectionView,
@@ -89,6 +91,12 @@ async def execute(
 
             if query_unit.sql:
                 if query_unit.ddl_stmt_id:
+                    if dbv.in_tx() and not query_unit.schema_refl_sqls:
+                        # 本次有需要执行的schema持久化操作，
+                        # 因此执行待定的schema持久化sql，
+                        # 以保证本次schema持久化的正确性
+                        await dbv.in_tx_persist_schema(be_conn)
+
                     ddl_ret = await be_conn.run_ddl(query_unit, state)
                     if ddl_ret and ddl_ret['new_types']:
                         new_types = ddl_ret['new_types']

@@ -6,6 +6,7 @@ import time
 from collections import OrderedDict
 from enum import Enum
 import gc
+import inspect
 
 
 # def simple_lru(func=None, maxsize=128):
@@ -221,9 +222,10 @@ class Stopwatch(object):
         )
 
 
-def stopwatch(func=None, unit: str = 'ms', name=None, use_global: bool = True):
+def stopwatch(func=None, unit: str = 'ms', name=None, use_global: bool = True, is_coro=False):
     if func is None:
-        return functools.partial(stopwatch, unit=unit, name=name, use_global=use_global)
+        return functools.partial(
+            stopwatch, unit=unit, name=name, use_global=use_global, is_coro=is_coro)
 
     if use_global:
         watch = GlobalWatch
@@ -231,13 +233,18 @@ def stopwatch(func=None, unit: str = 'ms', name=None, use_global: bool = True):
         watch = Stopwatch(unit)
     func_name = name or func.__qualname__
 
-    @functools.wraps(func)
-    def wrap(*args, **kwargs):
-        with watch(func_name):
-            rtn = func(*args, **kwargs)
+    if not (inspect.iscoroutinefunction(func) or is_coro):
+        def wrap(*args, **kwargs):
+            with watch(func_name):
+                rtn = func(*args, **kwargs)
+            return rtn
+    else:
+        async def wrap(*args, **kwargs):
+            with watch(func_name):
+                rtn = await func(*args, **kwargs)
+            return rtn
 
-        return rtn
-    return wrap
+    return functools.wraps(func)(wrap)
 
 
 class DummyStopwatch(Stopwatch):

@@ -1207,7 +1207,33 @@ async def _populate_misc_instance_data(
                     columns=['key'],
                 ),
             ],
-        ))
+        )),
+        dbops.CreateTable(
+            dbops.Table(
+                name=('edgedbinstdata', 'schema_persist_history'),
+                columns=[
+                    dbops.Column(
+                        name='version_id',
+                        type='uuid',
+                    ),
+                    dbops.Column(
+                        name='sql',
+                        type='bytea',
+                    ),
+                    dbops.Column(
+                        name='timestamp',
+                        type='TIMESTAMP',
+                        default='CURRENT_TIMESTAMP'
+                    )
+                ],
+                constraints=[
+                    dbops.PrimaryKey(
+                        table_name=('edgedbinstdata', 'instdata'),
+                        columns=['version_id'],
+                    ),
+                ],
+            )
+        )
     ])
 
     block = dbops.PLTopBlock()
