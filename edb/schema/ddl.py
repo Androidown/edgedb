@@ -23,8 +23,6 @@ from typing import *
 from collections import defaultdict
 import itertools
 
-from edb.common.util import stopwatch
-
 from edb import edgeql
 from edb.common import uuidgen
 from edb.edgeql import ast as qlast
@@ -574,7 +572,6 @@ def apply_ddl_script_ex(
     return schema, delta
 
 
-@stopwatch
 def delta_from_ddl(
     ddl_stmt: qlast.DDLCommand,
     *,

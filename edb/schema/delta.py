@@ -26,7 +26,6 @@ import functools
 import itertools
 import uuid
 import immutables
-from edb.common.util import stopwatch
 
 from edb import errors
 
@@ -1535,7 +1534,6 @@ class DeltaRoot(CommandGroup, context_class=DeltaRootContext):
         super().__init__(**kwargs)
         self.new_types: Set[uuid.UUID] = set()
 
-    @stopwatch
     def apply(
         self,
         schema: s_schema.Schema,

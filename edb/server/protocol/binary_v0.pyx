@@ -16,7 +16,6 @@
 # limitations under the License.
 #
 import asyncio
-from edb.common.util import GlobalWatch, stopwatch
 
 cdef tuple MIN_LEGACY_PROTOCOL = edbdef.MIN_LEGACY_PROTOCOL
 
@@ -1100,7 +1099,6 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
         else:
             return query_unit, True
 
-    @stopwatch(is_coro=True)
     async def legacy_simple_query(self):
         cdef:
             WriteBuffer msg
@@ -1161,7 +1159,6 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
         self.write(packet)
         self.flush()
 
-    @stopwatch(is_coro=True)
     async def _legacy_simple_query(
         self,
         eql: bytes,
@@ -1192,9 +1189,6 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
         if not _dbview.in_tx():
             orig_state = state = _dbview.serialize_state()
 
-        watch = GlobalWatch('execute sql')
-
-        watch.__enter__()
         conn = await self.get_pgcon()
         try:
             if conn.last_state == state:
@@ -1277,7 +1271,6 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
                             conn.last_state = state
         finally:
             self.maybe_release_pgcon(conn)
-            watch.__exit__(None, None, None)
 
         return query_unit
 

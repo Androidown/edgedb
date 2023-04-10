@@ -33,7 +33,6 @@ import textwrap
 import uuid
 
 import immutables
-from edb.common.util import stopwatch
 
 from edb import errors
 
@@ -385,7 +384,6 @@ class Compiler:
         context.external_view = ctx.external_view
         return context
 
-    @stopwatch
     def _process_delta(self, ctx: CompileContext, delta):
         """Adapt and process the delta command."""
 
@@ -480,7 +478,6 @@ class Compiler:
 
         return block, refl_block, stdview_block, new_types, new_be_types, pgdelta.config_ops
 
-    @stopwatch
     def _compile_schema_storage_in_delta(
         self,
         ctx: CompileContext,
@@ -1824,7 +1821,6 @@ class Compiler:
             globals=globals,
         )
 
-    @stopwatch
     def _compile_dispatch_ql(
         self,
         ctx: CompileContext,
@@ -2394,7 +2390,6 @@ class Compiler:
 
         return result
 
-    @stopwatch
     def compile(
         self,
         user_schema: s_schema.Schema,

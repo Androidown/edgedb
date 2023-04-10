@@ -25,7 +25,6 @@ import os
 import sys
 
 import immutables
-from edb.common.util import stopwatch, GlobalWatch
 from loguru import logger
 
 from edb import edgeql, errors
@@ -108,7 +107,6 @@ def __init_worker__(
     )
 
 
-@stopwatch
 def __sync__(
     dbname: str,
     user_schema: Optional[bytes],
@@ -168,7 +166,6 @@ def __sync__(
         return db
 
 
-@stopwatch
 def compile(
     dbname: str,
     user_schema: Optional[bytes],

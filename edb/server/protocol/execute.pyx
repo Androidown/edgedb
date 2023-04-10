@@ -26,7 +26,6 @@ import decimal
 import json
 
 import immutables
-from edb.common.util import stopwatch
 
 from edb import errors
 from edb.common import debug
@@ -47,7 +46,6 @@ from edb.server.pgcon cimport pgcon
 cdef object FMT_NONE = compiler.OutputFormat.NONE
 
 
-@stopwatch(is_coro=True)
 async def execute(
     be_conn: pgcon.PGConnection,
     dbv: dbview.DatabaseConnectionView,

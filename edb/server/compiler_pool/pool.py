@@ -35,7 +35,6 @@ import sys
 import time
 
 import immutables
-from edb.common.util import stopwatch
 
 from edb.common import debug
 from edb.common import taskgroup
@@ -337,7 +336,6 @@ class AbstractPool:
     def get_template_pid(self):
         return None
 
-    @stopwatch
     async def _compute_compile_preargs(
         self,
         worker,
@@ -672,7 +670,6 @@ class AbstractPool:
 
             await asyncio.gather(*db_init_tasks)
 
-    @stopwatch
     async def compile(
         self,
         dbname,
