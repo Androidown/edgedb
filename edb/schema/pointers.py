@@ -1128,10 +1128,12 @@ class PointerCommandOrFragment(
                     'declared_overloaded', True
                 )
 
+        from . import properties
+
         if (
             isinstance(target_ref, ComputableRef)
             # and self.scls.is_pure_computable(schema)
-            and isinstance(self, AlterPointer)
+            and isinstance(self, properties.AlterProperty)
             and not context.is_deleting_referrer(self.scls, schema)
         ):
             if not self.scls.is_pure_computable(schema):
