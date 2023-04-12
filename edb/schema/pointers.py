@@ -1300,6 +1300,10 @@ class PointerCommandOrFragment(
                 ):
                     base = aliased_ptr
                     schema = new_schema
+                    if expr_rptr.dir_cardinality is not expression.irast.cardinality:
+                        skip_cons = self.maybe_get_object_aux_data('skip_constraints_creation') or []
+                        skip_cons.extend(base.get_constraints(schema).objects(schema))
+                        self.set_object_aux_data('skip_constraints_creation', skip_cons)
 
         self.set_attribute_value('expr', expression)
         required, card = expression.irast.cardinality.to_schema_value()
