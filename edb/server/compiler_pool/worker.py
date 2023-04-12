@@ -362,6 +362,7 @@ def compile_graphql(
     )
 
     gql_op = graphql.compile_graphql(
+        dbname,
         STD_SCHEMA,
         db.user_schema,
         GLOBAL_SCHEMA,

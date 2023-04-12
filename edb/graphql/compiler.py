@@ -18,9 +18,9 @@
 
 
 from __future__ import annotations
-from typing import *
 
-import functools
+import uuid
+from typing import *
 
 from edb import graphql
 
@@ -29,14 +29,32 @@ from edb.schema import schema as s_schema
 from graphql.language import lexer as gql_lexer
 
 
-@functools.lru_cache()
+GQLCoreCache: Dict[
+    str,
+    Dict[
+        (s_schema.FlatSchema, uuid.UUID, s_schema.FlatSchema, str),
+        graphql.GQLCoreSchema
+    ]
+] = {}
+
+
 def _get_gqlcore(
+    dbname: str,
     std_schema: s_schema.FlatSchema,
     user_schema: s_schema.FlatSchema,
     global_schema: s_schema.FlatSchema,
     module: str = None
 ) -> graphql.GQLCoreSchema:
-    return graphql.GQLCoreSchema(
+    key = (std_schema, user_schema.version_id, global_schema, module)
+    if cache := GQLCoreCache.get(dbname):
+        if key in cache:
+            return cache[key]
+        else:
+            cache.clear()
+    else:
+        cache = GQLCoreCache.setdefault(dbname, {})
+
+    core = graphql.GQLCoreSchema(
         s_schema.ChainedSchema(
             std_schema,
             user_schema,
@@ -44,9 +62,12 @@ def _get_gqlcore(
         ),
         module
     )
+    cache[key] = core
+    return core
 
 
 def compile_graphql(
+    dbname: str,
     std_schema: s_schema.FlatSchema,
     user_schema: s_schema.FlatSchema,
     global_schema: s_schema.FlatSchema,
@@ -67,7 +88,7 @@ def compile_graphql(
     else:
         ast = graphql.parse_tokens(gql, tokens)
 
-    gqlcore = _get_gqlcore(std_schema, user_schema, global_schema, module)
+    gqlcore = _get_gqlcore(dbname, std_schema, user_schema, global_schema, module)
 
     return graphql.translate_ast(
         gqlcore,

@@ -275,6 +275,7 @@ def compile_graphql(
     db = client_schema.dbs[dbname]
 
     return graphql.compile_graphql(
+        dbname,
         STD_SCHEMA,
         db.user_schema,
         client_schema.global_schema,
