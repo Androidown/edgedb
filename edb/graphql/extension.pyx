@@ -340,7 +340,7 @@ async def _execute(
         key_var_set = set(key_var_names)
 
         if gql_op.is_introspection:
-            query_cache.add_to_remove_on_ddl(cache_key)
+            server.remove_on_ddl.add(cache_key)
 
         if gql_op.cache_deps_vars and gql_op.cache_deps_vars != key_var_set:
             key_var_set.update(gql_op.cache_deps_vars)
@@ -353,7 +353,7 @@ async def _execute(
             )
             query_cache[cache_key2] = qug, gql_op
             if gql_op.is_introspection:
-                query_cache.add_to_remove_on_ddl(cache_key2)
+                server.remove_on_ddl.add(cache_key2)
         else:
             query_cache[cache_key] = qug, gql_op
 

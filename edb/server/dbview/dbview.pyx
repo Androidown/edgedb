@@ -401,9 +401,10 @@ cdef class Database:
 
     def _clear_http_cache(self):
         query_cache = self.server._http_query_cache
-        for cache_key in dict(query_cache._dict):
-            if query_cache.should_remove_on_ddl(cache_key):
+        for cache_key in self.server.remove_on_ddl:
+            if cache_key in query_cache:
                 del query_cache[cache_key]
+        self.server.remove_on_ddl.clear()
 
     def clear_caches(self):
         self._eql_to_compiled.clear()
@@ -412,6 +413,7 @@ cdef class Database:
         query_cache = self.server._http_query_cache
         for cache_key in dict(query_cache._dict):
             del query_cache[cache_key]
+        self.server.remove_on_ddl.clear()
 
     def view_caches(self):
         return '\n\n'.join([

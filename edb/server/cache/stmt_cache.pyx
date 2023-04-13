@@ -52,7 +52,6 @@ cdef class StatementsCache:
         self._dict_move_to_end = self._dict.move_to_end
         self._dict_get = self._dict.get
         self._maxsize = maxsize
-        self._remove_on_ddl = set()
 
     cpdef get(self, key, default):
         o = self._dict_get(key, _LRU_MARKER)
@@ -66,15 +65,7 @@ cdef class StatementsCache:
 
     cpdef cleanup_one(self):
         k, _ = self._dict.popitem(last=False)
-        if k[1] in self._remove_on_ddl:
-            self._remove_on_ddl.discard(k)
         return k
-
-    cpdef add_to_remove_on_ddl(self, key):
-        self._remove_on_ddl.add(key[1])
-
-    cpdef should_remove_on_ddl(self, key):
-        return key[1] in self._remove_on_ddl
 
     def __getitem__(self, key):
         o = self._dict[key]
@@ -89,8 +80,6 @@ cdef class StatementsCache:
             self._dict[key] = o
 
     def __delitem__(self, key):
-        if key[1] in self._remove_on_ddl:
-            self._remove_on_ddl.discard(key)
         del self._dict[key]
 
     def __contains__(self, key):
