@@ -259,7 +259,8 @@ async def _execute(
                     f"Variables starting with '_edb_arg__' are prohibited")
 
     query_cache_enabled = not (
-        debug.flags.disable_qcache or debug.flags.graphql_compile)
+        debug.flags.disable_qcache or debug.flags.graphql_compile
+    )
 
     if debug.flags.graphql_compile:
         debug.header('Input graphql')
@@ -336,8 +337,11 @@ async def _execute(
                 module,
                 limit
             )
-
         key_var_set = set(key_var_names)
+
+        if gql_op.is_introspection:
+            server.remove_on_ddl.add(cache_key)
+
         if gql_op.cache_deps_vars and gql_op.cache_deps_vars != key_var_set:
             key_var_set.update(gql_op.cache_deps_vars)
             key_var_names = sorted(key_var_set)
@@ -348,8 +352,15 @@ async def _execute(
                 'graphql', prepared_query, key_vars2, operation_name, dbver, query_only, module, limit
             )
             query_cache[cache_key2] = qug, gql_op
+            if gql_op.is_introspection:
+                server.remove_on_ddl.add(cache_key2)
         else:
             query_cache[cache_key] = qug, gql_op
+
+        # Clean if should
+        while query_cache.needs_cleanup():
+            query_cache.cleanup_one()
+
     else:
         qug, gql_op = entry
         # This is at least the second time this query is used

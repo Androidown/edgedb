@@ -145,6 +145,7 @@ class Operation(NamedTuple):
     stmt: Any
     critvars: Dict[str, Any]
     vars: Dict[str, Any]
+    is_introspection: bool = False
 
 
 class TranspiledOperation(NamedTuple):
@@ -152,6 +153,7 @@ class TranspiledOperation(NamedTuple):
     edgeql_ast: qlast.Base
     cache_deps_vars: Optional[FrozenSet[str]]
     variables_desc: dict
+    is_introspection: bool
 
 
 class Ordering(NamedTuple):
@@ -268,13 +270,14 @@ class GraphQLTranslator:
                     f'unknown operation named "{operation_name}"')
 
         operation = translated[operation_name]
+        is_introspection = False
         for el in operation.stmt.result.elements:
             # swap in the json bits
             if (isinstance(el.compexpr, qlast.FunctionCall) and
                     el.compexpr.func == 'to_json'):
 
                 # An introspection query; let graphql evaluate it for us.
-
+                is_introspection = True
                 vars = BookkeepDict(self._context.variables)
                 result = graphql.execute(
                     self._context.gqlcore.graphql_schema,
@@ -301,6 +304,8 @@ class GraphQLTranslator:
                     json.dumps(result.data[name]))
                 for var in vars.touched:
                     operation.critvars[var] = self._context.vars[var].val
+
+        translated[operation_name] = operation._replace(is_introspection=is_introspection)
 
         return translated
 
@@ -1870,6 +1875,7 @@ def translate_ast(
         edgeql_ast=op.stmt,
         cache_deps_vars=frozenset(op.critvars) if op.critvars else None,
         variables_desc=op.vars,
+        is_introspection=op.is_introspection
     )
 
 

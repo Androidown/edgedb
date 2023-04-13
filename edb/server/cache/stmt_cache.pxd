@@ -20,7 +20,7 @@
 cdef class StatementsCache:
 
     cdef:
-        object _dict
+        public object _dict
         int _maxsize
         object _dict_move_to_end
         object _dict_get

@@ -243,6 +243,8 @@ class Server(ha_base.ClusterProtocol):
         self._http_query_cache = cache.StatementsCache(
             maxsize=defines.HTTP_PORT_QUERY_CACHE_SIZE)
 
+        self.remove_on_ddl = set()
+
         self._http_last_minute_requests = windowedsum.WindowedSum()
         self._http_request_logger = None
 
