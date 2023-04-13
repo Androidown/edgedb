@@ -312,7 +312,7 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
                 ''',
             )
 
-            user_schema = await server.introspect_user_schema(pgcon)
+            user_schema = await server.introspect_user_schema(dbname, pgcon)
             global_schema = await server.introspect_global_schema(pgcon)
             db_config = await server.introspect_db_config(pgcon)
             dump_protocol = self.max_protocol

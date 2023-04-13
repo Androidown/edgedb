@@ -19,7 +19,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import functools
+import hashlib
 from typing import *
 
 import asyncio
@@ -267,6 +269,45 @@ class Server(ha_base.ClusterProtocol):
         self._session_idle_timeout = None
 
         self._admin_ui = admin_ui
+
+        self._db_to_bigint = {}
+
+    @contextlib.asynccontextmanager
+    async def aquire_distributed_lock(self, dbname, conn):
+        db_to_bigint = self._db_to_bigint
+
+        if dbname not in db_to_bigint:
+            db_to_bigint.clear()
+            current_dbs = set(db.name for db in self._dbindex.iter_dbs())
+            current_dbs.add(dbname)
+            for dn in sorted(current_dbs):
+                bigint = self._dbname_to_bigint(dn)
+
+                # 哈希冲突
+                new_dn = dn
+                while bigint in db_to_bigint.values():
+                    new_dn += '$'
+                    bigint = self._dbname_to_bigint(dn)
+
+                db_to_bigint[dn] = bigint
+            logger.debug(f"DB -> INT: {db_to_bigint}")
+
+        lock_id = db_to_bigint[dbname]
+        try:
+            logger.debug(f'Aquiring advisory lock {lock_id}')
+            await conn.sql_execute(f'select pg_advisory_lock({lock_id});'.encode())
+            logger.debug(f'Advisory lock {lock_id} aquired')
+            yield
+        finally:
+            await conn.sql_execute(f'select pg_advisory_unlock({lock_id});'.encode())
+
+    @staticmethod
+    def _dbname_to_bigint(dbname: str):
+        return int.from_bytes(
+            hashlib.md5(dbname.encode()).digest()[:8],
+            byteorder='big',
+            signed=True
+        )
 
     async def _request_stats_logger(self):
         last_seen = -1
@@ -652,8 +693,8 @@ class Server(ha_base.ClusterProtocol):
         self._dbindex.update_global_schema(new_global_schema)
         self._fetch_roles()
 
-    async def introspect_user_schema(self, conn):
-        await self._persist_user_schema(conn)
+    async def introspect_user_schema(self, dbname, conn):
+        await self._persist_user_schema(dbname, conn)
 
         json_data = await conn.sql_fetch_val(self._local_intro_query)
 
@@ -710,7 +751,7 @@ class Server(ha_base.ClusterProtocol):
             return
 
         try:
-            user_schema = await self.introspect_user_schema(conn)
+            user_schema = await self.introspect_user_schema(dbname, conn)
 
             reflection_cache_json = await conn.sql_fetch_val(
                 b'''
@@ -759,20 +800,21 @@ class Server(ha_base.ClusterProtocol):
         finally:
             self.release_pgcon(dbname, conn)
 
-    async def _persist_user_schema(self, conn):
-        persist_sqls = await conn.sql_fetch(
-            b'''\
-            SELECT "version_id", convert_from("sql", 'utf8') from
-            edgedbinstdata.schema_persist_history ORDER BY "timestamp"
-        '''
-        )
-        if not persist_sqls:
-            logger.debug(f"No schema persistence to do.")
-            return
+    async def _persist_user_schema(self, dbname, conn):
+        async with self.aquire_distributed_lock(dbname, conn):
+            persist_sqls = await conn.sql_fetch(
+                b'''\
+                SELECT "version_id", convert_from("sql", 'utf8') from
+                edgedbinstdata.schema_persist_history ORDER BY "timestamp"
+            '''
+            )
+            if not persist_sqls:
+                logger.debug(f"No schema persistence to do.")
+                return
 
-        for vid, sql in persist_sqls:
-            await conn.sql_execute(sql)
-            logger.debug(f"Finish schema persistence for <{uuid.UUID(bytes=vid)}>")
+            for vid, sql in persist_sqls:
+                await conn.sql_execute(sql)
+                logger.debug(f"Finish schema persistence for <{uuid.UUID(bytes=vid)}>")
 
     async def persist_user_schema(self, dbname):
         conn = await self._acquire_intro_pgcon(dbname)
@@ -780,7 +822,7 @@ class Server(ha_base.ClusterProtocol):
             return
 
         try:
-            await self._persist_user_schema(conn)
+            await self._persist_user_schema(dbname, conn)
         finally:
             self.release_pgcon(dbname, conn)
 
@@ -1067,6 +1109,7 @@ class Server(ha_base.ClusterProtocol):
         try:
             assert self._dbindex is not None
             self._dbindex.unregister_db(dbname)
+            self._db_to_bigint.pop(dbname, None)
         except Exception:
             metrics.background_errors.inc(1.0, 'on_after_drop_db')
             raise
