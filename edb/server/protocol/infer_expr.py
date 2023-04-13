@@ -134,4 +134,8 @@ async def execute(db, server, module: str, objname: str, expression: str):
     )
 
     query_cache[cache_key] = result
+    query_cache.add_to_remove_on_ddl(cache_key)
+    # Clean if should
+    while query_cache.needs_cleanup():
+        query_cache.cleanup_one()
     return result

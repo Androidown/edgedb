@@ -20,11 +20,14 @@
 cdef class StatementsCache:
 
     cdef:
-        object _dict
+        public object _dict
         int _maxsize
         object _dict_move_to_end
         object _dict_get
+        object _remove_on_ddl
 
     cpdef get(self, key, default)
+    cpdef add_to_remove_on_ddl(self, key)
+    cpdef should_remove_on_ddl(self, key)
     cpdef needs_cleanup(self)
     cpdef cleanup_one(self)

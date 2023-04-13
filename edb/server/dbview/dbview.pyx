@@ -370,6 +370,7 @@ cdef class Database:
 
     cdef _invalidate_caches(self, drop_ids: typing.Set[uuid.UUID]):
         self._state_serializers.clear()
+        self._clear_http_cache()
 
         if self._should_log:
             logger.debug(f'Ids to drop: {drop_ids}.')
@@ -395,17 +396,28 @@ cdef class Database:
         if self._should_log:
             logger.debug('After invalidate, LRU Cache: \n' + format_eqls(self._eql_to_compiled._dict.keys()))
             logger.debug('Disk Cache: \n' + format_eqls(self._eql_to_compiled_disk.keys()))
+            logger.debug(f'Http CACHE: \n{self.server._http_query_cache._dict.keys()}')
             logger.debug(f'Obj id to Eql: \n{self._object_id_to_eql}')
+
+    def _clear_http_cache(self):
+        query_cache = self.server._http_query_cache
+        for cache_key in dict(query_cache._dict):
+            if query_cache.should_remove_on_ddl(cache_key):
+                del query_cache[cache_key]
 
     def clear_caches(self):
         self._eql_to_compiled.clear()
         self._eql_to_compiled_disk.clear()
         self._object_id_to_eql.clear()
+        query_cache = self.server._http_query_cache
+        for cache_key in dict(query_cache._dict):
+            del query_cache[cache_key]
 
     def view_caches(self):
         return '\n\n'.join([
             f'LRU CACHE: \n{format_eqls(self._eql_to_compiled._dict.keys())}',
             f'Disk CACHE: \n{format_eqls(self._eql_to_compiled_disk.keys())}',
+            f'Http CACHE: \n{self.server._http_query_cache._dict.keys()}',
             f'Obj id to Eql: \n{self._object_id_to_eql}',
         ])
 

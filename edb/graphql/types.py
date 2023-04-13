@@ -1310,12 +1310,21 @@ class GQLCoreSchema:
 
         # Every ObjectType is reflected as an interface.
         interface_types = list(
-            self.edb_schema.get_objects(included_modules=self.modules,
-                                        type=s_objtypes.ObjectType))
+            self.edb_schema.get_objects(
+                included_modules=self.modules,
+                exclude_global=True,
+                type=s_objtypes.ObjectType,
+                extra_filters=[
+                    lambda schema, obj: not obj.get_from_global(schema)
+                ]
+            )
+        )
 
         # concrete types are also reflected as Type (with a '_Type' postfix)
-        obj_types += [t for t in interface_types
-                      if not t.get_abstract(self.edb_schema)]
+        obj_types += [
+            t for t in interface_types
+            if not t.get_abstract(self.edb_schema)
+        ]
 
         # interfaces
         for t in interface_types:
