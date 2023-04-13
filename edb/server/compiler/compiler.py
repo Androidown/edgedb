@@ -550,8 +550,12 @@ class Compiler:
                     argvals.append(pg_common.quote_literal(args[argname]))
 
                 cmd = f'PERFORM {pg_common.qname(*fname)}({", ".join(argvals)});\n'
-                if args.get('__classname') == '"__schema_version__"':
-                    # schema version update should always goes to main block
+                if (
+                    args.get('__classname') == '"__schema_version__"'
+                    or '__script' in args
+                ):
+                    # schema version and migration
+                    # update should always goes to main block
                     block.add_command(cmd)
                 else:
                     sp_block.add_command(cmd)
