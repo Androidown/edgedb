@@ -326,8 +326,8 @@ class TestHttpEdgeQLReadOnly(TestHttpEdgeQL):
 
     def test_http_edgeql_query_readonly(self):
         with self.assertRaisesRegex(
-            edgedb.DisabledCapabilityError,
-            r'cannot execute data modification queries'
+            edgedb.QueryError,
+            r'Mutation is prohibited in read-only context.'
         ):
             self.edgeql_query(
                 r"""

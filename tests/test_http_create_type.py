@@ -267,10 +267,6 @@ class TestHttpCreateType(tb.ExternTestCase):
             await self.con.execute(
                 '''
                 Drop type Facility;
-                '''
-            )
-            await self.con.execute(
-                '''
                 Drop type Member;
                 '''
             )
@@ -333,10 +329,6 @@ class TestHttpCreateType(tb.ExternTestCase):
             await self.con.execute(
                 '''
                 Drop type Facility;
-                '''
-            )
-            await self.con.execute(
-                '''
                 Drop type Member;
                 '''
             )
@@ -423,10 +415,6 @@ class TestHttpCreateType(tb.ExternTestCase):
             await self.con.execute(
                 '''
                 Drop type Facility;
-                '''
-            )
-            await self.con.execute(
-                '''
                 Drop type Member;
                 '''
             )
@@ -758,10 +746,6 @@ class TestHttpCreateType(tb.ExternTestCase):
             await self.con.execute(
                 '''
                 Drop type NameList;
-                '''
-            )
-            await self.con.execute(
-                '''
                 Drop type Member;
                 '''
             )
@@ -861,10 +845,6 @@ class TestHttpCreateType(tb.ExternTestCase):
             await self.con.execute(
                 '''
                 Drop type NameList;
-                '''
-            )
-            await self.con.execute(
-                '''
                 Drop type Member;
                 '''
             )
@@ -973,10 +953,6 @@ class TestHttpCreateType(tb.ExternTestCase):
             await self.con.execute(
                 '''
                 Drop type NameList;
-                '''
-            )
-            await self.con.execute(
-                '''
                 Drop type Member;
                 '''
             )
