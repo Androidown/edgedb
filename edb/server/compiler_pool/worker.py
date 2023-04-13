@@ -258,8 +258,7 @@ def compile_in_tx(cstate, dbname, user_schema_pickled, *args, **kwargs):
             cstate: compiler.CompilerConnectionState = pickle.loads(cstate)
 
             if user_schema_pickled is not None:
-                with util.disable_gc():
-                    user_schema: s_schema.FlatSchema = pickle.loads(user_schema_pickled)
+                user_schema: s_schema.FlatSchema = pickle.loads(user_schema_pickled)
             else:
                 user_schema = DBS.get(dbname).user_schema
 
