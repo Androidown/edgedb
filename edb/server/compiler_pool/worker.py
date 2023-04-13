@@ -251,22 +251,23 @@ def compile_in_tx(cstate, dbname, user_schema_pickled, *args, **kwargs):
     global LAST_STATE
     global DBS
 
-    if cstate == state.REUSE_LAST_STATE_MARKER:
-        cstate = LAST_STATE
-    else:
-        cstate: compiler.CompilerConnectionState = pickle.loads(cstate)
-
-        if user_schema_pickled is not None:
-            with util.disable_gc():
-                user_schema: s_schema.FlatSchema = pickle.loads(user_schema_pickled)
+    with util.disable_gc():
+        if cstate == state.REUSE_LAST_STATE_MARKER:
+            cstate = LAST_STATE
         else:
-            user_schema = DBS.get(dbname).user_schema
+            cstate: compiler.CompilerConnectionState = pickle.loads(cstate)
 
-        cstate = cstate.restore(user_schema)
+            if user_schema_pickled is not None:
+                with util.disable_gc():
+                    user_schema: s_schema.FlatSchema = pickle.loads(user_schema_pickled)
+            else:
+                user_schema = DBS.get(dbname).user_schema
 
-    units, cstate = COMPILER.compile_in_tx(cstate, *args, **kwargs)
-    LAST_STATE = cstate
-    return units, pickle.dumps(cstate.compress(), -1), cstate.base_user_schema_id
+            cstate = cstate.restore(user_schema)
+
+        units, cstate = COMPILER.compile_in_tx(cstate, *args, **kwargs)
+        LAST_STATE = cstate
+        return units, pickle.dumps(cstate.compress(), -1), cstate.base_user_schema_id
 
 
 def compile_notebook(
