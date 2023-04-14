@@ -289,7 +289,7 @@ class Server(ha_base.ClusterProtocol):
                 new_dn = dn
                 while bigint in db_to_bigint.values():
                     new_dn += '$'
-                    bigint = self._dbname_to_bigint(dn)
+                    bigint = self._dbname_to_bigint(new_dn)
 
                 db_to_bigint[dn] = bigint
             logger.debug(f"DB -> INT: {db_to_bigint}")
