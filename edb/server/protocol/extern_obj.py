@@ -181,7 +181,7 @@ class CreateLink(_Pointer):
         return [p.to_ddl() for p in self.properties]
 
     def to_ddl(self, pretty=False):
-        create_link = f"CREATE {self.cardinality} LINK {self.realname} -> {self.type}"
+        create_link = f"CREATE {self.cardinality.value} LINK {self.realname} -> {self.type}"
         body = ";\n".join([f"ON {self.from_} TO {self.to}"] + self.lprops)
 
         if pretty:
