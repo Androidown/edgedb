@@ -102,3 +102,10 @@ class TestHttpInferExpr(tb.InferExprTestCase):
             "operator '\+\+' cannot be applied to operands of type 'std::str' and 'std::int64'"
         ):
             self.infer_expr('Test', 'default', '.g ++ 2')
+
+    def test_infer_expr_type_view_result_type_error(self):
+        with self.assertRaisesRegex(
+            edgedb.SchemaError,
+            "The inferred type of expression is not in current schema."
+        ):
+            self.infer_expr('Tree', 'default', expression='select default::Test{g}')
