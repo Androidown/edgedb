@@ -2624,6 +2624,9 @@ class Compiler:
             options=options
         )
 
+        if current_schema.get_by_id(compiled.stype.id, None) is None:
+            raise errors.SchemaError("The inferred type of expression is not in current schema.")
+
         return {
             'cardinality': compiled.cardinality,
             'type': str(compiled.stype.get_name(current_schema))
