@@ -841,8 +841,11 @@ def finalize_args(
                 "Recursive query from multi records is "
                 "not supported yet.")
 
-        link = bound_type.maybe_get_ptr(ctx.env.schema, sn.UnqualName('parent'))
-        if link is None:
+        for pn in ('parent', 'parents'):
+            link = bound_type.maybe_get_ptr(ctx.env.schema, sn.UnqualName(pn))
+            if link is not None:
+                break
+        else:
             raise errors.QueryError(
                 f"{bound_type.get_displayname(ctx.env.schema)} cannot be used in "
                 f"function {bound_call.func.get_shortname(ctx.env.schema)} because "
