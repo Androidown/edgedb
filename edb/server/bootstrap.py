@@ -1223,7 +1223,7 @@ async def _populate_misc_instance_data(
                     dbops.Column(
                         name='timestamp',
                         type='TIMESTAMP',
-                        default='CURRENT_TIMESTAMP'
+                        default='clock_timestamp()'
                     )
                 ],
                 constraints=[
