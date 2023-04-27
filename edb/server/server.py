@@ -22,6 +22,7 @@ from __future__ import annotations
 import contextlib
 import functools
 import hashlib
+import re
 from typing import *
 
 import asyncio
@@ -66,7 +67,7 @@ from edb.server.protocol import binary  # type: ignore
 from edb.server import metrics
 from edb.server import pgcon
 from edb.server.pgcon import errors as pgcon_errors
-
+from edb.server.bootstrap import get_tpl_sql, gen_tpl_dump, store_tpl_sql
 from . import dbview
 
 if TYPE_CHECKING:
@@ -273,6 +274,7 @@ class Server(ha_base.ClusterProtocol):
         self._admin_ui = admin_ui
 
         self._db_to_bigint = {}
+        self._ns_tpl_sql = None
 
     @contextlib.asynccontextmanager
     async def aquire_distributed_lock(self, dbname, conn):
@@ -969,6 +971,13 @@ class Server(ha_base.ClusterProtocol):
                 SELECT bin FROM edgedbinstdata.instdata
                 WHERE key = 'report_configs_typedesc';
             ''')
+
+            if (tpldbdump := await get_tpl_sql(syscon)) is None:
+                tpldbdump = await gen_tpl_dump(self._cluster)
+                await store_tpl_sql(tpldbdump, syscon)
+                self._ns_tpl_sql = tpldbdump
+            else:
+                self._ns_tpl_sql = tpldbdump
 
         finally:
             self._release_sys_pgcon()
@@ -1918,6 +1927,21 @@ class Server(ha_base.ClusterProtocol):
             self._backend_adaptive_ha.set_state_failover(
                 call_on_switch_over=False
             )
+
+    async def create_namespace(self, be_conn: pgcon.PGConnection, name: str):
+        tpl_sql = re.sub(
+            rb'(edgedb)(\.|instdata|pub|ss|std|;)',
+            name.encode('utf-8') + rb'_\1\2',
+            self._ns_tpl_sql,
+            flags=re.MULTILINE,
+        )
+        tpl_sql = re.sub(
+            rb'({ns_edgedbext})',
+            name.encode('utf-8') + rb'_edgedbext',
+            tpl_sql,
+            flags=re.MULTILINE,
+        )
+        await be_conn.sql_execute(tpl_sql)
 
     def get_active_pgcon_num(self) -> int:
         return (

@@ -135,6 +135,7 @@ class DDLQuery(BaseQuery):
     is_transactional: bool = True
     single_unit: bool = False
     create_db: Optional[str] = None
+    create_ns: Optional[str] = None
     drop_db: Optional[str] = None
     create_db_template: Optional[str] = None
     has_role_ddl: bool = False
@@ -259,6 +260,10 @@ class QueryUnit:
     # a template database to create the database. The server should
     # close all inactive unused pooled connections to the template db.
     create_db_template: Optional[str] = None
+
+    # If non-None, contains a name of the DB that is about to be
+    # created/deleted.
+    create_ns: Optional[str] = None
 
     # If non-None, the DDL statement will emit data packets marked
     # with the indicated ID.

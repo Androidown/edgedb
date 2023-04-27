@@ -836,6 +836,20 @@ class DropDatabase(DropObject, DatabaseCommand):
     pass
 
 
+class NameSpaceCommand(ExternalObjectCommand):
+    __abstract_node__ = True
+    object_class: qltypes.SchemaObjectClass = (
+        qltypes.SchemaObjectClass.NAMESPACE)
+
+
+class CreateNameSpace(CreateObject, NameSpaceCommand):
+    pass
+
+
+class DropNameSpace(DropObject, NameSpaceCommand):
+    pass
+
+
 class ExtensionPackageCommand(GlobalObjectCommand):
     __abstract_node__ = True
     object_class: qltypes.SchemaObjectClass = (

@@ -4803,6 +4803,107 @@ def _generate_schema_ver_views(schema: s_schema.Schema) -> List[dbops.View]:
     return views
 
 
+def _generate_namespace_views(schema: s_schema.Schema) -> List[dbops.View]:
+    NameSpace = schema.get('sys::NameSpace', type=s_objtypes.ObjectType)
+    annos = NameSpace.getptr(
+        schema, s_name.UnqualName('annotations'), type=s_links.Link)
+    int_annos = NameSpace.getptr(
+        schema, s_name.UnqualName('annotations__internal'), type=s_links.Link)
+
+    view_query = f'''
+        SELECT
+            ((d.description)->>'id')::uuid
+                AS {qi(ptr_col_name(schema, NameSpace, 'id'))},
+            (SELECT id FROM edgedb."_SchemaObjectType"
+                 WHERE name = 'sys::NameSpace')
+                AS {qi(ptr_col_name(schema, NameSpace, '__type__'))},
+            False AS {qi(ptr_col_name(schema, NameSpace, 'internal'))},
+            (d.description)->>'name'
+                AS {qi(ptr_col_name(schema, NameSpace, 'name'))},
+            (d.description)->>'name'
+                AS {qi(ptr_col_name(schema, NameSpace, 'name__internal'))},
+            ARRAY[]::text[]
+                AS {qi(ptr_col_name(schema, NameSpace, 'computed_fields'))},
+            ((d.description)->>'builtin')::bool
+                AS {qi(ptr_col_name(schema, NameSpace, 'builtin'))},
+            (d.description)->>'module_name'
+                AS {qi(ptr_col_name(schema, NameSpace, 'module_name'))},
+            ((d.description)->>'external')::bool
+                AS {qi(ptr_col_name(schema, NameSpace, 'external'))}
+        FROM
+            pg_database dat
+            CROSS JOIN LATERAL (
+                SELECT
+                    edgedb.shobj_metadata(dat.oid, 'pg_database')
+                        AS description
+            ) AS d
+        WHERE
+            (d.description)->>'id' IS NOT NULL
+            AND (d.description)->>'tenant_id' = edgedb.get_backend_tenant_id()
+    '''
+
+    annos_link_query = f'''
+        SELECT
+            ((d.description)->>'id')::uuid
+                AS {qi(ptr_col_name(schema, annos, 'source'))},
+            (annotations->>'id')::uuid
+                AS {qi(ptr_col_name(schema, annos, 'target'))},
+            (annotations->>'value')::text
+                AS {qi(ptr_col_name(schema, annos, 'value'))},
+            (annotations->>'owned')::bool
+                AS {qi(ptr_col_name(schema, annos, 'owned'))}
+        FROM
+            pg_database dat
+            CROSS JOIN LATERAL (
+                SELECT
+                    edgedb.shobj_metadata(dat.oid, 'pg_database')
+                        AS description
+            ) AS d
+            CROSS JOIN LATERAL
+                ROWS FROM (
+                    jsonb_array_elements((d.description)->'annotations')
+                ) AS annotations
+    '''
+
+    int_annos_link_query = f'''
+        SELECT
+            ((d.description)->>'id')::uuid
+                AS {qi(ptr_col_name(schema, int_annos, 'source'))},
+            (annotations->>'id')::uuid
+                AS {qi(ptr_col_name(schema, int_annos, 'target'))},
+            (annotations->>'owned')::bool
+                AS {qi(ptr_col_name(schema, int_annos, 'owned'))}
+        FROM
+            pg_database dat
+            CROSS JOIN LATERAL (
+                SELECT
+                    edgedb.shobj_metadata(dat.oid, 'pg_database')
+                        AS description
+            ) AS d
+            CROSS JOIN LATERAL
+                ROWS FROM (
+                    jsonb_array_elements(
+                        (d.description)->'annotations__internal'
+                    )
+                ) AS annotations
+    '''
+
+    objects = {
+        Database: view_query,
+        annos: annos_link_query,
+        int_annos: int_annos_link_query,
+    }
+
+    views = []
+    for obj, query in objects.items():
+        tabview = dbops.View(name=tabname(schema, obj), query=query)
+        inhview = dbops.View(name=inhviewname(schema, obj), query=query)
+        views.append(tabview)
+        views.append(inhview)
+
+    return views
+
+
 def _make_json_caster(
     schema: s_schema.Schema,
     stype: s_types.Type,

@@ -84,6 +84,8 @@ async def execute(
             await server._on_before_drop_db(query_unit.drop_db, dbv.dbname)
         if query_unit.system_config:
             await execute_system_config(be_conn, dbv, query_unit)
+        if query_unit.create_ns:
+            await server.create_namespace(be_conn, query_unit.create_ns)
         else:
             config_ops = query_unit.config_ops
 

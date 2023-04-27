@@ -56,6 +56,9 @@ class DDLStmt(Nonterm):
     def reduce_DatabaseStmt(self, *kids):
         self.val = kids[0].val
 
+    def reduce_NameSpaceStmt(self, *kids):
+        self.val = kids[0].val
+
     def reduce_RoleStmt(self, *kids):
         self.val = kids[0].val
 
@@ -663,6 +666,68 @@ class CreateDatabaseStmt(Nonterm):
 class DropDatabaseStmt(Nonterm):
     def reduce_DROP_DATABASE_DatabaseName(self, *kids):
         self.val = qlast.DropDatabase(name=kids[2].val)
+
+#
+# NAMESPACE
+#
+
+
+class NameSpaceName(Nonterm):
+
+    def reduce_Identifier(self, kid):
+        self.val = qlast.ObjectRef(
+            module=None,
+            name=kid.val
+        )
+
+    def reduce_ReservedKeyword(self, *kids):
+        name = kids[0].val
+        if (
+            name[:2] == '__' and name[-2:] == '__'
+        ):
+            raise EdgeQLSyntaxError(
+                "identifiers surrounded by double underscores are forbidden",
+                context=kids[0].context)
+
+        self.val = qlast.ObjectRef(
+            module=None,
+            name=name
+        )
+
+
+class NameSpaceStmt(Nonterm):
+
+    def reduce_CreateNameSpaceStmt(self, *kids):
+        self.val = kids[0].val
+
+    def reduce_DropNameSpaceStmt(self, *kids):
+        self.val = kids[0].val
+
+
+#
+# CREATE NAMESPACE
+#
+
+
+commands_block(
+    'CreateNameSpace',
+    SetFieldStmt,
+)
+
+
+class CreateNameSpaceStmt(Nonterm):
+    def reduce_CREATE_NAMESPACE_NameSpaceName(self, *kids):
+        """%reduce CREATE NAMESPACE NameSpaceName
+        """
+        self.val = qlast.CreateNameSpace(name=kids[2].val)
+
+
+#
+# DROP NAMESPACE
+#
+class DropNameSpaceStmt(Nonterm):
+    def reduce_DROP_NAMESPACE_DatabaseName(self, *kids):
+        self.val = qlast.DropNameSpace(name=kids[2].val)
 
 
 #
