@@ -259,14 +259,16 @@ class TestHttpEdgeQL(tb.EdgeQLTestCase):
             )
 
     def test_http_edgeql_query_13(self):
-        with self.assertRaisesRegex(edgedb.InvalidReferenceError,
-                                    r'object type or alias \'temp::Setting\' does not exist'):
-            self.edgeql_query(
-                r"""
-                    SELECT Setting;
-                """,
-                module='temp'
-            )
+        for use_http_post in [True, False]:
+            with self.assertRaisesRegex(edgedb.InvalidReferenceError,
+                                        r'object type or alias \'temp::Setting\' does not exist'):
+                self.edgeql_query(
+                    r"""
+                        SELECT Setting;
+                    """,
+                    module='temp',
+                    use_http_post=use_http_post
+                )
 
     def test_http_edgeql_query_globals_01(self):
         Q = r'''select GlobalTest { gstr, garray, gid, gdef, gdef2 }'''
