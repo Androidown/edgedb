@@ -106,12 +106,7 @@ async def handle_request(
 
                 module = qs.get('module')
                 if module is not None:
-                    try:
-                        module = json.loads(module[0])
-                    except Exception:
-                        raise TypeError(
-                            '"module" must be a JSON object')
-
+                    module = module[0]
         else:
             raise TypeError('expected a GET or a POST request')
 
