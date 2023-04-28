@@ -35,12 +35,10 @@ from collections import UserDict, defaultdict, OrderedDict
 
 from edb import errors
 from edb import edgeql
-from edb.common import lru, uuidgen, util
+from edb.common import lru, uuidgen, util, debug
 from edb.edgeql import qltypes
 from edb.schema import extensions as s_ext
 from edb.schema import schema as s_schema
-from edb.schema import version as s_ver
-from edb.schema import name as sn
 from edb.server import compiler, defines, config, metrics
 from edb.server.compiler import dbstate, sertypes, enums
 from edb.server.defines import DROP_IN_SCHEMA_DELTA
@@ -322,7 +320,7 @@ cdef class Database:
             self.extensions = extensions
 
         self._sql_bak_dir = os.path.join(self.server._runstate_dir, 'sql_bak')
-        self._should_log = logger.isEnabledFor(logging.DEBUG)
+        self._log_cache = logger.isEnabledFor(logging.DEBUG) and debug.flags.show_cache_info
 
     @property
     def server(self):
@@ -372,7 +370,7 @@ cdef class Database:
         self._state_serializers.clear()
         self._clear_http_cache()
 
-        if self._should_log:
+        if self._log_cache:
             logger.debug(f'Ids to drop: {drop_ids}.')
 
         for obj_id in drop_ids:
@@ -381,19 +379,19 @@ cdef class Database:
 
             for eql in list(self._object_id_to_eql[obj_id]):
                 if eql in self._eql_to_compiled:
-                    if self._should_log:
+                    if self._log_cache:
                         logger.debug(f"Eql with sql:{format_eqls((eql,))} "
                                      f"will be dropped for change of object with id <{obj_id}> in LRU cache.")
                     del self._eql_to_compiled[eql]
                 if eql in self._eql_to_compiled_disk:
-                    if self._should_log:
+                    if self._log_cache:
                         logger.debug(f"Eql with sql:{format_eqls((eql,))} "
                                      f"will be dropped for change of object with id <{obj_id}> in Disk cache.")
                     del self._eql_to_compiled_disk[eql]
 
             del self._object_id_to_eql[obj_id]
 
-        if self._should_log:
+        if self._log_cache:
             logger.debug('After invalidate, LRU Cache: \n' + format_eqls(self._eql_to_compiled._dict.keys()))
             logger.debug('Disk Cache: \n' + format_eqls(self._eql_to_compiled_disk.keys()))
             logger.debug(f'Http CACHE: \n{self.server._http_query_cache._dict.keys()}')
@@ -439,7 +437,7 @@ cdef class Database:
             for sql_bytes in query_unit.sql
         )
 
-        if self._should_log:
+        if self._log_cache:
             logger.debug(f'Sql bytes length: {sql_length}')
         dump_to_disk = sql_length > defines.SQL_BYTES_LENGTH_DISK_CACHE
         # Update Cache
@@ -463,7 +461,7 @@ cdef class Database:
         if compiled.ref_ids is None:
             return
 
-        if self._should_log:
+        if self._log_cache:
             logger.debug(f"Ref ids in Compiled: {compiled.ref_ids}")
 
         for obj_id in compiled.ref_ids:
@@ -1039,6 +1037,11 @@ cdef class DatabaseConnectionView:
         self._in_tx_user_schema = self._db.user_schema
         self._in_tx_global_schema = self._db._index._global_schema
         self._in_tx_state_serializer = self._state_serializer
+
+    def sync_tx_base_schema(self):
+        if self._db.user_schema is self._in_tx_base_user_schema:
+            return
+        self._in_tx_base_user_schema = self._db.user_schema
 
     cdef _apply_in_tx(self, query_unit):
         if query_unit.has_ddl:

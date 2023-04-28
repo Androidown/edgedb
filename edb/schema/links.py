@@ -569,7 +569,8 @@ class LinkCommand(
         context: sd.CommandContext,
     ):
         if (
-            scls.get_target_property(schema) is None
+            not scls.is_pure_computable(schema)
+            and scls.get_target_property(schema) is None
             and (scls.get_target(schema) is not None
                  and scls.get_target(schema).get_external(schema))
         ):

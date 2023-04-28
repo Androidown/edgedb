@@ -62,6 +62,7 @@ async def handle_request(
     variables = None
     globals_ = None
     query = None
+    module = None
 
     try:
         if request.method == b'POST':
@@ -73,6 +74,7 @@ async def handle_request(
                 query = body.get('query')
                 variables = body.get('variables')
                 globals_ = body.get('globals')
+                module = body.get('module')
             else:
                 raise TypeError(
                     'unable to interpret EdgeQL POST request')
@@ -102,6 +104,9 @@ async def handle_request(
                         raise TypeError(
                             '"globals" must be a JSON object')
 
+                module = qs.get('module')
+                if module is not None:
+                    module = module[0]
         else:
             raise TypeError('expected a GET or a POST request')
 
@@ -113,6 +118,9 @@ async def handle_request(
 
         if globals_ is not None and not isinstance(globals_, dict):
             raise TypeError('"globals" must be a JSON object')
+
+        if module is not None and not isinstance(module, str):
+            raise TypeError('"module" must be a str object')
 
     except Exception as ex:
         if debug.flags.server:
@@ -131,7 +139,8 @@ async def handle_request(
             query,
             variables=variables or {},
             globals_=globals_ or {},
-            read_only=read_only
+            read_only=read_only,
+            module=module
         )
     except Exception as ex:
         if debug.flags.server:

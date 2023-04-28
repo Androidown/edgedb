@@ -2611,10 +2611,7 @@ class Compiler:
             user_schema,
             global_schema,
         )
-        source_obj = user_schema.get(name=objname, default=None)
-
-        if source_obj is None:
-            raise errors.SchemaError(f"Can\'t find Object: '{objname}' in current schema.")
+        source_obj = user_schema.get(name=objname)
 
         options = qlcompiler.CompilerOptions(
             anchors={qlast.Source().name: source_obj},

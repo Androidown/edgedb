@@ -154,6 +154,10 @@ class flags(metaclass=FlagsMeta):
     disable_link_path = Flag(
         doc="Disable link path functionality. (for debug only)")
 
+    show_cache_info = Flag(
+        doc="Show server cache info on DDL")
+
+
 @contextlib.contextmanager
 def timeit(title='block'):
     st = time.monotonic()
