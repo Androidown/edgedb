@@ -70,17 +70,31 @@ class TestHttpInferExpr(tb.InferExprTestCase):
 
     def test_infer_expr_module_no_exist(self):
         with self.assertRaisesRegex(
-            edgedb.SchemaError,
-            "Can't find Object: 'default1::Test' in current schema."
+            edgedb.InvalidReferenceError,
+            "schema item 'default1::Test' does not exist"
         ):
             self.infer_expr('Test', 'default1', '.g')
 
     def test_infer_expr_type_no_exist(self):
         with self.assertRaisesRegex(
-            edgedb.SchemaError,
-            "Can't find Object: 'default::A' in current schema."
+            edgedb.InvalidReferenceError,
+            "schema item 'default::A' does not exist"
         ):
             self.infer_expr('A', 'default', '.g')
+
+    def test_infer_expr_ptr_no_exist(self):
+        with self.assertRaisesRegex(
+            edgedb.InvalidReferenceError,
+            "object type 'default::Test' has no link or property 'x'"
+        ):
+            self.infer_expr('Test', 'default', '.x')
+
+    def test_infer_expr_select_obj_no_exist(self):
+        with self.assertRaisesRegex(
+            edgedb.InvalidReferenceError,
+            "object type or alias 'ttt::xxx' does not exist"
+        ):
+            self.infer_expr('Test', 'default', '(select ttt::xxx)')
 
     def test_infer_expr_type_unknown_func_error(self):
         with self.assertRaisesRegex(
