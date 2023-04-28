@@ -19,24 +19,25 @@
 
 from __future__ import annotations
 
+import uuid
+
 from edb import errors
 from edb.edgeql import ast as qlast
 from edb.edgeql import qltypes
-from . import abc as s_abc
 from . import annos as s_anno
 from . import delta as sd
 from . import objects as so
 from . import schema as s_schema
+from . import database as s_database
 
 
 class NameSpace(
     so.ExternalObject,
     s_anno.AnnotationSubject,
-    s_abc.NameSpace,
     qlkind=qltypes.SchemaObjectClass.NAMESPACE,
     data_safe=False,
 ):
-    pass
+    db = so.SchemaField(s_database.Database)
 
 
 class NameSpaceCommandContext(sd.ObjectCommandContext[NameSpace]):
@@ -72,6 +73,14 @@ class CreateNameSpace(NameSpaceCommand, sd.CreateExternalObject[NameSpace]):
     ) -> None:
         super().validate_create(schema, context)
         self._validate_name(schema, context)
+
+    def _create_begin(
+        self,
+        schema: s_schema.Schema,
+        context: sd.CommandContext,
+    ) -> s_schema.Schema:
+        schema = super()._create_begin(schema, context)
+        return schema
 
 
 class DeleteNameSpace(NameSpaceCommand, sd.DeleteExternalObject[NameSpace]):

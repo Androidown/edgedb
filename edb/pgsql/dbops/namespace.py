@@ -19,16 +19,20 @@
 
 from __future__ import annotations
 
+from typing import Optional, Mapping, Any
+
 from . import base
 from . import ddl
 from ..common import quote_ident as qi
 
 
-class NameSpace:
+class NameSpace(base.DBObject):
     def __init__(
         self,
         name: str,
+        metadata: Optional[Mapping[str, Any]] = None,
     ):
+        super().__init__(metadata=metadata)
         self.name = name
 
     def get_type(self):
@@ -39,6 +43,14 @@ class NameSpace:
 
     def is_shared(self) -> bool:
         return False
+
+
+class CreateNameSpace(ddl.CreateObject, ddl.NonTransactionalDDLOperation):
+    def __init__(self, object, **kwargs):
+        super().__init__(object, **kwargs)
+
+    def code(self, block: base.PLBlock) -> str:
+        return ''
 
 
 class DropNameSpace(

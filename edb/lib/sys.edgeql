@@ -37,7 +37,9 @@ CREATE TYPE sys::Database EXTENDING sys::SystemObject {
     };
 };
 
-CREATE TYPE sys::NameSpace EXTENDING sys::SystemObject;
+CREATE TYPE sys::NameSpace EXTENDING sys::SystemObject {
+    CREATE REQUIRED SINGLE LINK db -> sys::Database;
+};
 
 
 CREATE TYPE sys::ExtensionPackage EXTENDING sys::SystemObject {

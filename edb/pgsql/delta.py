@@ -6850,51 +6850,19 @@ class CreateNameSpace(NameSpaceMetaCommand, adapts=s_ns.CreateNameSpace):
         context: sd.CommandContext,
     ) -> s_schema.Schema:
         schema = super().apply(schema, context)
-
-        ns_id = str(self.scls.id)
-        name__internal = str(self.scls.get_name(schema))
-        name = self.scls.get_displayname(schema)
-
-        metadata = {
-            ns_id: {
-                'id': ns_id,
-                'name': name,
-                'name__internal': name__internal,
-                'builtin': self.scls.get_builtin(schema),
-                'internal': self.scls.get_internal(schema),
-            }
-        }
-
-        ctx_backend_params = context.backend_runtime_params
-        if ctx_backend_params is not None:
-            backend_params = cast(
-                params.BackendRuntimeParams, ctx_backend_params
+        self.pgops.add(
+            dbops.CreateNameSpace(
+                dbops.NameSpace(
+                    str(self.classname),
+                    metadata=dict(
+                        id=str(self.scls.id),
+                        builtin=self.get_attribute_value('builtin'),
+                        name=str(self.classname),
+                        db=self.get_attribute_value('db')
+                    ),
+                ),
             )
-        else:
-            backend_params = params.get_default_runtime_params()
-
-        if backend_params.has_create_database:
-            tenant_id = self._get_tenant_id(context)
-            tpl_db_name = common.get_database_backend_name(
-                edbdef.EDGEDB_TEMPLATE_DB, tenant_id=tenant_id
-            )
-
-            self.pgops.add(
-                dbops.UpdateMetadataSection(
-                    dbops.Database(name=tpl_db_name),
-                    section='NameSpace',
-                    metadata=metadata
-                )
-            )
-        else:
-            self.pgops.add(
-                dbops.UpdateSingleDBMetadataSection(
-                    edbdef.EDGEDB_TEMPLATE_DB,
-                    section='NameSpace',
-                    metadata=metadata
-                )
-            )
-
+        )
         return schema
 
 
@@ -6905,45 +6873,7 @@ class DeleteNameSpace(NameSpaceMetaCommand, adapts=s_ns.DeleteNameSpace):
         context: sd.CommandContext,
     ) -> s_schema.Schema:
         schema = super().apply(schema, context)
-        ns_id = str(self.scls.id)
 
-        ctx_backend_params = context.backend_runtime_params
-        if ctx_backend_params is not None:
-            backend_params = cast(
-                params.BackendRuntimeParams, ctx_backend_params
-            )
-        else:
-            backend_params = params.get_default_runtime_params()
-
-        tpl_db_name = common.get_database_backend_name(
-            edbdef.EDGEDB_TEMPLATE_DB, tenant_id=backend_params.tenant_id
-        )
-
-        metadata = {
-            ns_id: None
-        }
-        if backend_params.has_create_database:
-            self.pgops.add(
-                dbops.UpdateMetadataSection(
-                    dbops.Database(name=tpl_db_name),
-                    section='NameSpace',
-                    metadata=metadata
-                )
-            )
-        else:
-            self.pgops.add(
-                dbops.UpdateSingleDBMetadataSection(
-                    edbdef.EDGEDB_TEMPLATE_DB,
-                    section='NameSpace',
-                    metadata=metadata
-                )
-            )
-
-        self.pgops.add(
-            dbops.DropNameSpace(
-                dbops.NameSpace(str(self.classname))
-            )
-        )
         return schema
 
 
