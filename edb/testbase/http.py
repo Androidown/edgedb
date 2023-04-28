@@ -144,7 +144,7 @@ class EdgeQLTestCase(BaseHttpExtensionTest, server.QueryTestCase):
         return 'edgeql'
 
     def edgeql_query(
-            self, query, *, use_http_post=True, variables=None, globals=None):
+            self, query, *, use_http_post=True, variables=None, globals=None, module=None):
         req_data = {
             'query': query
         }
@@ -154,6 +154,8 @@ class EdgeQLTestCase(BaseHttpExtensionTest, server.QueryTestCase):
                 req_data['variables'] = variables
             if globals is not None:
                 req_data['globals'] = globals
+            if module is not None:
+                req_data['module'] = module
             req = urllib.request.Request(self.http_addr, method='POST')
             req.add_header('Content-Type', 'application/json')
             response = urllib.request.urlopen(
@@ -165,6 +167,8 @@ class EdgeQLTestCase(BaseHttpExtensionTest, server.QueryTestCase):
                 req_data['variables'] = json.dumps(variables)
             if globals is not None:
                 req_data['globals'] = json.dumps(globals)
+            if module is not None:
+                req_data['module'] = module
             response = urllib.request.urlopen(
                 f'{self.http_addr}/?{urllib.parse.urlencode(req_data)}',
                 context=self.tls_context,
