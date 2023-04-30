@@ -56,6 +56,7 @@ from edb.ir import staeval as ireval
 from edb.ir import ast as irast
 
 from edb.schema import database as s_db
+from edb.schema import namespace as s_ns
 from edb.schema import extensions as s_ext
 from edb.schema import roles as s_roles
 from edb.schema import ddl as s_ddl
@@ -409,7 +410,12 @@ class Compiler:
             for c in pgdelta.get_subcommands()
         )
 
-        if db_cmd:
+        ns_cmd = any(
+            isinstance(c, s_ns.NameSpaceCommand)
+            for c in pgdelta.get_subcommands()
+        )
+
+        if db_cmd or ns_cmd:
             block = pg_dbops.SQLBlock()
             new_be_types = new_types = frozenset()
         else:
@@ -433,6 +439,7 @@ class Compiler:
         # schema persistence asynchronizable
         schema_peristence_async = (
             not db_cmd
+            and not ns_cmd
             and not new_be_types
             and not any(
                 isinstance(c, (s_ext.ExtensionCommand,

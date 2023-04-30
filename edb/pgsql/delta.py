@@ -6858,7 +6858,7 @@ class CreateNameSpace(NameSpaceMetaCommand, adapts=s_ns.CreateNameSpace):
                         id=str(self.scls.id),
                         builtin=self.get_attribute_value('builtin'),
                         name=str(self.classname),
-                        db=self.get_attribute_value('db')
+                        internal=False
                     ),
                 ),
             )
@@ -6873,7 +6873,9 @@ class DeleteNameSpace(NameSpaceMetaCommand, adapts=s_ns.DeleteNameSpace):
         context: sd.CommandContext,
     ) -> s_schema.Schema:
         schema = super().apply(schema, context)
-
+        self.pgops.add(
+            dbops.DropNameSpace(self.classname)
+        )
         return schema
 
 

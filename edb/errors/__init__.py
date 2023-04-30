@@ -309,6 +309,10 @@ class DuplicateCastDefinitionError(DuplicateDefinitionError):
     _code = 0x_04_05_02_0A
 
 
+class DuplicateNameSpaceDefinitionError(DuplicateDefinitionError):
+    _code = 0x_04_05_02_0B
+
+
 class SessionTimeoutError(QueryError):
     _code = 0x_04_06_00_00
 

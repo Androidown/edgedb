@@ -36,10 +36,10 @@ class NameSpace(base.DBObject):
         self.name = name
 
     def get_type(self):
-        return 'NAMESPACE'
+        return 'SCHEMA'
 
     def get_id(self):
-        return qi(self.name)
+        return qi(f"{self.name}_edgedb")
 
     def is_shared(self) -> bool:
         return False
@@ -61,7 +61,7 @@ class DropNameSpace(
     def code(self, block: base.PLBlock) -> str:
         schemas = ",".join(
             [
-                qi(self.name.name + "_" + schema)
+                qi(f"{self.name}_{schema}")
                 for schema in ['edgedb', 'edgedbss', 'edgedbpub', 'edgedbstd', 'edgedbinstdata', 'edgedbext']
             ]
         )

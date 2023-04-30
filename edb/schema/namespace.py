@@ -28,7 +28,6 @@ from . import annos as s_anno
 from . import delta as sd
 from . import objects as so
 from . import schema as s_schema
-from . import database as s_database
 
 
 class NameSpace(
@@ -37,7 +36,7 @@ class NameSpace(
     qlkind=qltypes.SchemaObjectClass.NAMESPACE,
     data_safe=False,
 ):
-    db = so.SchemaField(s_database.Database)
+    pass
 
 
 class NameSpaceCommandContext(sd.ObjectCommandContext[NameSpace]):
@@ -73,14 +72,6 @@ class CreateNameSpace(NameSpaceCommand, sd.CreateExternalObject[NameSpace]):
     ) -> None:
         super().validate_create(schema, context)
         self._validate_name(schema, context)
-
-    def _create_begin(
-        self,
-        schema: s_schema.Schema,
-        context: sd.CommandContext,
-    ) -> s_schema.Schema:
-        schema = super()._create_begin(schema, context)
-        return schema
 
 
 class DeleteNameSpace(NameSpaceCommand, sd.DeleteExternalObject[NameSpace]):

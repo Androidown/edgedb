@@ -83,6 +83,7 @@ directly_mappable = {
     pgerrors.ERROR_INVALID_CATALOG_NAME: errors.UnknownDatabaseError,
     pgerrors.ERROR_OBJECT_IN_USE: errors.ExecutionError,
     pgerrors.ERROR_DUPLICATE_DATABASE: errors.DuplicateDatabaseDefinitionError,
+    pgerrors.ERROR_DUPLICATE_SCHEMA: errors.DuplicateNameSpaceDefinitionError,
     pgerrors.ERROR_IDLE_IN_TRANSACTION_TIMEOUT:
         errors.IdleTransactionTimeoutError,
     pgerrors.ERROR_QUERY_CANCELLED: errors.QueryTimeoutError,

@@ -4814,31 +4814,31 @@ def _generate_namespace_views(schema: s_schema.Schema) -> List[dbops.View]:
 
     view_query = f'''
             SELECT
-                (ns.value->>'id')::uuid
+                (ns.description->>'id')::uuid
                     AS {qi(ptr_col_name(schema, NameSpace, 'id'))},
                 (SELECT id FROM edgedb."_SchemaObjectType"
                      WHERE name = 'sys::NameSpace')
                     AS {qi(ptr_col_name(schema, NameSpace, '__type__'))},
-                (ns.value->>'name')
+                (ns.description->>'name')
                     AS {qi(ptr_col_name(schema, NameSpace, 'name'))},
-                (ns.value->>'name__internal')
+                (ns.description->>'name__internal')
                     AS {qi(ptr_col_name(schema, NameSpace, 'name__internal'))},
                 ARRAY[]::text[]
                     AS {qi(ptr_col_name(schema, NameSpace, 'computed_fields'))},
-                (ns.value->>'builtin')::bool
+                (ns.description->>'builtin')::bool
                     AS {qi(ptr_col_name(schema, NameSpace, 'builtin'))},
-                (ns.value->>'internal')::bool
+                (ns.description->>'internal')::bool
                     AS {qi(ptr_col_name(schema, NameSpace, 'internal'))},
-                (ns.value->>'module_name')
+                (ns.description->>'module_name')
                     AS {qi(ptr_col_name(schema, NameSpace, 'module_name'))},
-                ((ns.value )->>'external')::bool
+                ((ns.description)->>'external')::bool
                     AS {qi(ptr_col_name(schema, NameSpace, 'external'))}
             FROM
-                jsonb_each(
-                    edgedb.get_database_metadata(
-                        {ql(defines.EDGEDB_SYSTEM_DB)}
-                    ) -> 'NameSpace'
-                ) AS ns
+                information_schema.schemata as s
+            CROSS JOIN LATERAL (
+                select edgedb.obj_metadata(s.schema_name::regnamespace, 'pg_namespace') as DESCRIPTION
+            ) as ns	
+            where ns.description ->> 'id' is not null
         '''
 
     annos_link_query = f'''
@@ -4854,7 +4854,7 @@ def _generate_namespace_views(schema: s_schema.Schema) -> List[dbops.View]:
             FROM
                 jsonb_each(
                     edgedb.get_database_metadata(
-                        {ql(defines.EDGEDB_SYSTEM_DB)}
+                        current_database()
                     ) -> 'NameSpace'
                 ) AS ns
                 CROSS JOIN LATERAL
@@ -4874,7 +4874,7 @@ def _generate_namespace_views(schema: s_schema.Schema) -> List[dbops.View]:
             FROM
                 jsonb_each(
                     edgedb.get_database_metadata(
-                        {ql(defines.EDGEDB_SYSTEM_DB)}
+                        current_database()
                     ) -> 'NameSpace'
                 ) AS ns
                 CROSS JOIN LATERAL
