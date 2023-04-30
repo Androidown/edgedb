@@ -1584,7 +1584,9 @@ cdef class EdgeConnection(frontend.FrontendConnection):
                 tenant_id = self.server.get_tenant_id()
                 message = static_exc.args[0].replace(f'{tenant_id}_', '')
                 exc = type(static_exc)(message)
-            elif isinstance(static_exc, errors.DuplicateNameSpaceDefinitionError):
+            elif isinstance(static_exc,
+                (errors.DuplicateNameSpaceDefinitionError, errors.UnknownSchemaError)
+            ):
                 message = static_exc.args[0].replace('schema', 'namespace').replace('_edgedbext', '')
                 exc = type(static_exc)(message)
             else:

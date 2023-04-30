@@ -81,6 +81,7 @@ directly_mappable = {
     pgerrors.ERROR_SERIALIZATION_FAILURE: errors.TransactionSerializationError,
     pgerrors.ERROR_DEADLOCK_DETECTED: errors.TransactionDeadlockError,
     pgerrors.ERROR_INVALID_CATALOG_NAME: errors.UnknownDatabaseError,
+    pgerrors.ERROR_INVALID_SCHEMA_NAME: errors.UnknownSchemaError,
     pgerrors.ERROR_OBJECT_IN_USE: errors.ExecutionError,
     pgerrors.ERROR_DUPLICATE_DATABASE: errors.DuplicateDatabaseDefinitionError,
     pgerrors.ERROR_DUPLICATE_SCHEMA: errors.DuplicateNameSpaceDefinitionError,

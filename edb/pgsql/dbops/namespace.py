@@ -62,7 +62,7 @@ class DropNameSpace(
         schemas = ",".join(
             [
                 qi(f"{self.name}_{schema}")
-                for schema in ['edgedb', 'edgedbss', 'edgedbpub', 'edgedbstd', 'edgedbinstdata', 'edgedbext']
+                for schema in ['edgedbext', 'edgedb', 'edgedbss', 'edgedbpub', 'edgedbstd', 'edgedbinstdata', ]
             ]
         )
-        return f'DROP SCHEMA IF EXISTS {schemas} CASCADE;'
+        return f'DROP SCHEMA {schemas} CASCADE;'
