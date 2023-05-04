@@ -114,12 +114,15 @@ class HubProtocol(asyncio.BufferedProtocol):
             self._pid = _uint64_unpacker(self._buf[:8])[0]
             version = _uint64_unpacker(self._buf[8:16])[0]
             self._on_pid(self, self._transport, self._pid, version)
-            self._new_buffer(8, is_payload=True)
+            self._new_buffer(8)
         elif self._is_payload:
-            self._new_buffer(_uint64_unpacker(self._buf)[0])
-        else:
             self.process_message(self._buf)
-            self._new_buffer(8, is_payload=True)
+            self._new_buffer(8)
+        else:
+            self._new_buffer(
+                _uint64_unpacker(self._buf)[0],
+                is_payload=True
+            )
 
     def connection_lost(self, exc):
         self._closed = True
@@ -167,7 +170,7 @@ class HubConnection:
 class WorkerProtocol(asyncio.BufferedProtocol):
     def __init__(self, on_message):
         self._transport = None
-        self._new_buffer(8, is_payload=True)
+        self._new_buffer(8)
         self._on_msg = on_message
         self._closed = False
 
@@ -194,10 +197,13 @@ class WorkerProtocol(asyncio.BufferedProtocol):
             return
 
         if self._is_payload:
-            self._new_buffer(_uint64_unpacker(self._buf)[0])
-        else:
             self._on_msg(self._buf)
-            self._new_buffer(8, is_payload=True)
+            self._new_buffer(8)
+        else:
+            self._new_buffer(
+                _uint64_unpacker(self._buf)[0],
+                is_payload=True
+            )
 
     def connection_lost(self, error):
         self._closed = True
