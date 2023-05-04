@@ -91,6 +91,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
 
         pgcon.PGConnection _pinned_pgcon
         bint _pinned_pgcon_in_tx
+        bint _ddl_lock_aquired
 
         int _get_pgcon_cc
 

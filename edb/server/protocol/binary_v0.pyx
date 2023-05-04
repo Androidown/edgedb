@@ -1057,10 +1057,15 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
             read_only=read_only
         )
 
-        return await self.get_dbview()._compile(
-            query_req,
-            skip_first=skip_first,
-        )
+        await self._maybe_aquire_ddl_lock(query_req)
+        try:
+            return await self.get_dbview()._compile(
+                query_req,
+                skip_first=skip_first,
+            )
+        except Exception:
+            await self.release_ddl_lock()
+            raise
 
     async def _legacy_recover_script_error(
         self, eql: bytes, allow_capabilities
@@ -1258,6 +1263,10 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
                         # transaction is aborted.  This check workarounds
                         # that (until a better solution is found.)
                         _dbview.abort_tx()
+
+                    if not _dbview.in_tx():
+                        await self.release_ddl_lock(conn)
+
                     raise
                 else:
                     side_effects = await _dbview.on_success(
@@ -1269,6 +1278,8 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
                         if state is not orig_state:
                             # see the same comments in _legacy_execute()
                             conn.last_state = state
+                        await self.release_ddl_lock(conn)
+
         finally:
             self.maybe_release_pgcon(conn)
 
