@@ -18,6 +18,7 @@
 
 
 import argparse
+import asyncio
 import gc
 import os
 import pickle
@@ -38,10 +39,14 @@ from . import amsg
 NUM_SPAWNS_RESET_INTERVAL = 1
 
 
-def worker(sockname, version_serial, get_handler):
-    con = amsg.WorkerConnection(sockname, version_serial)
+async def worker(sockname, version_serial, get_handler):
+    con = amsg.WorkerConnection(
+        sockname, version_serial,
+        loop=asyncio.get_running_loop())
+    await con.connect()
+
     try:
-        for req_id, req in con.iter_request():
+        async for req_id, req in con.iter_request():
             try:
                 methname, args = pickle.loads(req)
                 meth = get_handler(methname)
@@ -74,7 +79,7 @@ def worker(sockname, version_serial, get_handler):
 
 def run_worker(sockname, version_serial, get_handler):
     with devmode.CoverageConfig.enable_coverage_if_requested():
-        worker(sockname, version_serial, get_handler)
+        asyncio.run(worker(sockname, version_serial, get_handler))
 
 
 def prepare_exception(ex):
