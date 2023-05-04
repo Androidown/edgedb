@@ -457,18 +457,26 @@ class Compiler:
         )
 
         if schema_peristence_async:
-            refl_block.add_command(f"""\
-                DELETE FROM "edgedbinstdata"."schema_persist_history"
-                WHERE version_id = '{str(ver_id)}'::uuid;\
-            """)
+            if debug.flags.keep_schema_persistence_history:
+                invalid_persist_his = f"""\
+                    UPDATE "edgedbinstdata"."schema_persist_history"
+                    SET active = false
+                    WHERE version_id = '{str(ver_id)}'::uuid;\
+                """
+            else:
+                invalid_persist_his = f"""\
+                    DELETE FROM "edgedbinstdata"."schema_persist_history"
+                    WHERE version_id = '{str(ver_id)}'::uuid;\
+                """
+            refl_block.add_command(textwrap.dedent(invalid_persist_his))
             main_block_sub = block.add_block()
-            main_block_sub.add_command(f"""\
+            main_block_sub.add_command(textwrap.dedent(f"""\
                 INSERT INTO "edgedbinstdata"."schema_persist_history"
                 ("version_id", "sql") values (
                     '{str(ver_id)}'::uuid,
                     {pg_common.quote_bytea_literal(refl_block.to_string().encode())}
                 );\
-            """)
+            """))
 
         if pgdelta.std_inhview_updates:
             stdview_block = pg_dbops.PLTopBlock()

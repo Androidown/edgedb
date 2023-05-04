@@ -157,6 +157,9 @@ class flags(metaclass=FlagsMeta):
     show_cache_info = Flag(
         doc="Show server cache info on DDL")
 
+    keep_schema_persistence_history = Flag(
+        doc="Do not delete schema persistence history")
+
 
 @contextlib.contextmanager
 def timeit(title='block'):

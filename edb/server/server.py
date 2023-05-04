@@ -778,7 +778,9 @@ class Server(ha_base.ClusterProtocol):
             persist_sqls = await conn.sql_fetch(
                 b'''\
                 SELECT "version_id", convert_from("sql", 'utf8') from
-                edgedbinstdata.schema_persist_history ORDER BY "timestamp"
+                edgedbinstdata.schema_persist_history
+                WHERE active
+                ORDER BY "timestamp"
             '''
             )
             if not persist_sqls:
