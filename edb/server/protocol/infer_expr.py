@@ -130,7 +130,8 @@ async def execute(db, server, module: str, objname: str, expression: str):
         db.db_config,
         server.get_compilation_system_config(),
         name_str,
-        expression
+        expression,
+        module
     )
 
     query_cache[cache_key] = result
