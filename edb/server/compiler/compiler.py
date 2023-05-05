@@ -2600,6 +2600,7 @@ class Compiler:
         global_schema: s_schema.FlatSchema,
         objname: str,
         expression: str,
+        module: str,
     ):
         current_schema = s_schema.ChainedSchema(
             std_schema,
@@ -2611,7 +2612,8 @@ class Compiler:
         options = qlcompiler.CompilerOptions(
             anchors={qlast.Source().name: source_obj},
             path_prefix_anchor=qlast.Source().name,
-            singletons=[source_obj]
+            singletons=[source_obj],
+            modaliases={None: module}
         )
         expr = s_expr.Expression(text=expression)
 

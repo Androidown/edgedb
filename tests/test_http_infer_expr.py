@@ -6,9 +6,13 @@ from edb.testbase import http as tb
 
 
 class TestHttpInferExpr(tb.InferExprTestCase):
-    SCHEMA = os.path.join(
+    SCHEMA_DEFAULT = os.path.join(
         os.path.dirname(__file__), 'schemas',
         'infer_expr.esdl'
+    )
+    SCHEMA_OTHER = os.path.join(
+        os.path.dirname(__file__), 'schemas',
+        'infer_expr_other.esdl'
     )
     SETUP = None
 
@@ -123,3 +127,12 @@ class TestHttpInferExpr(tb.InferExprTestCase):
             "The inferred type of expression is not in current schema."
         ):
             self.infer_expr('Tree', 'default', expression='select default::Test{g}')
+
+    def test_infer_expr_module_as_default_module(self):
+        self.assertEqual(
+            self.infer_expr('Tree', 'other', expression='.<t[is Test]'),
+            {
+                "cardinality": "MANY",
+                "type": "other::Test"
+            }
+        )
