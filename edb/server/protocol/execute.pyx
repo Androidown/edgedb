@@ -146,10 +146,6 @@ async def execute(
             # isn't in a transaction anymore. Abort the transaction
             # in dbview.
             dbv.abort_tx()
-
-        if not dbv.in_tx() and fe_conn is not None:
-            await fe_conn.release_ddl_lock(be_conn)
-
         raise
     else:
         side_effects = dbv.on_success(query_unit, new_types)
@@ -163,8 +159,6 @@ async def execute(
                 #   2. The state is synced with dbview (orig_state is None)
                 #   3. We came out from a transaction (orig_state is None)
                 be_conn.last_state = state
-            if fe_conn is not None:
-                await fe_conn.release_ddl_lock(be_conn)
 
     return data
 

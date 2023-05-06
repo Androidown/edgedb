@@ -42,8 +42,7 @@ from jwcrypto import jwt
 
 from edb import buildmeta
 from edb import edgeql
-from edb.edgeql import parse_block
-from edb.edgeql.ast import ObjectDDL, GlobalObjectCommand
+from edb.edgeql import qltypes
 
 from edb.server.pgproto cimport hton
 from edb.server.pgproto.pgproto cimport (
@@ -145,14 +144,6 @@ cdef inline bint parse_boolean(value: bytes, header: str):
         )
 
 
-cdef inline has_ddl(query_req):
-    return any(
-        (isinstance(block, ObjectDDL)
-            and not isinstance(block, GlobalObjectCommand))
-        for block in parse_block(query_req.source)
-    )
-
-
 cdef class EdgeConnection(frontend.FrontendConnection):
 
     def __init__(
@@ -206,9 +197,6 @@ cdef class EdgeConnection(frontend.FrontendConnection):
 
         self._pinned_pgcon = None
         self._pinned_pgcon_in_tx = False
-
-        self._ddl_lock_aquired = False
-
         self._get_pgcon_cc = 0
 
         self._in_dump_restore = False
@@ -261,14 +249,6 @@ cdef class EdgeConnection(frontend.FrontendConnection):
                         'get_pgcon(): in dbview transaction, '
                         'but `_pinned_pgcon` is None')
                 return self._pinned_pgcon
-
-            if self._ddl_lock_aquired:
-                if self._pinned_pgcon is None:
-                    raise RuntimeError(
-                        'get_pgcon(): ddl lock aquired, '
-                        'but `_pinned_pgcon` is None')
-                return self._pinned_pgcon
-
             if self._pinned_pgcon is not None:
                 raise RuntimeError('there is already a pinned pgcon')
             conn = await self.server.acquire_pgcon(self.dbname)
@@ -301,7 +281,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
                     self.server.release_pgcon(self.dbname, conn)
             else:
                 self._pinned_pgcon_in_tx = True
-        elif not self._ddl_lock_aquired:
+        else:
             conn.pinned_by = None
             self._pinned_pgcon_in_tx = False
             self._pinned_pgcon = None
@@ -917,23 +897,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
             self.debug_print('Extra variables', source.variables(),
                              'after', source.first_extra())
 
-        await self._maybe_aquire_ddl_lock(query_req)
-        try:
-            return await self.get_dbview().parse(query_req)
-        except Exception:
-            await self.release_ddl_lock()
-            raise
-
-    async def _maybe_aquire_ddl_lock(
-        self,
-        dbview.QueryRequestInfo query_req
-    ):
-        if (
-            not self.get_dbview().in_tx()
-            and has_ddl(query_req)
-            and not self._ddl_lock_aquired
-        ):
-            await self.aquire_ddl_lock()
+        return await self.get_dbview().parse(query_req)
 
     cdef parse_cardinality(self, bytes card):
         if card[0] == CARD_MANY.value:
@@ -2263,39 +2227,6 @@ cdef class EdgeConnection(frontend.FrontendConnection):
                     descriptor_stack.append(desc.elements)
 
         return type_map
-
-    async def aquire_ddl_lock(self):
-        conn = None
-        try:
-            conn = await self.get_pgcon()
-            if self.debug:
-                self.debug_print(f'Aquiring DDL lock <{self.dbname}> ...')
-            await conn.sql_execute(f'select pg_advisory_lock({edbdef.DDL_LOCK_ID});'.encode())
-            if self.debug:
-                self.debug_print(f'DDL lock <{self.dbname}> aquired.')
-            self._ddl_lock_aquired = True
-        finally:
-            if conn is not None:
-                self.maybe_release_pgcon(conn)
-
-    async def release_ddl_lock(self, conn=None):
-        if not self._ddl_lock_aquired:
-            return
-
-        need_release = False
-        try:
-            if conn is not None:
-                assert conn is self._pinned_pgcon
-            else:
-                conn = await self.get_pgcon()
-                need_release = True
-            if self.debug:
-                self.debug_print(f'Releasing ddl lock <{self.dbname}>')
-            await conn.sql_execute(f'select pg_advisory_unlock({edbdef.DDL_LOCK_ID})'.encode())
-            self._ddl_lock_aquired = False
-        finally:
-            if need_release:
-                self.maybe_release_pgcon(conn)
 
 
 @cython.final
