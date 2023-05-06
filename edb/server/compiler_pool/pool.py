@@ -58,7 +58,7 @@ KILL_TIMEOUT: float = 10.0
 ADAPTIVE_SCALE_UP_WAIT_TIME: float = 3.0
 ADAPTIVE_SCALE_DOWN_WAIT_TIME: float = 60.0
 WORKER_PKG: str = __name__.rpartition('.')[0] + '.'
-
+UNKNOW_VER_ID = uuid.UUID('ffffffff-ffff-ffff-eeee-eeeeeeeeeeee')
 
 logger = logging.getLogger("edb.server")
 log_metrics = logging.getLogger("edb.server.metrics")
@@ -93,34 +93,35 @@ class _SchemaMutation(NamedTuple):
 class MutationHistory:
     def __init__(self, dbname: str):
         self._history: List[_SchemaMutation] = []
-        self._index: Dict[int, int] = {}
-        self._cursor: Dict[int, int] = {}
+        self._index: Dict[uuid.UUID, int] = {}
+        self._cursor: Dict[uuid.UUID, int] = {}
         self._db = dbname
 
-    def _get_index_start(self, worker: Worker):
-        usid = worker.get_store_user_schema_id(self._db)
-        return self._index.get(usid, 0)
+    @property
+    def latest_ver(self):
+        if not self._history:
+            return
+        return self._history[-1].base
 
     def clear(self):
         self._history.clear()
         self._index.clear()
         self._cursor.clear()
 
-    def get_pickled_mutation(self, worker: Worker) -> Optional[bytes]:
-        start = self._cursor.get(worker.get_store_user_schema_id(self._db))
+    def get_pickled_mutation(self, worker: BaseWorker) -> Optional[bytes]:
+        start = self._cursor.get(worker.get_user_schema_id(self._db))
         if start is None:
             return
 
         if start == len(self._history) - 1:
             mut_bytes = self._history[start].bytes
-            mut = self._history[start].obj
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(
                     f"::CPOOL:: WOKER<{worker.identifier}> | DB<{self._db}> - "
-                    f"Using stored <MUT {_trim_uuid(mut.id)} -> {_trim_uuid(mut.target)}> to update."
+                    f"Using stored {self._history[start]} to update."
                 )
         else:
-            mut = s_schema.SchemaMutationLogger.merge([m.obj for m in self._history[start: ]])
+            mut = s_schema.SchemaMutationLogger.merge([m.obj for m in self._history[start:]])
             logger.info(
                 f"::CPOOL:: WOKER<{worker.identifier}> | DB<{self._db}> - "
                 f"Using merged <MUT {_trim_uuid(mut.id)} -> {_trim_uuid(mut.target)}> to update."
@@ -136,8 +137,8 @@ class MutationHistory:
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(f"Mutation history appended to {self}")
 
-    def try_trim_history(self, workers: Iterable[Worker]):
-        start = min(self._get_index_start(w) for w in workers)
+    def try_trim_history(self, schema_ids: Iterable[uuid.UUID]):
+        start = min(self._index.get(usid, 0) for usid in schema_ids)
         for _ in range(start):
             mut = self._history.pop(0)
             self._index.pop(mut.target, None)
@@ -155,6 +156,9 @@ class MutationHistory:
 
     def __repr__(self):
         return f"<cursor: {self._cursor} | index: {self._index} | history: {self._history}>"
+
+    def __len__(self):
+        return len(self._history)
 
 
 class BaseWorker:
@@ -184,9 +188,9 @@ class BaseWorker:
         self._last_used = time.monotonic()
         self._closed = False
 
-    def get_store_user_schema_id(self, dbname: str) -> int:
+    def get_user_schema_id(self, dbname: str) -> uuid.UUID:
         if dbname not in self._dbs:
-            return -1
+            return UNKNOW_VER_ID
 
         return self._dbs[dbname].user_schema_version
 
@@ -300,7 +304,7 @@ class AbstractPool:
         dbs: state.DatabasesState = immutables.Map()
         for db in self._dbindex.iter_dbs():
             db_user_schema = db.user_schema
-            version_id = None if db_user_schema is None else db_user_schema.version_id
+            version_id = UNKNOW_VER_ID if db_user_schema is None else db_user_schema.version_id
             dbs = dbs.set(
                 db.name,
                 state.DatabaseState(
@@ -333,8 +337,46 @@ class AbstractPool:
     async def stop(self):
         raise NotImplementedError
 
+    def collect_worker_schema_ids(self, dbname) -> List[uuid.UUID]:
+        raise NotImplementedError
+
     def get_template_pid(self):
         return None
+
+    async def sync_user_schema(
+        self,
+        dbname,
+        user_schema,
+        reflection_cache,
+        global_schema,
+        database_config,
+        system_config,
+    ):
+        worker = await self._acquire_worker()
+        await asyncio.sleep(0)
+
+        try:
+            preargs, sync_state = await self._compute_compile_preargs(
+                worker,
+                dbname,
+                user_schema,
+                global_schema,
+                reflection_cache,
+                database_config,
+                system_config,
+            )
+
+            if preargs[2] is not None:
+                logger.debug(f"[W::{worker.identifier}] Sync user schema.")
+            else:
+                if worker.get_user_schema_id(dbname) is not UNKNOW_VER_ID:
+                    logger.warning(f"[W::{worker.identifier}] Attempt to sync user schema failed.")
+                logger.info(f"[W::{worker.identifier}] Initialize user schema.")
+
+            await worker.call('__sync__', *preargs, False, sync_state=sync_state)
+
+        finally:
+            self._release_worker(worker)
 
     async def _compute_compile_preargs(
         self,
@@ -380,15 +422,16 @@ class AbstractPool:
                     or reflection_cache is not None
                     or database_config is not None
                 ):
+                    new_user_schema = user_schema or worker_db.user_schema
                     worker._dbs = worker._dbs.set(dbname, state.DatabaseState(
                         name=dbname,
-                        user_schema=(
-                            user_schema or worker_db.user_schema),
-                        user_schema_version=worker_db.user_schema_version,
+                        user_schema=new_user_schema,
+                        user_schema_version=new_user_schema.version_id,
                         reflection_cache=(
                             reflection_cache or worker_db.reflection_cache),
                         database_config=(
-                            database_config or worker_db.database_config),
+                            database_config if database_config is not None
+                            else worker_db.database_config),
                     ))
 
                 if global_schema is not None:
@@ -403,6 +446,7 @@ class AbstractPool:
         if worker_db is None:
             preargs += (
                 _pickle_memoized(user_schema),
+                None,
                 _pickle_memoized(reflection_cache),
                 _pickle_memoized(global_schema),
                 _pickle_memoized(database_config),
@@ -417,27 +461,26 @@ class AbstractPool:
             }
         else:
             if worker_db.user_schema_version != user_schema.version_id:
-                if worker_db.user_schema_version is None:
-                    worker._dbs = worker._dbs.set(
-                        dbname,
-                        worker_db._replace(user_schema_version=user_schema.version_id)
-                    )
+                if worker_db.user_schema_version is UNKNOW_VER_ID:
+                    preargs += (_pickle_memoized(user_schema), None)
                     logger.info(
                         f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
                         f"Initialize db <{dbname}> schema version to: [{user_schema.version_id}]"
                     )
                 else:
-                    logger.warning(
-                        f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
-                        f"Stored schema version: [{worker_db.user_schema_version}] "
-                        f"is not consistent with server schema version: [{user_schema.version_id}]"
-                    )
-                preargs += (
-                    _pickle_memoized(user_schema),
-                )
+                    mutation_pickled = self._mut_history[dbname].get_pickled_mutation(worker)
+                    if mutation_pickled is None:
+                        logger.warning(
+                            f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
+                            f"No schema mutation available. "
+                            f"Schema <{worker_db.user_schema_version}> is outdated, will issue a full update."
+                        )
+                        preargs += (_pickle_memoized(user_schema), None)
+                    else:
+                        preargs += (None, mutation_pickled)
                 to_update['user_schema'] = user_schema
             else:
-                preargs += (None,)
+                preargs += (None, None)
 
             if worker_db.reflection_cache is not reflection_cache:
                 preargs += (
@@ -489,114 +532,7 @@ class AbstractPool:
     def _release_worker(self, worker, *, put_in_front: bool = True):
         raise NotImplementedError
 
-    @staticmethod
-    def _update_user_schema_ver_id(worker, dbname, ver_id):
-        db_states: state.DatabaseState = worker._dbs.get(dbname)
-        db_states = db_states._replace(user_schema_version=ver_id)
-        worker._dbs = worker._dbs.set(dbname, db_states)
-
-    async def get_worker_schema_id_coro_safe(self, pid, dbname):
-        worker = await self._acquire_worker(condition=lambda w: w.get_pid() == pid)
-        try:
-            return worker.get_store_user_schema_id(dbname)
-        finally:
-            self._release_worker(worker)
-
-    async def _apply_user_schema_mutation(self, pid, dbname, target_id):
-        worker = await self._acquire_worker(condition=lambda w: w.get_pid() == pid)
-        try:
-            mutation_pickled = self._mut_history[dbname].get_pickled_mutation(worker)
-            if mutation_pickled is None:
-                suid = worker.get_store_user_schema_id(dbname)
-                if suid == target_id:
-                    logger.info(
-                        f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
-                        f"No schema mutation available. "
-                        f"Schema <{suid}> is already up to date."
-                    )
-                    return pid, True
-                else:
-                    logger.warning(
-                        f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
-                        f"No schema mutation available. "
-                        f"Schema <{suid}> is outdated, will issue a full update."
-                    )
-                    self._mut_history[dbname].clear()
-                    return pid, False
-
-            status, ver_id = await worker.call('apply_schema_mutation', dbname, mutation_pickled)
-
-            if status is True:
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(
-                        f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
-                        f"user schema version updated from "
-                        f"<{worker.get_store_user_schema_id(dbname)}> to <{ver_id}>"
-                    )
-                self._update_user_schema_ver_id(worker, dbname, ver_id)
-            else:
-                logger.info(
-                    f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
-                    f"Cannot update user schema for version <{worker.get_store_user_schema_id(dbname)}>"
-                )
-            return pid, status
-        finally:
-            self._release_worker(worker)
-
-    async def _apply_schema_full_update(self, pid, dbname, schema_pickled):
-        worker = await self._acquire_worker(condition=lambda w: w.get_pid() == pid)
-        try:
-            status, ver_id = await worker.call('set_user_schema', dbname, schema_pickled)
-            logger.info(
-                f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
-                f"DB<{dbname}> user schema version set to <{ver_id}>, is success: {status}"
-            )
-            if status is True:
-                self._update_user_schema_ver_id(worker, dbname, ver_id)
-            return pid, status
-        finally:
-            self._release_worker(worker)
-
-    async def _init_worker_db(
-        self,
-        pid,
-        dbname: str,
-        user_schema,
-        reflection_cache,
-        global_schema,
-        database_config,
-        system_config,
-    ):
-        worker = await self._acquire_worker(condition=lambda w: w.get_pid() == pid)
-        logger.info(
-            f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
-            f"Initialize user_schema as version: <{user_schema.version_id}> "
-        )
-        try:
-            await worker.call(
-                '__sync__',
-                dbname,
-                _pickle_memoized(user_schema),
-                _pickle_memoized(reflection_cache),
-                _pickle_memoized(global_schema),
-                _pickle_memoized(database_config),
-                _pickle_memoized(system_config),
-                False
-            )
-            worker._dbs = worker._dbs.set(
-                dbname,
-                state.DatabaseState(
-                    name=dbname,
-                    user_schema=user_schema,
-                    user_schema_version=user_schema.version_id,
-                    reflection_cache=reflection_cache,
-                    database_config=database_config,
-                )
-            )
-        finally:
-            self._release_worker(worker)
-
-    async def apply_user_schema_mutation_for_all(
+    def append_schema_mutation(
         self,
         dbname,
         mut_bytes,
@@ -607,68 +543,35 @@ class AbstractPool:
         database_config,
         system_config,
     ):
-        mutation_tasks = []
-        db_init_pids = []
-        full_schema_replace_pids = []
-
-        if dbname not in self._mut_history:
+        if is_fresh := (dbname not in self._mut_history):
             self._mut_history[dbname] = MutationHistory(dbname)
 
-        self._mut_history[dbname].append(_SchemaMutation(
+        hist = self._mut_history[dbname]
+        hist.append(_SchemaMutation(
             base=mutation.id,
             target=user_schema.version_id,
             bytes=mut_bytes,
             obj=mutation
         ))
 
-        # -----------------------------------------------------------------------------
-        # general mutation update
-        for pid, worker in self._workers.items():
-            if dbname not in worker._dbs:
-                db_init_pids.append(pid)
-            elif (
-                mut_bytes is not None
-                and worker.get_store_user_schema_id(dbname) is not None
+        if not is_fresh:
+            usids = self.collect_worker_schema_ids(dbname)
+            hist.try_trim_history(usids)
+
+            if (
+                len(hist) > defines.MAX_RESERVED_MUTATION_HISTORY
+                and (n := len(usids)) > 0
             ):
-                mutation_tasks.append(
-                    self._apply_user_schema_mutation(pid, dbname, user_schema.version_id))
-            else:
-                full_schema_replace_pids.append(pid)
-
-        result = await asyncio.gather(*mutation_tasks)
-
-        full_schema_replace_pids.extend(pid for pid, succeed in result if not succeed)
-        # -----------------------------------------------------------------------------
-        # full user_schema update
-        if full_schema_replace_pids:
-            full_schema_replace_tasks = []
-            schema_pickled = _pickle_memoized(user_schema)
-            for pid in full_schema_replace_pids:
-                full_schema_replace_tasks.append(
-                    self._apply_schema_full_update(pid, dbname, schema_pickled))
-
-            result = await asyncio.gather(*full_schema_replace_tasks)
-
-            for pid, succeed in result:
-                if not succeed:
-                    db_init_pids.append(pid)
-
-        # -----------------------------------------------------------------------------
-        # new db initialization
-        if db_init_pids:
-            db_init_tasks = []
-            db_init_args = (
-                dbname,
-                user_schema,
-                reflection_cache,
-                global_schema,
-                database_config,
-                system_config,
-            )
-            for pid in db_init_pids:
-                db_init_tasks.append(self._init_worker_db(pid, *db_init_args))
-
-            await asyncio.gather(*db_init_tasks)
+                logger.debug(f"Schedule {n} tasks to sync worker's user schema.")
+                for _ in range(n):
+                    asyncio.create_task(self.sync_user_schema(
+                        dbname,
+                        user_schema,
+                        reflection_cache,
+                        global_schema,
+                        database_config,
+                        system_config,
+                    ))
 
     async def compile(
         self,
@@ -749,7 +652,7 @@ class AbstractPool:
             pickled_state = state.REUSE_LAST_STATE_MARKER
             user_schema = None
         else:
-            usid = worker.get_store_user_schema_id(dbname)
+            usid = worker.get_user_schema_id(dbname)
             if state_id == 0:
                 if base_user_schema.version_id != usid:
                     user_schema = _pickle_memoized(base_user_schema)
@@ -1124,21 +1027,8 @@ class BaseLocalPool(
         if worker.get_pid() in self._workers:
             self._workers_queue.release(worker, put_in_front=put_in_front)
 
-    async def _apply_schema_full_update(self, pid, dbname, schema_pickled):
-        async with self._worker_locks[pid]:
-            return await super()._apply_schema_full_update(pid, dbname, schema_pickled)
-
-    async def _apply_user_schema_mutation(self, pid, dbname, target_id):
-        async with self._worker_locks[pid]:
-            return await super()._apply_user_schema_mutation(pid, dbname, target_id)
-
-    def _update_user_schema_ver_id(self, worker, dbname, ver_id):
-        super()._update_user_schema_ver_id(worker, dbname, ver_id)
-        self._mut_history[dbname].try_trim_history(self._workers.values())
-
-    async def get_worker_schema_id_coro_safe(self, pid, dbname):
-        async with self._worker_locks[pid]:
-            return await super().get_worker_schema_id_coro_safe(pid, dbname)
+    def collect_worker_schema_ids(self, dbname) -> Iterable[uuid.UUID]:
+        return [w.get_user_schema_id(dbname) for w in self._workers.values()]
 
 
 @srvargs.CompilerPoolMode.Fixed.assign_implementation
@@ -1230,8 +1120,8 @@ class DebugWorker:
     _last_pickled_state = None
     connected = False
 
-    def get_store_user_schema_id(self, dbname):
-        return BaseWorker.get_store_user_schema_id(self, dbname)  # noqa
+    def get_user_schema_id(self, dbname):
+        return BaseWorker.get_user_schema_id(self, dbname)  # noqa
 
     async def call(self, method_name, *args, sync_state=None):
         from . import worker
@@ -1331,6 +1221,9 @@ class SoloPool(BaseLocalPool):
         self._running = False
         if self._worker.connected:
             self.worker_disconnected(os.getpid())
+
+    def collect_worker_schema_ids(self, dbname) -> Iterable[uuid.UUID]:
+        return [self._worker.get_user_schema_id(dbname)]
 
 
 @srvargs.CompilerPoolMode.OnDemand.assign_implementation
@@ -1620,6 +1513,9 @@ class RemotePool(AbstractPool):
             if not callback:
                 self._sync_lock.release()
         return preargs, callback
+
+    def collect_worker_schema_ids(self, dbname) -> Iterable[uuid.UUID]:
+        return []
 
 
 async def create_compiler_pool(

@@ -1085,15 +1085,26 @@ cdef class DatabaseConnectionView:
         await be_conn.sql_execute(sqls)
         self._in_tx_sp_sqls.clear()
 
-    async def on_success(self, query_unit, new_types):
+    def on_success(self, query_unit, new_types):
         with util.disable_gc():
             side_effects = self._on_success(query_unit, new_types)
 
-        if not self._in_tx and side_effects and (side_effects & SideEffects.SchemaChanges):
-            await self.update_compiler_user_schema(
+        if (
+            not self._in_tx
+            and side_effects
+            and (side_effects & SideEffects.SchemaChanges)
+        ):
+            self._db._index._server.get_compiler_pool().append_schema_mutation(
+                self.dbname,
                 query_unit.user_schema_mutation,
                 query_unit.user_schema_mutation_obj,
+                self.get_user_schema(),
+                self.get_global_schema(),
+                self.reflection_cache,
+                self.get_database_config(),
+                self.get_compilation_system_config(),
             )
+
         return side_effects
 
     def _on_success(self, query_unit, new_types):
@@ -1335,20 +1346,6 @@ cdef class DatabaseConnectionView:
             first_extra=source.first_extra(),
             extra_counts=source.extra_counts(),
             extra_blobs=source.extra_blobs(),
-        )
-
-    async def update_compiler_user_schema(self, mut_bytes, mutation: s_schema.SchemaMutationLogger):
-        compiler_pool = self._db._index._server.get_compiler_pool()
-
-        await compiler_pool.apply_user_schema_mutation_for_all(
-            self.dbname,
-            mut_bytes,
-            mutation,
-            self.get_user_schema(),
-            self.get_global_schema(),
-            self.reflection_cache,
-            self.get_database_config(),
-            self.get_compilation_system_config(),
         )
 
     async def _compile(

@@ -152,7 +152,7 @@ async def execute(
 
         raise
     else:
-        side_effects = await dbv.on_success(query_unit, new_types)
+        side_effects = dbv.on_success(query_unit, new_types)
         if side_effects:
             signal_side_effects(dbv, side_effects)
         if not dbv.in_tx():
@@ -294,7 +294,7 @@ async def execute_script(
                 if config_ops:
                     await dbv.apply_config_ops(conn, config_ops)
 
-                side_effects = await dbv.on_success(query_unit, new_types)
+                side_effects = dbv.on_success(query_unit, new_types)
                 if side_effects:
                     raise errors.InternalServerError(
                         "Side-effects in implicit transaction!"

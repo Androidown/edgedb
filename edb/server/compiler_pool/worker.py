@@ -110,6 +110,7 @@ def __init_worker__(
 def __sync__(
     dbname: str,
     user_schema: Optional[bytes],
+    user_schema_mutation: Optional[bytes],
     reflection_cache: Optional[bytes],
     global_schema: Optional[bytes],
     database_config: Optional[bytes],
@@ -143,6 +144,12 @@ def __sync__(
             if user_schema is not None:
                 updates['user_schema'] = user_schema_unpacked = pickle.loads(user_schema)
                 updates['user_schema_version'] = user_schema_unpacked.version_id
+
+            if user_schema_mutation is not None:
+                updates['user_schema'] = user_schema_unpacked = \
+                    pickle.loads(user_schema_mutation).apply(db.user_schema)
+                updates['user_schema_version'] = user_schema_unpacked.version_id
+
             if reflection_cache is not None:
                 updates['reflection_cache'] = pickle.loads(reflection_cache)
             if database_config is not None:
@@ -169,6 +176,7 @@ def __sync__(
 def compile(
     dbname: str,
     user_schema: Optional[bytes],
+    user_schema_mutation: Optional[bytes],
     reflection_cache: Optional[bytes],
     global_schema: Optional[bytes],
     database_config: Optional[bytes],
@@ -180,6 +188,7 @@ def compile(
         db = __sync__(
             dbname,
             user_schema,
+            user_schema_mutation,
             reflection_cache,
             global_schema,
             database_config,
@@ -203,48 +212,6 @@ def compile(
             pickled_state = pickle.dumps(cstate.compress(), -1)
 
         return units, pickled_state
-
-
-def apply_schema_mutation(
-    dbname: str,
-    schema_mutation: bytes,
-):
-    global DBS
-
-    db = DBS.get(dbname)
-    if db is None:
-        return False, None
-
-    base_user_schema = db.user_schema
-
-    mutation: s_schema.SchemaMutationLogger = pickle.loads(schema_mutation)
-
-    try:
-        user_schema = mutation.apply(base_user_schema)
-        db = db._replace(user_schema=user_schema)
-        DBS = DBS.set(dbname, db)
-        return True, user_schema.version_id
-    except Exception:  # noqa
-        logger.exception('')
-        return False, None
-
-
-def set_user_schema(
-    dbname: str,
-    schema: bytes,
-):
-    global DBS
-
-    db = DBS.get(dbname)
-    if db is None:
-        return False, None
-
-    with util.disable_gc():
-        user_schema: s_schema.FlatSchema = pickle.loads(schema)
-
-    db = db._replace(user_schema=user_schema)
-    DBS = DBS.set(dbname, db)
-    return True, user_schema.version_id
 
 
 def compile_in_tx(cstate, dbname, user_schema_pickled, *args, **kwargs):
@@ -272,6 +239,7 @@ def compile_in_tx(cstate, dbname, user_schema_pickled, *args, **kwargs):
 def compile_notebook(
     dbname: str,
     user_schema: Optional[bytes],
+    user_schema_mutation: Optional[bytes],
     reflection_cache: Optional[bytes],
     global_schema: Optional[bytes],
     database_config: Optional[bytes],
@@ -282,6 +250,7 @@ def compile_notebook(
     db = __sync__(
         dbname,
         user_schema,
+        user_schema_mutation,
         reflection_cache,
         global_schema,
         database_config,
@@ -302,6 +271,7 @@ def compile_notebook(
 def infer_expr(
     dbname: str,
     user_schema: Optional[bytes],
+    user_schema_mutation: Optional[bytes],
     reflection_cache: Optional[bytes],
     global_schema: Optional[bytes],
     database_config: Optional[bytes],
@@ -312,6 +282,7 @@ def infer_expr(
     db = __sync__(
         dbname,
         user_schema,
+        user_schema_mutation,
         reflection_cache,
         global_schema,
         database_config,
@@ -337,6 +308,7 @@ def try_compile_rollback(
 def compile_graphql(
     dbname: str,
     user_schema: Optional[bytes],
+    user_schema_mutation: Optional[bytes],
     reflection_cache: Optional[bytes],
     global_schema: Optional[bytes],
     database_config: Optional[bytes],
@@ -355,6 +327,7 @@ def compile_graphql(
     db = __sync__(
         dbname,
         user_schema,
+        user_schema_mutation,
         reflection_cache,
         global_schema,
         database_config,
@@ -422,10 +395,6 @@ def get_handler(methname):
             meth = infer_expr
         elif methname == "try_compile_rollback":
             meth = try_compile_rollback
-        elif methname == 'set_user_schema':
-            meth = set_user_schema
-        elif methname == 'apply_schema_mutation':
-            meth = apply_schema_mutation
         elif methname == '__sync__':
             meth = __sync__
         else:
