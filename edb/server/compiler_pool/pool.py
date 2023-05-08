@@ -468,7 +468,13 @@ class AbstractPool:
                         f"Initialize db <{dbname}> schema version to: [{user_schema.version_id}]"
                     )
                 else:
-                    mutation_pickled = self._mut_history[dbname].get_pickled_mutation(worker)
+                    if dbname not in self._mut_history:
+                        # 当前实例初始化后未执行任何ddl，此时在其他实例发生DDL，
+                        # 触发当前实例的introspect_db，导致worker的schema版本失效，
+                        # 这种情况下，当前实例_mut_history可能不包含dbname
+                        mutation_pickled = None
+                    else:
+                        mutation_pickled = self._mut_history[dbname].get_pickled_mutation(worker)
                     if mutation_pickled is None:
                         logger.warning(
                             f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
@@ -1151,7 +1157,7 @@ class SoloPool(BaseLocalPool):
         dbs: state.DatabasesState = immutables.Map()
         for db in self._dbindex.iter_dbs():
             db_user_schema = db.user_schema
-            version_id = None if db_user_schema is None else db_user_schema.version_id
+            version_id = UNKNOW_VER_ID if db_user_schema is None else db_user_schema.version_id
             dbs = dbs.set(
                 db.name,
                 state.DatabaseState(
