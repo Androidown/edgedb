@@ -1158,6 +1158,8 @@ class PointerCommandOrFragment(
                         # 新的计算字段不是computable-alias，重置base
                         self.set_attribute_value(
                             'bases', so.ObjectList.create(schema, [std_property]))
+                        self.set_attribute_value(
+                            'ancestors', so.ObjectList.create(schema, [std_property]))
                     elif orig_base is not base:
                         self.set_object_aux_data('new_computable_base', True)
                 else:
