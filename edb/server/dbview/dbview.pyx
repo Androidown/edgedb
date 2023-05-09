@@ -1085,6 +1085,18 @@ cdef class DatabaseConnectionView:
         await be_conn.sql_execute(sqls)
         self._in_tx_sp_sqls.clear()
 
+    def save_schema_mutaion(self, mut, mut_bytes):
+        self._db._index._server.get_compiler_pool().append_schema_mutation(
+            self.dbname,
+            mut_bytes,
+            mut,
+            self.get_user_schema(),
+            self.get_global_schema(),
+            self.reflection_cache,
+            self.get_database_config(),
+            self.get_compilation_system_config(),
+        )
+
     def on_success(self, query_unit, new_types):
         with util.disable_gc():
             side_effects = self._on_success(query_unit, new_types)
@@ -1094,17 +1106,10 @@ cdef class DatabaseConnectionView:
             and side_effects
             and (side_effects & SideEffects.SchemaChanges)
         ):
-            self._db._index._server.get_compiler_pool().append_schema_mutation(
-                self.dbname,
-                query_unit.user_schema_mutation,
+            self.save_schema_mutaion(
                 query_unit.user_schema_mutation_obj,
-                self.get_user_schema(),
-                self.get_global_schema(),
-                self.reflection_cache,
-                self.get_database_config(),
-                self.get_compilation_system_config(),
+                query_unit.user_schema_mutation,
             )
-
         return side_effects
 
     def _on_success(self, query_unit, new_types):
