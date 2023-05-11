@@ -1218,6 +1218,7 @@ class CommandContext:
         module: Optional[str] = None,
         module_is_implicit: Optional[bool] = False,
         external_view: Optional[Mapping] = None,
+        restoring_external: Optional[bool] = False,
     ) -> None:
         self.stack: List[CommandContextToken[Command]] = []
         self._cache: Dict[Hashable, Any] = {}
@@ -1247,6 +1248,7 @@ class CommandContext:
         self.module = module
         self.module_is_implicit = module_is_implicit
         self.external_view = external_view or immutables.Map()
+        self.restoring_external = restoring_external
         self.external_objs = set()
 
     @property

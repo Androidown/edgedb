@@ -1845,7 +1845,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
             db_config = await server.introspect_db_config(pgcon)
             dump_protocol = self.max_protocol
 
-            schema_ddl, schema_dynamic_ddl, schema_ids, blocks = (
+            schema_ddl, schema_dynamic_ddl, schema_ids, blocks, external_ids = (
                 await compiler_pool.describe_database_dump(
                     user_schema,
                     global_schema,
@@ -1872,6 +1872,20 @@ cdef class EdgeConnection(frontend.FrontendConnection):
 
             msg_buf.write_int16(dump_protocol[0])
             msg_buf.write_int16(dump_protocol[1])
+
+            # adding external ddl & external ids
+            external_views = await self.external_views(external_ids, pgcon)
+            msg_buf.write_int32(len(external_views))
+            for name, view_sql in external_views:
+                if isinstance(name, tuple):
+                    msg_buf.write_int16(DUMP_EXTERNAL_KEY_LINK)
+                    msg_buf.write_len_prefixed_utf8(name[0])
+                    msg_buf.write_len_prefixed_utf8(name[1])
+                else:
+                    msg_buf.write_int16(DUMP_EXTERNAL_KEY_OBJ)
+                    msg_buf.write_len_prefixed_utf8(name)
+                msg_buf.write_len_prefixed_utf8(view_sql)
+
             msg_buf.write_len_prefixed_utf8(schema_ddl)
 
             msg_buf.write_int32(len(schema_ids))
@@ -1953,6 +1967,15 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         self.write(msg_buf.end_message())
         self.flush()
 
+    async def external_views(self, external_ids: List[Tuple[str, str]], pgcon):
+        views = []
+        for ext_name, ext_id in external_ids:
+            view = f"SELECT view_definition FROM information_schema.views WHERE table_name = '{ext_id}';"
+            view_sql = await pgcon.sql_fetch_val(view.encode('utf-8'))
+            if view_sql is not None:
+                views.append((ext_name, view_sql.decode('utf-8')))
+        return views
+
     async def _execute_utility_stmt(self, eql: str, pgcon):
         cdef dbview.DatabaseConnectionView _dbview
 
@@ -2022,6 +2045,24 @@ cdef class EdgeConnection(frontend.FrontendConnection):
             raise errors.ProtocolError(
                 f'unsupported dump version {proto_major}.{proto_minor}')
 
+        # getting external ddl & external ids
+        external_view_num = self.buffer.read_int32()
+        logger.info(external_view_num)
+        external_views = []
+        for _ in range(external_view_num):
+            key_flag = self.buffer.read_int16()
+            if key_flag == DUMP_EXTERNAL_KEY_LINK:
+                obj_name = self.buffer.read_len_prefixed_utf8()
+                link_name = self.buffer.read_len_prefixed_utf8()
+                sql = self.buffer.read_len_prefixed_utf8()
+                logger.info(obj_name, link_name, sql)
+                external_views.append(((obj_name, link_name), sql))
+            else:
+                name = self.buffer.read_len_prefixed_utf8()
+                sql = self.buffer.read_len_prefixed_utf8()
+                logger.info(name, sql)
+                external_views.append((name, sql))
+
         schema_ddl = self.buffer.read_len_prefixed_bytes()
 
         ids_num = self.buffer.read_int32()
@@ -2076,6 +2117,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
                     schema_ids,
                     blocks,
                     proto,
+                    dict(external_views)
                 )
 
             for query_unit in schema_sql_units:

@@ -256,6 +256,7 @@ def delta_schemas(
         s_mod.Module,
         s_func.Parameter,
         s_pseudo.PseudoType,
+        s_migr.Migration
     )
 
     schemaclasses = [
