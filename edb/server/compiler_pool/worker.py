@@ -305,6 +305,20 @@ def try_compile_rollback(
     return COMPILER.try_compile_rollback(*compile_args, **compile_kwargs)
 
 
+def describe_database_dump(
+    *compile_args: Any,
+    **compile_kwargs: Any,
+):
+    return COMPILER.describe_database_dump(*compile_args, **compile_kwargs)
+
+
+def describe_database_restore(
+    *compile_args: Any,
+    **compile_kwargs: Any,
+):
+    return COMPILER.describe_database_restore(*compile_args, **compile_kwargs)
+
+
 def compile_graphql(
     dbname: str,
     user_schema: Optional[bytes],
