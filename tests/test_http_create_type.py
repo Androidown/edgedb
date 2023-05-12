@@ -63,7 +63,7 @@ class TestHttpCreateType(tb.ExternTestCase):
     )
     SETUP = os.path.join(
         os.path.dirname(__file__), 'schemas',
-        'http_create_type_setup.esdl'
+        'http_create_type_setup.edgeql'
     )
 
     # EdgeQL/HTTP queries cannot run in a transaction

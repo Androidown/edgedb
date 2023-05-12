@@ -1862,7 +1862,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
 
             msg_buf = WriteBuffer.new_message(b'@')
 
-            msg_buf.write_int16(3)  # number of headers
+            msg_buf.write_int16(4)  # number of headers
             msg_buf.write_int16(DUMP_HEADER_BLOCK_TYPE)
             msg_buf.write_len_prefixed_bytes(DUMP_HEADER_BLOCK_TYPE_INFO)
             msg_buf.write_int16(DUMP_HEADER_SERVER_VER)
@@ -1870,10 +1870,8 @@ cdef class EdgeConnection(frontend.FrontendConnection):
             msg_buf.write_int16(DUMP_HEADER_SERVER_TIME)
             msg_buf.write_len_prefixed_utf8(str(int(time.time())))
 
-            msg_buf.write_int16(dump_protocol[0])
-            msg_buf.write_int16(dump_protocol[1])
-
             # adding external ddl & external ids
+            msg_buf.write_int16(DUMP_EXTERNAL_VIEW)
             external_views = await self.external_views(external_ids, pgcon)
             msg_buf.write_int32(len(external_views))
             for name, view_sql in external_views:
@@ -1885,6 +1883,9 @@ cdef class EdgeConnection(frontend.FrontendConnection):
                     msg_buf.write_int16(DUMP_EXTERNAL_KEY_OBJ)
                     msg_buf.write_len_prefixed_utf8(name)
                 msg_buf.write_len_prefixed_utf8(view_sql)
+
+            msg_buf.write_int16(dump_protocol[0])
+            msg_buf.write_int16(dump_protocol[1])
 
             msg_buf.write_len_prefixed_utf8(schema_ddl)
 
@@ -2032,11 +2033,30 @@ cdef class EdgeConnection(frontend.FrontendConnection):
 
         dump_server_ver_str = None
         headers_num = self.buffer.read_int16()
+        external_views = []
         for _ in range(headers_num):
             hdrname = self.buffer.read_int16()
-            hdrval = self.buffer.read_len_prefixed_bytes()
+            if hdrname != DUMP_EXTERNAL_VIEW:
+                hdrval = self.buffer.read_len_prefixed_bytes()
             if hdrname == DUMP_HEADER_SERVER_VER:
                 dump_server_ver_str = hdrval.decode('utf-8')
+            # getting external ddl & external ids
+            if hdrname == DUMP_EXTERNAL_VIEW:
+                external_view_num = self.buffer.read_int32()
+                logger.info(external_view_num)
+                for _ in range(external_view_num):
+                    key_flag = self.buffer.read_int16()
+                    if key_flag == DUMP_EXTERNAL_KEY_LINK:
+                        obj_name = self.buffer.read_len_prefixed_utf8()
+                        link_name = self.buffer.read_len_prefixed_utf8()
+                        sql = self.buffer.read_len_prefixed_utf8()
+                        logger.info((obj_name, link_name, sql))
+                        external_views.append(((obj_name, link_name), sql))
+                    else:
+                        name = self.buffer.read_len_prefixed_utf8()
+                        sql = self.buffer.read_len_prefixed_utf8()
+                        logger.info((name, sql))
+                        external_views.append((name, sql))
 
         proto_major = self.buffer.read_int16()
         proto_minor = self.buffer.read_int16()
@@ -2044,24 +2064,6 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         if proto > DUMP_VER_MAX or proto < DUMP_VER_MIN:
             raise errors.ProtocolError(
                 f'unsupported dump version {proto_major}.{proto_minor}')
-
-        # getting external ddl & external ids
-        external_view_num = self.buffer.read_int32()
-        logger.info(external_view_num)
-        external_views = []
-        for _ in range(external_view_num):
-            key_flag = self.buffer.read_int16()
-            if key_flag == DUMP_EXTERNAL_KEY_LINK:
-                obj_name = self.buffer.read_len_prefixed_utf8()
-                link_name = self.buffer.read_len_prefixed_utf8()
-                sql = self.buffer.read_len_prefixed_utf8()
-                logger.info(obj_name, link_name, sql)
-                external_views.append(((obj_name, link_name), sql))
-            else:
-                name = self.buffer.read_len_prefixed_utf8()
-                sql = self.buffer.read_len_prefixed_utf8()
-                logger.info(name, sql)
-                external_views.append((name, sql))
 
         schema_ddl = self.buffer.read_len_prefixed_bytes()
 
