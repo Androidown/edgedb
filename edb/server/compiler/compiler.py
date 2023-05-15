@@ -139,6 +139,8 @@ class CompileContext:
     external_view: Optional[Mapping] = immutables.Map()
     # If in restoring external view
     restoring_external: Optional[bool] = False
+    # If is test mode from http
+    testmode: Optional[bool] = False
 
 
 DEFAULT_MODULE_ALIASES_MAP = immutables.Map(
@@ -373,7 +375,7 @@ class Compiler:
 
     def _new_delta_context(self, ctx: CompileContext):
         context = s_delta.CommandContext()
-        context.testmode = self.get_config_val(ctx, '__internal_testmode')
+        context.testmode = self.get_config_val(ctx, '__internal_testmode') or ctx.testmode
         context.stdmode = ctx.bootstrap_mode
         context.internal_schema_mode = ctx.internal_schema_mode
         context.schema_object_ids = ctx.schema_object_ids
@@ -2426,6 +2428,7 @@ class Compiler:
         module: Optional[str] = None,
         external_view: Optional[Mapping] = None,
         restoring_external: Optional[bool] = False,
+        testmode: bool = False
     ) -> Tuple[dbstate.QueryUnitGroup,
                Optional[dbstate.CompilerConnectionState]]:
 
@@ -2471,7 +2474,8 @@ class Compiler:
             protocol_version=protocol_version,
             module=module,
             external_view=external_view,
-            restoring_external=restoring_external
+            restoring_external=restoring_external,
+            testmode=testmode
         )
 
         unit_group = self._compile(ctx=ctx, source=source)

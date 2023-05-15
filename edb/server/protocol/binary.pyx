@@ -1825,6 +1825,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
             #
             # This guarantees that every pg connection and the compiler work
             # with the same DB state.
+            user_schema = await server.introspect_user_schema(dbname, pgcon)
 
             await pgcon.sql_execute(
                 b'''START TRANSACTION
@@ -1839,8 +1840,6 @@ cdef class EdgeConnection(frontend.FrontendConnection):
                     SET statement_timeout = 0;
                 ''',
             )
-
-            user_schema = await server.introspect_user_schema(dbname, pgcon)
             global_schema = await server.introspect_global_schema(pgcon)
             db_config = await server.introspect_db_config(pgcon)
             dump_protocol = self.max_protocol

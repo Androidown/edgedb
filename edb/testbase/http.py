@@ -368,6 +368,7 @@ class ExternTestCase(BaseHttpTest, server.QueryTestCase, PGConnMixin):
 
         req = urllib.request.Request(self.http_addr, method='POST')
         req.add_header('Content-Type', 'application/json')
+        req.add_header('testmode', '1')
         response = urllib.request.urlopen(
             req, json.dumps(req_data).encode(), context=self.tls_context
         )
