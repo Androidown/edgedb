@@ -1085,7 +1085,7 @@ cdef class DatabaseConnectionView:
         await be_conn.sql_execute(sqls)
         self._in_tx_sp_sqls.clear()
 
-    def save_schema_mutaion(self, mut, mut_bytes):
+    def save_schema_mutation(self, mut, mut_bytes):
         self._db._index._server.get_compiler_pool().append_schema_mutation(
             self.dbname,
             mut_bytes,
@@ -1106,7 +1106,7 @@ cdef class DatabaseConnectionView:
             and side_effects
             and (side_effects & SideEffects.SchemaChanges)
         ):
-            self.save_schema_mutaion(
+            self.save_schema_mutation(
                 query_unit.user_schema_mutation_obj,
                 query_unit.user_schema_mutation,
             )

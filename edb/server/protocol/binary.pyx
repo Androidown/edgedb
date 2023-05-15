@@ -2043,19 +2043,16 @@ cdef class EdgeConnection(frontend.FrontendConnection):
             # getting external ddl & external ids
             if hdrname == DUMP_EXTERNAL_VIEW:
                 external_view_num = self.buffer.read_int32()
-                logger.info(external_view_num)
                 for _ in range(external_view_num):
                     key_flag = self.buffer.read_int16()
                     if key_flag == DUMP_EXTERNAL_KEY_LINK:
                         obj_name = self.buffer.read_len_prefixed_utf8()
                         link_name = self.buffer.read_len_prefixed_utf8()
                         sql = self.buffer.read_len_prefixed_utf8()
-                        logger.info((obj_name, link_name, sql))
                         external_views.append(((obj_name, link_name), sql))
                     else:
                         name = self.buffer.read_len_prefixed_utf8()
                         sql = self.buffer.read_len_prefixed_utf8()
-                        logger.info((name, sql))
                         external_views.append((name, sql))
 
         proto_major = self.buffer.read_int16()

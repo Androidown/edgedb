@@ -321,7 +321,7 @@ async def execute_script(
                     side_effects & dbview.SideEffects.SchemaChanges
                     and group_mutation is not None
                 ):
-                    dbv.save_schema_mutaion(gmut_unpickled, group_mutation)
+                    dbv.save_schema_mutation(gmut_unpickled, group_mutation)
 
             state = dbv.serialize_state()
             if state is not orig_state:
