@@ -150,7 +150,7 @@ async def execute(
             dbv.abort_tx()
         raise
     else:
-        side_effects = await dbv.on_success(query_unit, new_types)
+        side_effects = dbv.on_success(query_unit, new_types)
         if side_effects:
             signal_side_effects(dbv, side_effects)
         if not dbv.in_tx():
@@ -290,7 +290,7 @@ async def execute_script(
                 if config_ops:
                     await dbv.apply_config_ops(conn, config_ops)
 
-                side_effects = await dbv.on_success(query_unit, new_types)
+                side_effects = dbv.on_success(query_unit, new_types)
                 if side_effects:
                     raise errors.InternalServerError(
                         "Side-effects in implicit transaction!"
@@ -323,7 +323,7 @@ async def execute_script(
                     side_effects & dbview.SideEffects.SchemaChanges
                     and group_mutation is not None
                 ):
-                    await dbv.update_compiler_user_schema(group_mutation, gmut_unpickled)
+                    dbv.save_schema_mutation(gmut_unpickled, group_mutation)
 
             state = dbv.serialize_state()
             if state is not orig_state:
@@ -415,11 +415,12 @@ async def parse_execute(
     query: str,
     *,
     external_view: Mapping = immutables.Map(),
+    testmode: bool=False
 ):
     server = db.server
     dbv = await server.new_dbview(
         dbname=db.name,
-        query_cache=False           ,
+        query_cache=False,
         protocol_version=edbdef.CURRENT_PROTOCOL,
     )
 
@@ -429,7 +430,8 @@ async def parse_execute(
         input_format=compiler.InputFormat.JSON,
         output_format=compiler.OutputFormat.NONE,
         allow_capabilities=compiler.Capability.MODIFICATIONS | compiler.Capability.DDL,
-        external_view=external_view
+        external_view=external_view,
+        testmode=testmode
     )
 
     compiled = await dbv.parse(query_req)

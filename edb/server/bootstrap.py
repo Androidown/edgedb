@@ -1291,6 +1291,11 @@ async def _populate_misc_instance_data(
                         name='timestamp',
                         type='TIMESTAMP',
                         default='clock_timestamp()'
+                    ),
+                    dbops.Column(
+                        name='active',
+                        type='bool',
+                        default='false'
                     )
                 ],
                 constraints=[

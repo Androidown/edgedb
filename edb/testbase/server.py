@@ -788,7 +788,7 @@ class ClusterTestCase(TestCase):
 
 class PGConnMixin:
     @classmethod
-    def pg_conn(cls):
+    def pg_conn(cls, dbname: str = None):
         conn_spec = {}
         addrs, params = pgconnparams.parse_dsn(cls.backend_dsn)
         conn_spec['host'], conn_spec['port'] = addrs[0]
@@ -814,7 +814,7 @@ class PGConnMixin:
         return pgcon.connect(
             conn_spec,
             pgcommon.get_database_backend_name(
-                cls.get_database_name(),
+                dbname or cls.get_database_name(),
                 tenant_id=instance_params.tenant_id
             ),
             pgparams.BackendRuntimeParams(
@@ -1368,7 +1368,7 @@ class StableDumpTestCase(QueryTestCase, CLITestCaseMixin):
             self.run_cli('-d', dbname, 'restore', f.name)
         await check_method(self)
 
-    async def check_dump_restore(self, check_method):
+    async def check_dump_restore(self, check_method, restore_db_prepare=None):
         if not self.has_create_database:
             return await self.check_dump_restore_single_db(check_method)
 
@@ -1380,6 +1380,8 @@ class StableDumpTestCase(QueryTestCase, CLITestCaseMixin):
 
             await self.con.execute(f'CREATE DATABASE {q_tgt_dbname}')
             try:
+                if restore_db_prepare is not None:
+                    await restore_db_prepare()
                 self.run_cli('-d', tgt_dbname, 'restore', f.name)
                 con2 = await self.connect(database=tgt_dbname)
             except Exception:

@@ -1,7 +1,7 @@
 #
 # This source file is part of the EdgeDB open source project.
 #
-# Copyright 2019-present MagicStack Inc. and the EdgeDB authors.
+# Copyright 2016-present MagicStack Inc. and the EdgeDB authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,22 +15,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+type Test {
+    link t -> other::Tree;
+    property b -> std::str;
+    property c -> std::int64;
+    property g := ((.b ++ '1'));
+};
 
-
-DEF DUMP_BLOCK_SIZE = 1024 * 1024 * 10
-
-DEF DUMP_HEADER_BLOCK_TYPE = 101
-DEF DUMP_HEADER_BLOCK_TYPE_INFO = b'I'
-DEF DUMP_HEADER_BLOCK_TYPE_DATA = b'D'
-
-DEF DUMP_HEADER_SERVER_TIME = 102
-DEF DUMP_HEADER_SERVER_VER = 103
-DEF DUMP_HEADER_BLOCKS_INFO = 104
-DEF DUMP_EXTERNAL_VIEW = 105
-
-DEF DUMP_HEADER_BLOCK_ID = 110
-DEF DUMP_HEADER_BLOCK_NUM = 111
-DEF DUMP_HEADER_BLOCK_DATA = 112
-
-DEF DUMP_EXTERNAL_KEY_OBJ = b'O'
-DEF DUMP_EXTERNAL_KEY_LINK = b'L'
+type Tree {
+    multi link children := (.<parent[is other::Tree]);
+    link parent -> other::Tree;
+    required property name -> std::str {
+        constraint std::exclusive;
+    };
+    property val -> std::str;
+};

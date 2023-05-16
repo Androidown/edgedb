@@ -85,6 +85,7 @@ cdef class QueryRequestInfo:
         allow_capabilities: uint64_t = <uint64_t>compiler.Capability.ALL,
         module: str = None,
         read_only: bint = False,
+        testmode: bint = False,
         external_view: object = immutables.Map(),
     ):
         self.source = source
@@ -99,6 +100,7 @@ cdef class QueryRequestInfo:
         self.allow_capabilities = allow_capabilities
         self.module = module
         self.read_only = read_only
+        self.testmode = testmode
         self.external_view = external_view
 
         self.cached_hash = hash((
@@ -112,7 +114,8 @@ cdef class QueryRequestInfo:
             self.inline_typenames,
             self.inline_objectids,
             self.module,
-            self.read_only
+            self.read_only,
+            self.testmode
         ))
 
     def __hash__(self):
@@ -130,7 +133,8 @@ cdef class QueryRequestInfo:
             self.inline_typenames == other.inline_typenames and
             self.inline_objectids == other.inline_objectids and
             self.module == other.module and
-            self.read_only == other.read_only
+            self.read_only == other.read_only and
+            self.testmode == other.testmode
         )
 
 
@@ -1085,14 +1089,30 @@ cdef class DatabaseConnectionView:
         await be_conn.sql_execute(sqls)
         self._in_tx_sp_sqls.clear()
 
-    async def on_success(self, query_unit, new_types):
+    def save_schema_mutation(self, mut, mut_bytes):
+        self._db._index._server.get_compiler_pool().append_schema_mutation(
+            self.dbname,
+            mut_bytes,
+            mut,
+            self.get_user_schema(),
+            self.get_global_schema(),
+            self.reflection_cache,
+            self.get_database_config(),
+            self.get_compilation_system_config(),
+        )
+
+    def on_success(self, query_unit, new_types):
         with util.disable_gc():
             side_effects = self._on_success(query_unit, new_types)
 
-        if not self._in_tx and side_effects and (side_effects & SideEffects.SchemaChanges):
-            await self.update_compiler_user_schema(
-                query_unit.user_schema_mutation,
+        if (
+            not self._in_tx
+            and side_effects
+            and (side_effects & SideEffects.SchemaChanges)
+        ):
+            self.save_schema_mutation(
                 query_unit.user_schema_mutation_obj,
+                query_unit.user_schema_mutation,
             )
         return side_effects
 
@@ -1337,20 +1357,6 @@ cdef class DatabaseConnectionView:
             extra_blobs=source.extra_blobs(),
         )
 
-    async def update_compiler_user_schema(self, mut_bytes, mutation: s_schema.SchemaMutationLogger):
-        compiler_pool = self._db._index._server.get_compiler_pool()
-
-        await compiler_pool.apply_user_schema_mutation_for_all(
-            self.dbname,
-            mut_bytes,
-            mutation,
-            self.get_user_schema(),
-            self.get_global_schema(),
-            self.reflection_cache,
-            self.get_database_config(),
-            self.get_compilation_system_config(),
-        )
-
     async def _compile(
         self,
         query_req: QueryRequestInfo,
@@ -1403,6 +1409,8 @@ cdef class DatabaseConnectionView:
                     query_req.input_format is compiler.InputFormat.JSON,
                     query_req.module,
                     query_req.external_view,
+                    False,
+                    query_req.testmode
                 )
         finally:
             metrics.edgeql_query_compilation_duration.observe(

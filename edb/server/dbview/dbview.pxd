@@ -47,7 +47,7 @@ cdef class QueryRequestInfo:
     cdef public object module
     cdef public bint read_only
     cdef public object external_view
-
+    cdef public bint testmode
     cdef int cached_hash
 
 

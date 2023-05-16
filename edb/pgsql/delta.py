@@ -6762,6 +6762,11 @@ class CreateExternalView(MetaCommand):
                 f"Failed to find view definition for external object {key} ")
 
         view_def = context.external_view[key]
+        if context.restoring_external:
+            self.external_views.append(dbops.View(query=view_def, name=('edgedbpub', str(obj.id))))
+            self.external_views.append(dbops.View(query=view_def, name=('edgedbpub', str(obj.id) + '_t')))
+            return
+
         columns = []
         join_link_table = None
         source_identity = None
