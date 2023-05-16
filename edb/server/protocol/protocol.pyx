@@ -74,6 +74,7 @@ cdef class HttpRequest:
         self.body = b''
         self.authorization = b''
         self.content_type = b''
+        self.testmode = b''
 
 
 cdef class HttpResponse:
@@ -216,6 +217,8 @@ cdef class HttpProtocol:
                 self.current_request.params = {}
             param = name[len(b'x-edgedb-'):]
             self.current_request.params[param] = value
+        elif name == b'testmode':
+            self.current_request.testmode = value
 
     def on_body(self, body: bytes):
         self.current_request.body += body

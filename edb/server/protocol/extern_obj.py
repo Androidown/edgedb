@@ -278,7 +278,6 @@ class DeleteObjectType(BaseObjectType):
         return f"DROP TYPE {self.qualname}"
 
 
-
 async def handle_request(
     request,
     response,
@@ -336,7 +335,8 @@ async def handle_request(
         await execute.parse_execute(
             db,
             req.to_ddl(),
-            external_view=req.resolve_view()
+            external_view=req.resolve_view(),
+            testmode=bool(request.testmode)
         )
     except Exception as ex:
         if debug.flags.server:
@@ -356,5 +356,3 @@ async def handle_request(
         response.body = json.dumps({'error': err_dct}).encode()
     else:
         response.body = b'{"data": "ok"}'
-
-

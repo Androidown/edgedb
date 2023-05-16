@@ -1825,6 +1825,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
             #
             # This guarantees that every pg connection and the compiler work
             # with the same DB state.
+            user_schema = await server.introspect_user_schema(dbname, pgcon)
 
             await pgcon.sql_execute(
                 b'''START TRANSACTION
@@ -1839,13 +1840,11 @@ cdef class EdgeConnection(frontend.FrontendConnection):
                     SET statement_timeout = 0;
                 ''',
             )
-
-            user_schema = await server.introspect_user_schema(dbname, pgcon)
             global_schema = await server.introspect_global_schema(pgcon)
             db_config = await server.introspect_db_config(pgcon)
             dump_protocol = self.max_protocol
 
-            schema_ddl, schema_dynamic_ddl, schema_ids, blocks = (
+            schema_ddl, schema_dynamic_ddl, schema_ids, blocks, external_ids = (
                 await compiler_pool.describe_database_dump(
                     user_schema,
                     global_schema,
@@ -1862,7 +1861,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
 
             msg_buf = WriteBuffer.new_message(b'@')
 
-            msg_buf.write_int16(3)  # number of headers
+            msg_buf.write_int16(4)  # number of headers
             msg_buf.write_int16(DUMP_HEADER_BLOCK_TYPE)
             msg_buf.write_len_prefixed_bytes(DUMP_HEADER_BLOCK_TYPE_INFO)
             msg_buf.write_int16(DUMP_HEADER_SERVER_VER)
@@ -1870,8 +1869,23 @@ cdef class EdgeConnection(frontend.FrontendConnection):
             msg_buf.write_int16(DUMP_HEADER_SERVER_TIME)
             msg_buf.write_len_prefixed_utf8(str(int(time.time())))
 
+            # adding external ddl & external ids
+            msg_buf.write_int16(DUMP_EXTERNAL_VIEW)
+            external_views = await self.external_views(external_ids, pgcon)
+            msg_buf.write_int32(len(external_views))
+            for name, view_sql in external_views:
+                if isinstance(name, tuple):
+                    msg_buf.write_int16(DUMP_EXTERNAL_KEY_LINK)
+                    msg_buf.write_len_prefixed_utf8(name[0])
+                    msg_buf.write_len_prefixed_utf8(name[1])
+                else:
+                    msg_buf.write_int16(DUMP_EXTERNAL_KEY_OBJ)
+                    msg_buf.write_len_prefixed_utf8(name)
+                msg_buf.write_len_prefixed_utf8(view_sql)
+
             msg_buf.write_int16(dump_protocol[0])
             msg_buf.write_int16(dump_protocol[1])
+
             msg_buf.write_len_prefixed_utf8(schema_ddl)
 
             msg_buf.write_int32(len(schema_ids))
@@ -1953,6 +1967,15 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         self.write(msg_buf.end_message())
         self.flush()
 
+    async def external_views(self, external_ids: List[Tuple[str, str]], pgcon):
+        views = []
+        for ext_name, ext_id in external_ids:
+            view = f"SELECT view_definition FROM information_schema.views WHERE table_name = '{ext_id}';"
+            view_sql = await pgcon.sql_fetch_val(view.encode('utf-8'))
+            if view_sql is not None:
+                views.append((ext_name, view_sql.decode('utf-8')))
+        return views
+
     async def _execute_utility_stmt(self, eql: str, pgcon):
         cdef dbview.DatabaseConnectionView _dbview
 
@@ -2009,11 +2032,27 @@ cdef class EdgeConnection(frontend.FrontendConnection):
 
         dump_server_ver_str = None
         headers_num = self.buffer.read_int16()
+        external_views = []
         for _ in range(headers_num):
             hdrname = self.buffer.read_int16()
-            hdrval = self.buffer.read_len_prefixed_bytes()
+            if hdrname != DUMP_EXTERNAL_VIEW:
+                hdrval = self.buffer.read_len_prefixed_bytes()
             if hdrname == DUMP_HEADER_SERVER_VER:
                 dump_server_ver_str = hdrval.decode('utf-8')
+            # getting external ddl & external ids
+            if hdrname == DUMP_EXTERNAL_VIEW:
+                external_view_num = self.buffer.read_int32()
+                for _ in range(external_view_num):
+                    key_flag = self.buffer.read_int16()
+                    if key_flag == DUMP_EXTERNAL_KEY_LINK:
+                        obj_name = self.buffer.read_len_prefixed_utf8()
+                        link_name = self.buffer.read_len_prefixed_utf8()
+                        sql = self.buffer.read_len_prefixed_utf8()
+                        external_views.append(((obj_name, link_name), sql))
+                    else:
+                        name = self.buffer.read_len_prefixed_utf8()
+                        sql = self.buffer.read_len_prefixed_utf8()
+                        external_views.append((name, sql))
 
         proto_major = self.buffer.read_int16()
         proto_minor = self.buffer.read_int16()
@@ -2076,6 +2115,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
                     schema_ids,
                     blocks,
                     proto,
+                    dict(external_views)
                 )
 
             for query_unit in schema_sql_units:

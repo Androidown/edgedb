@@ -42,7 +42,6 @@ from edb.pgsql import compiler as pg_compiler
 from edb import edgeql
 from edb.common import debug
 from edb.common import verutils
-from edb.common import util
 from edb.common import uuidgen
 from edb.common import ast
 
@@ -138,6 +137,10 @@ class CompileContext:
     in_tx: Optional[bool] = False
     # External view definition
     external_view: Optional[Mapping] = immutables.Map()
+    # If in restoring external view
+    restoring_external: Optional[bool] = False
+    # If is test mode from http
+    testmode: Optional[bool] = False
 
 
 DEFAULT_MODULE_ALIASES_MAP = immutables.Map(
@@ -372,7 +375,7 @@ class Compiler:
 
     def _new_delta_context(self, ctx: CompileContext):
         context = s_delta.CommandContext()
-        context.testmode = self.get_config_val(ctx, '__internal_testmode')
+        context.testmode = self.get_config_val(ctx, '__internal_testmode') or ctx.testmode
         context.stdmode = ctx.bootstrap_mode
         context.internal_schema_mode = ctx.internal_schema_mode
         context.schema_object_ids = ctx.schema_object_ids
@@ -382,6 +385,7 @@ class Compiler:
             self.get_config_val(ctx, 'allow_dml_in_functions'))
         context.module = ctx.module
         context.external_view = ctx.external_view
+        context.restoring_external = ctx.restoring_external
         return context
 
     def _process_delta(self, ctx: CompileContext, delta):
@@ -2423,6 +2427,8 @@ class Compiler:
         json_parameters: bool = False,
         module: Optional[str] = None,
         external_view: Optional[Mapping] = None,
+        restoring_external: Optional[bool] = False,
+        testmode: bool = False
     ) -> Tuple[dbstate.QueryUnitGroup,
                Optional[dbstate.CompilerConnectionState]]:
 
@@ -2467,7 +2473,9 @@ class Compiler:
             source=source,
             protocol_version=protocol_version,
             module=module,
-            external_view=external_view
+            external_view=external_view,
+            restoring_external=restoring_external,
+            testmode=testmode
         )
 
         unit_group = self._compile(ctx=ctx, source=source)
@@ -2499,6 +2507,7 @@ class Compiler:
         expect_rollback: bool = False,
         module: Optional[str] = None,
         external_view: Optional[Mapping] = None,
+        restoring_external: Optional[bool] = False,
     ) -> Tuple[dbstate.QueryUnitGroup, dbstate.CompilerConnectionState]:
         if (
             expect_rollback and
@@ -2528,7 +2537,8 @@ class Compiler:
             expect_rollback=expect_rollback,
             module=module,
             in_tx=True,
-            external_view=external_view
+            external_view=external_view,
+            restoring_external=restoring_external
         )
 
         return self._compile(ctx=ctx, source=source), ctx.state
@@ -2549,7 +2559,8 @@ class Compiler:
         config_ddl = config.to_edgeql(config.get_settings(), database_config)
 
         schema_ddl = s_ddl.ddl_text_from_schema(
-            schema, include_migrations=True)
+            schema, include_migrations=True
+        )
 
         all_objects = schema.get_objects(
             exclude_stdlib=True,
@@ -2575,6 +2586,7 @@ class Compiler:
         objtypes = schema.get_objects(
             type=s_objtypes.ObjectType,
             exclude_stdlib=True,
+            extra_filters=[lambda s, o: not o.get_external(s)]
         )
         descriptors = []
 
@@ -2594,11 +2606,25 @@ class Compiler:
                 f'SELECT edgedb._dump_sequences(ARRAY[{seq_ids}]::uuid[])'
             )
 
+        external_ids = []
+        for obj in schema.get_objects(
+            extra_filters=[lambda s, o: o.get_external(s) and (pg_delta.has_table(o, s))]
+        ):
+            if isinstance(obj, s_links.Link):
+                external_ids.append(
+                    ((obj.get_source_type(schema).get_displayname(schema), obj.get_displayname(schema)), str(obj.id))
+                )
+            else:
+                external_ids.append(
+                    ((obj.get_displayname(schema)), str(obj.id))
+                )
+
         return DumpDescriptor(
             schema_ddl=config_ddl + '\n' + schema_ddl,
             schema_dynamic_ddl=tuple(dynamic_ddl),
             schema_ids=ids,
             blocks=descriptors,
+            external_ids=external_ids
         )
 
     def infer_expr(
@@ -2791,6 +2817,7 @@ class Compiler:
         schema_ids: List[Tuple[str, str, bytes]],
         blocks: List[Tuple[bytes, bytes]],  # type_id, typespec
         protocol_version: Tuple[int, int],
+        external_view: Dict[str, str]
     ) -> RestoreDescriptor:
         schema_object_ids = {
             (
@@ -2832,15 +2859,28 @@ class Compiler:
             cached_reflection=EMPTY_MAP,
         )
 
-        ctx = CompileContext(
-            state=state,
-            output_format=enums.OutputFormat.BINARY,
-            expected_cardinality_one=False,
-            compat_ver=dump_server_ver,
-            schema_object_ids=schema_object_ids,
-            log_ddl_as_migrations=False,
-            protocol_version=protocol_version,
-        )
+        if external_view:
+            ctx = CompileContext(
+                state=state,
+                output_format=enums.OutputFormat.BINARY,
+                expected_cardinality_one=False,
+                compat_ver=dump_server_ver,
+                schema_object_ids=schema_object_ids,
+                log_ddl_as_migrations=False,
+                protocol_version=protocol_version,
+                external_view=external_view,
+                restoring_external=True
+            )
+        else:
+            ctx = CompileContext(
+                state=state,
+                output_format=enums.OutputFormat.BINARY,
+                expected_cardinality_one=False,
+                compat_ver=dump_server_ver,
+                schema_object_ids=schema_object_ids,
+                log_ddl_as_migrations=False,
+                protocol_version=protocol_version,
+            )
 
         ctx.state.start_tx()
 
@@ -3088,6 +3128,7 @@ class DumpDescriptor(NamedTuple):
     schema_dynamic_ddl: Tuple[str]
     schema_ids: List[Tuple[str, str, bytes]]
     blocks: Sequence[DumpBlockDescriptor]
+    external_ids: List[Tuple]
 
 
 class DumpBlockDescriptor(NamedTuple):

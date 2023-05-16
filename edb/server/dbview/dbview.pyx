@@ -85,6 +85,7 @@ cdef class QueryRequestInfo:
         allow_capabilities: uint64_t = <uint64_t>compiler.Capability.ALL,
         module: str = None,
         read_only: bint = False,
+        testmode: bint = False,
         external_view: object = immutables.Map(),
     ):
         self.source = source
@@ -99,6 +100,7 @@ cdef class QueryRequestInfo:
         self.allow_capabilities = allow_capabilities
         self.module = module
         self.read_only = read_only
+        self.testmode = testmode
         self.external_view = external_view
 
         self.cached_hash = hash((
@@ -112,7 +114,8 @@ cdef class QueryRequestInfo:
             self.inline_typenames,
             self.inline_objectids,
             self.module,
-            self.read_only
+            self.read_only,
+            self.testmode
         ))
 
     def __hash__(self):
@@ -130,7 +133,8 @@ cdef class QueryRequestInfo:
             self.inline_typenames == other.inline_typenames and
             self.inline_objectids == other.inline_objectids and
             self.module == other.module and
-            self.read_only == other.read_only
+            self.read_only == other.read_only and
+            self.testmode == other.testmode
         )
 
 
@@ -1085,7 +1089,7 @@ cdef class DatabaseConnectionView:
         await be_conn.sql_execute(sqls)
         self._in_tx_sp_sqls.clear()
 
-    def save_schema_mutaion(self, mut, mut_bytes):
+    def save_schema_mutation(self, mut, mut_bytes):
         self._db._index._server.get_compiler_pool().append_schema_mutation(
             self.dbname,
             mut_bytes,
@@ -1106,7 +1110,7 @@ cdef class DatabaseConnectionView:
             and side_effects
             and (side_effects & SideEffects.SchemaChanges)
         ):
-            self.save_schema_mutaion(
+            self.save_schema_mutation(
                 query_unit.user_schema_mutation_obj,
                 query_unit.user_schema_mutation,
             )
@@ -1405,6 +1409,8 @@ cdef class DatabaseConnectionView:
                     query_req.input_format is compiler.InputFormat.JSON,
                     query_req.module,
                     query_req.external_view,
+                    False,
+                    query_req.testmode
                 )
         finally:
             metrics.edgeql_query_compilation_duration.observe(
