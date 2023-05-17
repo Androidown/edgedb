@@ -176,6 +176,7 @@ async def execute(db, server, queries: list):
         dbname=db.name,
         query_cache=False,
         protocol_version=edbdef.CURRENT_PROTOCOL,
+        namespace=db.namespace
     )
 
     bind_data = None

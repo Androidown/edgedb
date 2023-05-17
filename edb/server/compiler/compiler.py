@@ -142,6 +142,8 @@ class CompileContext:
     restoring_external: Optional[bool] = False
     # If is test mode from http
     testmode: Optional[bool] = False
+    # NameSpace for current compile
+    namespace: str = defines.DEFAULT_NS
 
 
 DEFAULT_MODULE_ALIASES_MAP = immutables.Map(
@@ -387,6 +389,7 @@ class Compiler:
         context.module = ctx.module
         context.external_view = ctx.external_view
         context.restoring_external = ctx.restoring_external
+        context.namespace = ctx.namespace
         return context
 
     def _process_delta(self, ctx: CompileContext, delta):
@@ -418,12 +421,16 @@ class Compiler:
             isinstance(c, s_ns.NameSpaceCommand)
             for c in pgdelta.get_subcommands()
         )
+        if ctx.namespace == defines.DEFAULT_NS:
+            ns_prefix = ''
+        else:
+            ns_prefix = ctx.namespace + '_'
 
         if db_cmd or ns_cmd:
-            block = pg_dbops.SQLBlock()
+            block = pg_dbops.SQLBlock(ns_prefix)
             new_be_types = new_types = frozenset()
         else:
-            block = pg_dbops.PLTopBlock()
+            block = pg_dbops.PLTopBlock(ns_prefix)
 
             def may_has_backend_id(_id):
                 obj = schema.get_by_id(_id, None)
@@ -458,7 +465,7 @@ class Compiler:
 
         # Generate schema storage SQL (DML into schema storage tables).
         if schema_peristence_async:
-            refl_block = pg_dbops.PLTopBlock()
+            refl_block = pg_dbops.PLTopBlock(ns_prefix)
         else:
             refl_block = None
 
@@ -466,23 +473,23 @@ class Compiler:
             ctx, pgdelta, subblock, context=context,
             schema_persist_block=refl_block
         )
-
+        instdata_schemaname = f"{ns_prefix}edgedbinstdata"
         if schema_peristence_async:
             if debug.flags.keep_schema_persistence_history:
                 invalid_persist_his = f"""\
-                    UPDATE "edgedbinstdata"."schema_persist_history"
+                    UPDATE "{instdata_schemaname}"."schema_persist_history"
                     SET active = false
                     WHERE version_id = '{str(ver_id)}'::uuid;\
                 """
             else:
                 invalid_persist_his = f"""\
-                    DELETE FROM "edgedbinstdata"."schema_persist_history"
+                    DELETE FROM "{instdata_schemaname}"."schema_persist_history"
                     WHERE version_id = '{str(ver_id)}'::uuid;\
                 """
             refl_block.add_command(textwrap.dedent(invalid_persist_his))
             main_block_sub = block.add_block()
             main_block_sub.add_command(textwrap.dedent(f"""\
-                INSERT INTO "edgedbinstdata"."schema_persist_history"
+                INSERT INTO "{instdata_schemaname}"."schema_persist_history"
                 ("version_id", "sql") values (
                     '{str(ver_id)}'::uuid,
                     {pg_common.quote_bytea_literal(refl_block.to_string().encode())}
@@ -490,7 +497,7 @@ class Compiler:
             """))
 
         if pgdelta.std_inhview_updates:
-            stdview_block = pg_dbops.PLTopBlock()
+            stdview_block = pg_dbops.PLTopBlock(ns_prefix)
             pgdelta.generate_std_inhview(stdview_block)
         else:
             stdview_block = None
@@ -534,10 +541,15 @@ class Compiler:
 
         cache = current_tx.get_cached_reflection()
 
+        if ctx.namespace == defines.DEFAULT_NS:
+            schema_name = 'edgedb'
+        else:
+            schema_name = f'{ctx.namespace}_edgedb'
+
         with cache.mutate() as cache_mm:
             for eql, args in meta_blocks:
                 eql_hash = hashlib.sha1(eql.encode()).hexdigest()
-                fname = ('edgedb', f'__rh_{eql_hash}')
+                fname = (schema_name, f'__rh_{eql_hash}')
 
                 if eql_hash in cache_mm:
                     argnames = cache_mm[eql_hash]
@@ -609,6 +621,7 @@ class Compiler:
                 expected_cardinality_one=False,
                 bootstrap_mode=ctx.bootstrap_mode,
                 protocol_version=ctx.protocol_version,
+                namespace=ctx.namespace
             )
 
             source = edgeql.Source.from_string(eql)
@@ -770,6 +783,7 @@ class Compiler:
             expected_cardinality_one=ctx.expected_cardinality_one,
             output_format=_convert_format(ctx.output_format),
             backend_runtime_params=ctx.backend_runtime_params,
+            namespace=ctx.namespace
         )
 
         if (
@@ -1082,6 +1096,11 @@ class Compiler:
         else:
             sql = (block.to_string().encode('utf-8'),)
 
+            if context.namespace == defines.DEFAULT_NS:
+                ns_prefix = ''
+            else:
+                ns_prefix = context.namespace + '_'
+
             if new_types:
                 # Inject a query returning backend OIDs for the newly
                 # created types.
@@ -1099,7 +1118,7 @@ class Compiler:
                                 "backend_id"
                             )
                         FROM
-                            edgedb."_SchemaType"
+                            {ns_prefix}edgedb."_SchemaType"
                         WHERE
                                 "id" = any(ARRAY[
                                     {', '.join(new_type_ids)}
@@ -1139,6 +1158,7 @@ class Compiler:
         drop_db = None
         create_db_template = None
         create_ns = None
+        drop_ns = None
         if isinstance(stmt, qlast.DropDatabase):
             drop_db = stmt.name.name
         elif isinstance(stmt, qlast.CreateDatabase):
@@ -1146,6 +1166,8 @@ class Compiler:
             create_db_template = stmt.template.name if stmt.template else None
         elif isinstance(stmt, qlast.CreateNameSpace):
             create_ns = stmt.name.name
+        elif isinstance(stmt, qlast.DropNameSpace):
+            drop_ns = stmt.name.name
 
         if debug.flags.delta_execute:
             debug.header('Delta Script')
@@ -1163,6 +1185,7 @@ class Compiler:
             create_db=create_db,
             drop_db=drop_db,
             create_ns=create_ns,
+            drop_ns=drop_ns,
             create_db_template=create_db_template,
             has_role_ddl=isinstance(stmt, qlast.RoleCommand),
             ddl_stmt_id=ddl_stmt_id,
@@ -2074,6 +2097,7 @@ class Compiler:
                 unit.drop_db = comp.drop_db
                 unit.create_db_template = comp.create_db_template
                 unit.create_ns = comp.create_ns
+                unit.drop_ns = comp.drop_ns
                 unit.has_role_ddl = comp.has_role_ddl
                 unit.ddl_stmt_id = comp.ddl_stmt_id
                 if comp.user_schema is not None:
@@ -2420,6 +2444,7 @@ class Compiler:
 
     def compile(
         self,
+        namespace: str,
         user_schema: s_schema.Schema,
         global_schema: s_schema.Schema,
         reflection_cache: Mapping[str, Tuple[str, ...]],
@@ -2440,7 +2465,7 @@ class Compiler:
         module: Optional[str] = None,
         external_view: Optional[Mapping] = None,
         restoring_external: Optional[bool] = False,
-        testmode: bool = False
+        testmode: bool = False,
     ) -> Tuple[dbstate.QueryUnitGroup,
                Optional[dbstate.CompilerConnectionState]]:
 
@@ -2487,7 +2512,8 @@ class Compiler:
             module=module,
             external_view=external_view,
             restoring_external=restoring_external,
-            testmode=testmode
+            testmode=testmode,
+            namespace=namespace
         )
 
         unit_group = self._compile(ctx=ctx, source=source)
@@ -2505,6 +2531,7 @@ class Compiler:
     def compile_in_tx(
         self,
         state: dbstate.CompilerConnectionState,
+        namespace: str,
         txid: int,
         source: edgeql.Source,
         output_format: enums.OutputFormat,
@@ -2550,7 +2577,8 @@ class Compiler:
             module=module,
             in_tx=True,
             external_view=external_view,
-            restoring_external=restoring_external
+            restoring_external=restoring_external,
+            namespace=namespace
         )
 
         return self._compile(ctx=ctx, source=source), ctx.state
@@ -2562,6 +2590,7 @@ class Compiler:
         database_config: immutables.Map[str, config.SettingValue],
         protocol_version: Tuple[int, int],
     ) -> DumpDescriptor:
+        # TODO namespace支持
         schema = s_schema.ChainedSchema(
             self._std_schema,
             user_schema,
@@ -2831,6 +2860,7 @@ class Compiler:
         protocol_version: Tuple[int, int],
         external_view: Dict[str, str]
     ) -> RestoreDescriptor:
+        # TODO namespace支持
         schema_object_ids = {
             (
                 s_name.name_from_string(name),

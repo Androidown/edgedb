@@ -1172,6 +1172,17 @@ async def _compile_sys_queries(
 
     queries['listdbs'] = sql
 
+    _, sql = compile_bootstrap_script(
+        compiler,
+        schema,
+        f"""SELECT (
+            SELECT sys::NameSpace
+        ).name""",
+        expected_cardinality_one=False,
+    )
+
+    queries['listns'] = sql
+
     role_query = '''
         SELECT sys::Role {
             name,

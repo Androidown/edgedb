@@ -26,6 +26,7 @@ from edb.pgsql import ast as pgast
 from edb.common.ast import codegen
 from edb.common import exceptions
 from edb.common import markup
+from edb.schema import defines
 
 
 class SQLSourceGeneratorContext(markup.MarkupExceptionContext):
@@ -62,10 +63,11 @@ class SQLSourceGeneratorError(errors.InternalServerError):
 
 
 class SQLSourceGenerator(codegen.SourceGenerator):
-    def __init__(self, *args, reordered: bool=False, **kwargs):
+    def __init__(self, *args, reordered: bool=False, namespace: str = defines.DEFAULT_NS, **kwargs):
         super().__init__(*args, **kwargs)
         self.param_index: dict[object, int] = {}
         self.reordered = reordered
+        self.namespace = namespace
 
     @classmethod
     def to_source(
@@ -118,7 +120,12 @@ class SQLSourceGenerator(codegen.SourceGenerator):
         if node.schemaname is None:
             self.write(common.qname(node.name))
         else:
-            self.write(common.qname(node.schemaname, node.name))
+            if self.namespace == defines.DEFAULT_NS:
+                self.write(common.qname(node.schemaname, node.name))
+            elif node.schemaname in ['edgedbext', 'edgedb', 'edgedbss', 'edgedbpub', 'edgedbstd', 'edgedbinstdata']:
+                self.write(common.qname(f"{self.namespace}_{node.schemaname}", node.name))
+            else:
+                self.write(common.qname(node.schemaname, node.name))
 
     def _visit_values_expr(self, node):
         self.new_lines = 1

@@ -34,7 +34,7 @@ from edb.edgeql import ast as ql_ast
 from edb.edgeql import qltypes as ql_ft
 from edb.edgeql import compiler as qlcompiler
 
-from edb.schema import annos as s_anno
+from edb.schema import annos as s_anno, defines
 from edb.schema import casts as s_casts
 from edb.schema import scalars as s_scalars
 from edb.schema import objtypes as s_objtypes
@@ -362,7 +362,7 @@ class AlterSchemaVersion(
                             (SELECT
                                 version::text
                             FROM
-                                edgedb."_SchemaSchemaVersion"
+                                {context.pg_schema('edgedb')}."_SchemaSchemaVersion"
                             FOR UPDATE),
                             {ql(str(expected_ver))}
                         )),
@@ -370,7 +370,7 @@ class AlterSchemaVersion(
                         msg => (
                             'Cannot serialize DDL: '
                             || (SELECT version::text FROM
-                                edgedb."_SchemaSchemaVersion")
+                                {context.pg_schema('edgedb')}."_SchemaSchemaVersion")
                         )
                     )
                 INTO _dummy_text
@@ -467,7 +467,7 @@ class AlterGlobalSchemaVersion(
                 SELECT
                     json
                 FROM
-                    edgedbinstdata.instdata
+                    {context.pg_schema('edgedbinstdata')}.instdata
                 WHERE
                     key = {ql(key)}
                 FOR UPDATE
@@ -520,7 +520,7 @@ class AlterGlobalSchemaVersion(
                         msg => (
                             'Cannot serialize global DDL: '
                             || (SELECT version::text FROM
-                                edgedb."_SysGlobalSchemaVersion")
+                                {context.pg_schema('edgedb')}."_SysGlobalSchemaVersion")
                         )
                     )
                 INTO _dummy_text
@@ -537,7 +537,7 @@ class AlterGlobalSchemaVersion(
                             (SELECT
                                 version::text
                             FROM
-                                edgedb."_SysGlobalSchemaVersion"
+                                {context.pg_schema('edgedb')}."_SysGlobalSchemaVersion"
                             ),
                             {ql(str(expected_ver))}
                         )),
@@ -545,7 +545,7 @@ class AlterGlobalSchemaVersion(
                         msg => (
                             'Cannot serialize global DDL: '
                             || (SELECT version::text FROM
-                                edgedb."_SysGlobalSchemaVersion")
+                                {context.pg_schema('edgedb')}."_SysGlobalSchemaVersion")
                         )
                     )
                 INTO _dummy_text
@@ -1171,7 +1171,7 @@ class FunctionCommand(MetaCommand):
                             target AS ancestor,
                             index
                         FROM
-                            edgedb."_SchemaObjectType__ancestors"
+                            {context.pg_schema('edgedb')}."_SchemaObjectType__ancestors"
                             WHERE source = {qi(type_param_name)}
                         ) a
                     WHERE ancestor IN ({impl_ids})
@@ -3541,8 +3541,9 @@ class DeleteObjectType(ObjectTypeMetaCommand,
         self.apply_scheduled_inhview_updates(schema, context)
 
         if is_external:
-            view_name = ('edgedbpub', str(objtype.id))
-            view_name_t = ('edgedbpub', str(objtype.id) + '_t')
+            schema_name = context.pg_schema('edgedbpub')
+            view_name = (schema_name, str(objtype.id))
+            view_name_t = (schema_name, str(objtype.id) + '_t')
             self.pgops.add(
                 dbops.DropView(
                     name=view_name,
@@ -5160,8 +5161,9 @@ class DeleteLink(LinkMetaCommand, adapts=s_links.DeleteLink):
 
         self.apply_scheduled_inhview_updates(schema, context)
         if has_extern_table:
-            view_name = ('edgedbpub', str(link.id))
-            view_name_t = ('edgedbpub', str(link.id) + '_t')
+            schema_name = context.pg_schema('edgedbpub')
+            view_name = (schema_name, str(link.id))
+            view_name_t = (schema_name, str(link.id) + '_t')
             self.pgops.add(
                 dbops.DropView(
                     name=view_name,
@@ -5799,24 +5801,31 @@ class UpdateEndpointDeleteActions(MetaCommand):
         return common.get_backend_name(
             schema, target, catenate=False, aspect=aspect)
 
-    def get_trigger_proc_text(self, target, links, *,
-                              disposition, inline, schema):
+    def get_trigger_proc_text(
+        self, target, links, *, disposition, inline, schema, namespace
+    ):
         if inline:
             return self._get_inline_link_trigger_proc_text(
-                target, links, disposition=disposition, schema=schema)
+                target, links, disposition=disposition, schema=schema, namespace=namespace
+            )
         else:
             return self._get_outline_link_trigger_proc_text(
-                target, links, disposition=disposition, schema=schema)
+                target, links, disposition=disposition, schema=schema, namespace=namespace
+            )
 
-    def _get_dunder_type_trigger_proc_text(self, target, *, schema):
+    def _get_dunder_type_trigger_proc_text(self, target, *, schema, namespace):
+        if namespace == defines.DEFAULT_NS:
+            ns_prefix = ''
+        else:
+            ns_prefix = namespace + '_'
         body = textwrap.dedent('''\
             SELECT
                 CASE WHEN tp.builtin
-                    THEN 'edgedbstd'
-                    ELSE 'edgedbpub'
+                    THEN '{ns_prefix}edgedbstd'
+                    ELSE '{ns_prefix}edgedbpub'
                 END AS sname
                 INTO schema_name
-            FROM edgedb."_SchemaType" as tp
+            FROM {ns_prefix}edgedb."_SchemaType" as tp
             WHERE tp.id = OLD.id;
 
             SELECT EXISTS (
@@ -5840,10 +5849,10 @@ class UpdateEndpointDeleteActions(MetaCommand):
                     MESSAGE = 'deletion of {tgtname} (' || OLD.id
                         || ') is prohibited by link target policy',
                     DETAIL = 'Object is still referenced in link __type__'
-                        || ' of ' || edgedb._get_schema_object_name(OLD.id) || ' ('
+                        || ' of ' || {ns_prefix}._get_schema_object_name(OLD.id) || ' ('
                         || OLD.id || ').';
             END IF;
-        '''.format(tgtname=target.get_displayname(schema)))
+        '''.format(tgtname=target.get_displayname(schema), ns_prefix=ns_prefix))
 
         text = textwrap.dedent('''\
             DECLARE
@@ -5859,7 +5868,12 @@ class UpdateEndpointDeleteActions(MetaCommand):
         return text
 
     def _get_outline_link_trigger_proc_text(
-            self, target, links, *, disposition, schema):
+        self, target, links, *, disposition, schema, namespace
+    ):
+        if namespace == defines.DEFAULT_NS:
+            ns_prefix = ''
+        else:
+            ns_prefix = namespace + '_'
 
         chunks = []
 
@@ -5918,11 +5932,11 @@ class UpdateEndpointDeleteActions(MetaCommand):
 
                         IF FOUND THEN
                             SELECT
-                                edgedb.shortname_from_fullname(link.name),
-                                edgedb._get_schema_object_name(link.{far_endpoint})
+                                {ns_prefix}edgedb.shortname_from_fullname(link.name),
+                                {ns_prefix}edgedb._get_schema_object_name(link.{far_endpoint})
                                 INTO linkname, endname
                             FROM
-                                edgedb."_SchemaLink" AS link
+                                {ns_prefix}edgedb."_SchemaLink" AS link
                             WHERE
                                 link.id = link_type_id;
                             RAISE foreign_key_violation
@@ -5943,6 +5957,7 @@ class UpdateEndpointDeleteActions(MetaCommand):
                         tgtname=target.get_displayname(schema),
                         near_endpoint=near_endpoint,
                         far_endpoint=far_endpoint,
+                        ns_prefix=ns_prefix
                     )
 
                     chunks.append(text)
@@ -6185,7 +6200,8 @@ class UpdateEndpointDeleteActions(MetaCommand):
         return tuple(group_var)
 
     def _get_inline_link_trigger_proc_text(
-            self, target, links, *, disposition, schema):
+        self, target, links, *, disposition, schema
+    ):
 
         chunks = []
 
@@ -6238,11 +6254,11 @@ class UpdateEndpointDeleteActions(MetaCommand):
 
                         IF FOUND THEN
                             SELECT
-                                edgedb.shortname_from_fullname(link.name),
-                                edgedb._get_schema_object_name(link.{far_endpoint})
+                                {ns_prefix}.shortname_from_fullname(link.name),
+                                {ns_prefix}._get_schema_object_name(link.{far_endpoint})
                                 INTO linkname, endname
                             FROM
-                                edgedb."_SchemaLink" AS link
+                                {ns_prefix}."_SchemaLink" AS link
                             WHERE
                                 link.id = link_type_id;
                             RAISE foreign_key_violation
@@ -6528,12 +6544,14 @@ class UpdateEndpointDeleteActions(MetaCommand):
 
             if links or modifications:
                 self._update_action_triggers(
-                    schema, source, links, disposition='source')
+                    schema, source, links, disposition='source', namespace=context.namespace
+                )
 
             if inline_links or modifications:
                 self._update_action_triggers(
                     schema, source, inline_links,
-                    inline=True, disposition='source')
+                    inline=True, disposition='source', namespace=context.namespace
+                )
 
         # All descendants of affected targets also need to have their
         # triggers updated, so track them down.
@@ -6620,27 +6638,31 @@ class UpdateEndpointDeleteActions(MetaCommand):
                 key=lambda l: l.get_name(schema))
 
             if dunder_type_links:
-                self._update_dunder_type_link_triggers(schema, target)
+                self._update_dunder_type_link_triggers(schema, target, context.namespace)
 
             if links or modifications:
                 self._update_action_triggers(
-                    schema, target, links, disposition='target')
+                    schema, target, links, disposition='target', namespace=context.namespace
+                )
 
             if inline_links or modifications:
                 self._update_action_triggers(
                     schema, target, inline_links,
-                    disposition='target', inline=True)
+                    disposition='target', inline=True, namespace=context.namespace
+                )
 
             if deferred_links or modifications:
                 self._update_action_triggers(
                     schema, target, deferred_links,
-                    disposition='target', deferred=True)
+                    disposition='target', deferred=True, namespace=context.namespace
+                )
 
             if deferred_inline_links or modifications:
                 self._update_action_triggers(
                     schema, target, deferred_inline_links,
                     disposition='target', deferred=True,
-                    inline=True)
+                    inline=True, namespace=context.namespace
+                )
 
         return schema
 
@@ -6648,6 +6670,7 @@ class UpdateEndpointDeleteActions(MetaCommand):
         self,
         schema,
         objtype: s_objtypes.ObjectType,
+        namespace: str
     ) -> None:
         table_name = common.get_backend_name(
             schema, objtype, catenate=False)
@@ -6664,7 +6687,8 @@ class UpdateEndpointDeleteActions(MetaCommand):
             is_constraint=True, inherit=True, deferred=False)
 
         proc_text = self._get_dunder_type_trigger_proc_text(
-            objtype, schema=schema)
+            objtype, schema=schema, namespace=namespace
+        )
 
         trig_func = dbops.Function(
             name=proc_name, text=proc_text, volatility='volatile',
@@ -6679,13 +6703,15 @@ class UpdateEndpointDeleteActions(MetaCommand):
         ))
 
     def _update_action_triggers(
-            self,
-            schema,
-            objtype: s_objtypes.ObjectType,
-            links: List[s_links.Link], *,
-            disposition: str,
-            deferred: bool=False,
-            inline: bool=False) -> None:
+        self,
+        schema,
+        objtype: s_objtypes.ObjectType,
+        links: List[s_links.Link], *,
+        disposition: str,
+        namespace: str,
+        deferred: bool = False,
+        inline: bool = False,
+    ) -> None:
 
         table_name = common.get_backend_name(
             schema, objtype, catenate=False)
@@ -6706,7 +6732,8 @@ class UpdateEndpointDeleteActions(MetaCommand):
         if links:
             proc_text = self.get_trigger_proc_text(
                 objtype, links, disposition=disposition,
-                inline=inline, schema=schema)
+                inline=inline, schema=schema, namespace=namespace
+            )
 
             trig_func = dbops.Function(
                 name=proc_name, text=proc_text, volatility='volatile',
@@ -6763,8 +6790,9 @@ class CreateExternalView(MetaCommand):
 
         view_def = context.external_view[key]
         if context.restoring_external:
-            self.external_views.append(dbops.View(query=view_def, name=('edgedbpub', str(obj.id))))
-            self.external_views.append(dbops.View(query=view_def, name=('edgedbpub', str(obj.id) + '_t')))
+            schema_name = context.pg_schema('edgedbpub')
+            self.external_views.append(dbops.View(query=view_def, name=(schema_name, str(obj.id))))
+            self.external_views.append(dbops.View(query=view_def, name=(schema_name, str(obj.id) + '_t')))
             return
 
         columns = []
@@ -6785,7 +6813,7 @@ class CreateExternalView(MetaCommand):
             ptrname = ptr.get_shortname(schema).name
 
             if ptrname == 'id':
-                columns.append("edgedbext.uuid_generate_v1mc() AS id")
+                columns.append(f"{context.pg_schema('edgedbext')}.uuid_generate_v1mc() AS id")
             elif ptrname == '__type__':
                 columns.append(f"'{(str(obj.id))}'::uuid AS __type__")
             elif has_link_table:
@@ -6814,8 +6842,9 @@ class CreateExternalView(MetaCommand):
         if join_link_table is not None:
             query += f", (SELECT * FROM {join_link_table.relation}) AS INNER_T " \
                      f"where INNER_T.{join_link_table.columns['source']} = SOURCE_T.{source_identity}"
-        self.external_views.append(dbops.View(query=query, name=('edgedbpub', str(obj.id))))
-        self.external_views.append(dbops.View(query=query, name=('edgedbpub', str(obj.id) + '_t')))
+        schema_name = context.pg_schema('edgedbpub')
+        self.external_views.append(dbops.View(query=query, name=(schema_name, str(obj.id))))
+        self.external_views.append(dbops.View(query=query, name=(schema_name, str(obj.id) + '_t')))
 
 
     def apply(

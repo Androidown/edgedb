@@ -109,6 +109,7 @@ def __init_worker__(
 
 def __sync__(
     dbname: str,
+    namespace: str,
     user_schema: Optional[bytes],
     user_schema_mutation: Optional[bytes],
     reflection_cache: Optional[bytes],
@@ -122,7 +123,7 @@ def __sync__(
     global INSTANCE_CONFIG
 
     try:
-        db = DBS.get(dbname)
+        db = DBS.get(dbname, {}).get(namespace)
         if db is None:
             assert user_schema is not None
             assert reflection_cache is not None
@@ -130,14 +131,19 @@ def __sync__(
             user_schema_unpacked = pickle.loads(user_schema)
             reflection_cache_unpacked = pickle.loads(reflection_cache)
             database_config_unpacked = pickle.loads(database_config)
-            db = state.DatabaseState(
-                dbname,
-                user_schema_unpacked,
-                user_schema_unpacked.version_id,
-                reflection_cache_unpacked,
-                database_config_unpacked,
+            ns = DBS.get(dbname, immutables.Map())
+            ns.set(
+                namespace,
+                state.DatabaseState(
+                    dbname,
+                    namespace,
+                    user_schema_unpacked,
+                    user_schema_unpacked.version_id,
+                    reflection_cache_unpacked,
+                    database_config_unpacked,
+                )
             )
-            DBS = DBS.set(dbname, db)
+            DBS = DBS.set(dbname, ns)
         else:
             updates = {}
 
@@ -157,7 +163,9 @@ def __sync__(
 
             if updates:
                 db = db._replace(**updates)
-                DBS = DBS.set(dbname, db)
+                ns = DBS[dbname]
+                ns.set(namespace, db)
+                DBS = DBS.set(dbname, ns)
 
         if global_schema is not None:
             GLOBAL_SCHEMA = pickle.loads(global_schema)
@@ -175,6 +183,7 @@ def __sync__(
 
 def compile(
     dbname: str,
+    namespace: str,
     user_schema: Optional[bytes],
     user_schema_mutation: Optional[bytes],
     reflection_cache: Optional[bytes],
@@ -187,6 +196,7 @@ def compile(
     with util.disable_gc():
         db = __sync__(
             dbname,
+            namespace,
             user_schema,
             user_schema_mutation,
             reflection_cache,
@@ -196,6 +206,7 @@ def compile(
         )
 
         units, cstate = COMPILER.compile(
+            namespace,
             db.user_schema,
             GLOBAL_SCHEMA,
             db.reflection_cache,
@@ -214,7 +225,7 @@ def compile(
         return units, pickled_state
 
 
-def compile_in_tx(cstate, dbname, user_schema_pickled, *args, **kwargs):
+def compile_in_tx(cstate, dbname, namespace, user_schema_pickled, *args, **kwargs):
     global LAST_STATE
     global DBS
 
@@ -227,17 +238,18 @@ def compile_in_tx(cstate, dbname, user_schema_pickled, *args, **kwargs):
             if user_schema_pickled is not None:
                 user_schema: s_schema.FlatSchema = pickle.loads(user_schema_pickled)
             else:
-                user_schema = DBS.get(dbname).user_schema
+                user_schema = DBS.get(dbname).get(namespace).user_schema
 
             cstate = cstate.restore(user_schema)
 
-        units, cstate = COMPILER.compile_in_tx(cstate, *args, **kwargs)
+        units, cstate = COMPILER.compile_in_tx(cstate, namespace, *args, **kwargs)
         LAST_STATE = cstate
         return units, pickle.dumps(cstate.compress(), -1), cstate.base_user_schema_id
 
 
 def compile_notebook(
     dbname: str,
+    namespace: str,
     user_schema: Optional[bytes],
     user_schema_mutation: Optional[bytes],
     reflection_cache: Optional[bytes],
@@ -249,6 +261,7 @@ def compile_notebook(
 ):
     db = __sync__(
         dbname,
+        namespace,
         user_schema,
         user_schema_mutation,
         reflection_cache,
@@ -270,6 +283,7 @@ def compile_notebook(
 
 def infer_expr(
     dbname: str,
+    namespace: str,
     user_schema: Optional[bytes],
     user_schema_mutation: Optional[bytes],
     reflection_cache: Optional[bytes],
@@ -281,6 +295,7 @@ def infer_expr(
 ):
     db = __sync__(
         dbname,
+        namespace,
         user_schema,
         user_schema_mutation,
         reflection_cache,
@@ -321,6 +336,7 @@ def describe_database_restore(
 
 def compile_graphql(
     dbname: str,
+    namespace: str,
     user_schema: Optional[bytes],
     user_schema_mutation: Optional[bytes],
     reflection_cache: Optional[bytes],
@@ -340,6 +356,7 @@ def compile_graphql(
 
     db = __sync__(
         dbname,
+        namespace,
         user_schema,
         user_schema_mutation,
         reflection_cache,
@@ -350,6 +367,7 @@ def compile_graphql(
 
     gql_op = graphql.compile_graphql(
         dbname,
+        namespace,
         STD_SCHEMA,
         db.user_schema,
         GLOBAL_SCHEMA,
@@ -364,6 +382,7 @@ def compile_graphql(
     )
 
     unit_group, _ = COMPILER.compile(
+        namespace=namespace,
         user_schema=db.user_schema,
         global_schema=GLOBAL_SCHEMA,
         reflection_cache=db.reflection_cache,

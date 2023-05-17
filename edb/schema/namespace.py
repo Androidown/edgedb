@@ -19,8 +19,6 @@
 
 from __future__ import annotations
 
-import uuid
-
 from edb import errors
 from edb.edgeql import ast as qlast
 from edb.edgeql import qltypes
@@ -28,6 +26,7 @@ from . import annos as s_anno
 from . import delta as sd
 from . import objects as so
 from . import schema as s_schema
+from . import defines
 
 
 class NameSpace(
@@ -60,6 +59,13 @@ class NameSpaceCommand(
                 f'as such names are reserved for system schemas',
                 context=source_context,
             )
+        if str(name) == defines.DEFAULT_NS:
+            source_context = self.get_attribute_source_context('name')
+            raise errors.SchemaDefinitionError(
+                f'\'{defines.DEFAULT_NS}\' is reserved as name for '
+                f'default namespace, use others instead.',
+                context=source_context,
+            )
 
 
 class CreateNameSpace(NameSpaceCommand, sd.CreateExternalObject[NameSpace]):
@@ -76,3 +82,14 @@ class CreateNameSpace(NameSpaceCommand, sd.CreateExternalObject[NameSpace]):
 
 class DeleteNameSpace(NameSpaceCommand, sd.DeleteExternalObject[NameSpace]):
     astnode = qlast.DropNameSpace
+
+    def _validate_legal_command(
+        self,
+        schema: s_schema.Schema,
+        context: sd.CommandContext,
+    ) -> None:
+        super()._validate_legal_command(schema, context)
+        if self.classname.name == defines.DEFAULT_NS:
+            raise errors.ExecutionError(
+                f"namespace {self.classname.name!r} cannot be dropped"
+            )

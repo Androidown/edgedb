@@ -78,6 +78,7 @@ if TYPE_CHECKING:
 ADMIN_PLACEHOLDER = "<edgedb:admin>"
 logger = logging.getLogger('edb.server')
 log_metrics = logging.getLogger('edb.server.metrics')
+_RE_BYTES_REPL_NS = re.compile(rb'(edgedb)(\.|instdata|pub|ss|std|;)', flags=re.MULTILINE)
 
 
 class RoleDescriptor(TypedDict):
@@ -275,11 +276,11 @@ class Server(ha_base.ClusterProtocol):
         self._ns_tpl_sql = None
 
     @contextlib.asynccontextmanager
-    async def aquire_distributed_lock(self, dbname, conn):
+    async def aquire_distributed_lock(self, dbname, namespace, conn):
         try:
-            logger.debug(f'Aquiring advisory lock for <{dbname}>')
+            logger.debug(f'Aquiring advisory lock for <{dbname}({namespace})>')
             await conn.sql_execute('select pg_advisory_lock(202304241756)'.encode())
-            logger.debug(f'Advisory lock for <{dbname}> aquired')
+            logger.debug(f'Advisory lock for <{dbname}({namespace})> aquired')
             yield
         finally:
             await conn.sql_execute('select pg_advisory_unlock(202304241756)'.encode())
@@ -416,7 +417,7 @@ class Server(ha_base.ClusterProtocol):
 
             await self._load_instance_data()
 
-            global_schema = await self.introspect_global_schema()
+            global_schema = await self.introspect_global_schema(defines.DEFAULT_NS)
             sys_config = await self.load_sys_config()
             await self.load_reported_config()
 
@@ -540,19 +541,19 @@ class Server(ha_base.ClusterProtocol):
     def get_suggested_client_pool_size(self) -> int:
         return self._suggested_client_pool_size
 
-    def get_db(self, *, dbname: str):
+    def get_db(self, *, dbname: str, namespace: str = defines.DEFAULT_NS):
         assert self._dbindex is not None
-        return self._dbindex.get_db(dbname)
+        return self._dbindex.get_db(dbname, namespace)
 
-    def maybe_get_db(self, *, dbname: str):
+    def maybe_get_db(self, *, dbname: str, namespace: str = defines.DEFAULT_NS):
         assert self._dbindex is not None
-        return self._dbindex.maybe_get_db(dbname)
+        return self._dbindex.maybe_get_db(dbname, namespace)
 
-    async def new_dbview(self, *, dbname, query_cache, protocol_version):
-        db = self.get_db(dbname=dbname)
+    async def new_dbview(self, *, dbname, query_cache, protocol_version, namespace: str = defines.DEFAULT_NS):
+        db = self.get_db(dbname=dbname, namespace=namespace)
         await db.introspection()
         return self._dbindex.new_view(
-            dbname, query_cache=query_cache, protocol_version=protocol_version
+            dbname, namespace=namespace, query_cache=query_cache, protocol_version=protocol_version
         )
 
     def remove_dbview(self, dbview):
@@ -639,8 +640,11 @@ class Server(ha_base.ClusterProtocol):
         finally:
             self._release_sys_pgcon()
 
-    async def introspect_global_schema(self, conn=None):
-        intro_query = self._global_intro_query
+    async def introspect_global_schema(self, namespace, conn=None):
+        intro_query = _RE_BYTES_REPL_NS.sub(
+            namespace.encode('utf-8') + rb'_\1\2',
+            self._global_intro_query
+        )
         if conn is not None:
             json_data = await conn.sql_fetch_val(intro_query)
         else:
@@ -657,21 +661,25 @@ class Server(ha_base.ClusterProtocol):
             schema_class_layout=self._schema_class_layout,
         )
 
-    async def _reintrospect_global_schema(self):
+    async def _reintrospect_global_schema(self, namespace):
         if not self._initing and not self._serving:
             logger.warning(
                 "global-schema-changes event received during shutdown; "
                 "ignoring."
             )
             return
-        new_global_schema = await self.introspect_global_schema()
+        new_global_schema = await self.introspect_global_schema(namespace)
         self._dbindex.update_global_schema(new_global_schema)
         self._fetch_roles()
 
-    async def introspect_user_schema(self, dbname, conn):
-        await self._persist_user_schema(dbname, conn)
+    async def introspect_user_schema(self, dbname, namespace, conn):
+        await self._persist_user_schema(dbname, namespace, conn)
 
-        json_data = await conn.sql_fetch_val(self._local_intro_query)
+        ns_intro_query = _RE_BYTES_REPL_NS.sub(
+            namespace.encode('utf-8') + rb'_\1\2',
+            self._local_intro_query
+        )
+        json_data = await conn.sql_fetch_val(ns_intro_query)
 
         base_schema = s_schema.ChainedSchema(
             self._std_schema,
@@ -704,7 +712,7 @@ class Server(ha_base.ClusterProtocol):
                 raise
         return conn
 
-    async def introspect_db(self, dbname):
+    async def introspect_db(self, dbname, namespace: str = None):
         """Use this method to (re-)introspect a DB.
 
         If the DB is already registered in self._dbindex, its
@@ -726,64 +734,81 @@ class Server(ha_base.ClusterProtocol):
             return
 
         try:
-            user_schema = await self.introspect_user_schema(dbname, conn)
+            if namespace is None:
+                ns_query = self.get_sys_query('listns')
+                json_data = await conn.sql_fetch_val(ns_query)
+                ns_list = json.loads(json_data)
+            else:
+                ns_list = [namespace]
 
-            reflection_cache_json = await conn.sql_fetch_val(
-                b'''
-                    SELECT json_agg(o.c)
-                    FROM (
-                        SELECT
-                            json_build_object(
-                                'eql_hash', t.eql_hash,
-                                'argnames', array_to_json(t.argnames)
-                            ) AS c
-                        FROM
-                            ROWS FROM(edgedb._get_cached_reflection())
-                                AS t(eql_hash text, argnames text[])
-                    ) AS o;
-                ''',
-            )
-
-            reflection_cache = immutables.Map({
-                r['eql_hash']: tuple(r['argnames'])
-                for r in json.loads(reflection_cache_json)
-            })
-
-            backend_ids_json = await conn.sql_fetch_val(
-                b'''
-                SELECT
-                    json_object_agg(
-                        "id"::text,
-                        "backend_id"
-                    )::text
-                FROM
-                    edgedb."_SchemaType"
-                ''',
-            )
-            backend_ids = json.loads(backend_ids_json)
-
-            db_config = await self.introspect_db_config(conn)
-
-            assert self._dbindex is not None
-            self._dbindex.register_db(
-                dbname,
-                user_schema=user_schema,
-                db_config=db_config,
-                reflection_cache=reflection_cache,
-                backend_ids=backend_ids,
-            )
+            for ns in ns_list:
+                await self.introspect_ns(conn, dbname, ns)
         finally:
             self.release_pgcon(dbname, conn)
 
-    async def _persist_user_schema(self, dbname, conn):
-        async with self.aquire_distributed_lock(dbname, conn):
+    async def introspect_ns(self, conn, dbname, namespace):
+        user_schema = await self.introspect_user_schema(dbname, namespace, conn)
+        if namespace == defines.DEFAULT_NS:
+            schema_name = 'edgedb'
+        else:
+            schema_name = f"{namespace}_edgedb"
+        reflection_cache_json = await conn.sql_fetch_val(
+            f'''
+                SELECT json_agg(o.c)
+                FROM (
+                    SELECT
+                        json_build_object(
+                            'eql_hash', t.eql_hash,
+                            'argnames', array_to_json(t.argnames)
+                        ) AS c
+                    FROM
+                        ROWS FROM({schema_name}._get_cached_reflection())
+                            AS t(eql_hash text, argnames text[])
+                ) AS o;
+            '''.encode('utf-8'),
+        )
+        reflection_cache = immutables.Map(
+            {
+                r['eql_hash']: tuple(r['argnames'])
+                for r in json.loads(reflection_cache_json)
+            }
+        )
+        backend_ids_json = await conn.sql_fetch_val(
+            f'''
+            SELECT
+                json_object_agg(
+                    "id"::text,
+                    "backend_id"
+                )::text
+            FROM
+                {schema_name}."_SchemaType"
+            '''.encode('utf-8'),
+        )
+        backend_ids = json.loads(backend_ids_json)
+        db_config = await self.introspect_db_config(conn)
+        assert self._dbindex is not None
+        self._dbindex.register_ns(
+            dbname,
+            namespace=namespace,
+            user_schema=user_schema,
+            db_config=db_config,
+            reflection_cache=reflection_cache,
+            backend_ids=backend_ids,
+        )
+
+    async def _persist_user_schema(self, dbname, namespace, conn):
+        if namespace == defines.DEFAULT_NS:
+            schema_name = 'edgedbinstdata'
+        else:
+            schema_name = f"{namespace}_edgedbinstdata"
+        async with self.aquire_distributed_lock(dbname, namespace, conn):
             persist_sqls = await conn.sql_fetch(
-                b'''\
+            f'''\
                 SELECT "version_id", convert_from("sql", 'utf8') from
-                edgedbinstdata.schema_persist_history
+                {schema_name}.schema_persist_history
                 WHERE active
                 ORDER BY "timestamp"
-            '''
+            '''.encode('utf-8')
             )
             if not persist_sqls:
                 logger.debug(f"No schema persistence to do.")
@@ -791,15 +816,15 @@ class Server(ha_base.ClusterProtocol):
 
             for vid, sql in persist_sqls:
                 await conn.sql_execute(sql)
-                logger.debug(f"Finish schema persistence for <{dbname}: {uuid.UUID(bytes=vid)}>")
+                logger.debug(f"Finish schema persistence for <{dbname}({namespace}): {uuid.UUID(bytes=vid)}>")
 
-    async def persist_user_schema(self, dbname):
+    async def persist_user_schema(self, dbname, namespace):
         conn = await self._acquire_intro_pgcon(dbname)
         if not conn:
             return
 
         try:
-            await self._persist_user_schema(dbname, conn)
+            await self._persist_user_schema(dbname, namespace, conn)
         finally:
             self.release_pgcon(dbname, conn)
 
@@ -823,7 +848,7 @@ class Server(ha_base.ClusterProtocol):
     async def _early_introspect_db(self, dbname):
         """We need to always introspect the extensions for each database.
 
-        Otherwise we won't know to accept connections for graphql or
+        Otherwise, we won't know to accept connections for graphql or
         http, for example, until a native connection is made.
         """
         logger.info("introspecting extensions for database '%s'", dbname)
@@ -833,25 +858,34 @@ class Server(ha_base.ClusterProtocol):
             return
 
         try:
-            extension_names_json = await conn.sql_fetch_val(
-                b'''
-                    SELECT json_agg(name) FROM edgedb."_SchemaExtension";
-                ''',
-            )
-            if extension_names_json:
-                extensions = set(json.loads(extension_names_json))
-            else:
-                extensions = set()
+            ns_query = self.get_sys_query('listns')
+            json_data = await conn.sql_fetch_val(ns_query)
+            ns_list = json.loads(json_data)
+            for ns in ns_list:
+                if ns == defines.DEFAULT_NS:
+                    schema_name = 'edgedb'
+                else:
+                    schema_name = f"{ns}_edgedb"
+                extension_names_json = await conn.sql_fetch_val(
+                    f'''
+                        SELECT json_agg(name) FROM {schema_name}."_SchemaExtension";
+                    '''.encode('utf-8')
+                )
+                if extension_names_json:
+                    extensions = set(json.loads(extension_names_json))
+                else:
+                    extensions = set()
 
-            assert self._dbindex is not None
-            self._dbindex.register_db(
-                dbname,
-                user_schema=None,
-                db_config=None,
-                reflection_cache=None,
-                backend_ids=None,
-                extensions=extensions,
-            )
+                assert self._dbindex is not None
+                self._dbindex.register_ns(
+                    dbname,
+                    namespace=ns,
+                    user_schema=None,
+                    db_config=None,
+                    reflection_cache=None,
+                    backend_ids=None,
+                    extensions=extensions,
+                )
         finally:
             self.release_pgcon(dbname, conn)
 
@@ -1066,6 +1100,16 @@ class Server(ha_base.ClusterProtocol):
 
         await self._ensure_database_not_connected(dbname)
 
+    async def _on_before_drop_ns(
+        self,
+        namespace: str,
+        current_namespace: str
+    ) -> None:
+        if current_namespace == namespace:
+            raise errors.ExecutionError(
+                f'cannot drop the currently open current_namespace {namespace!r}'
+            )
+
     async def _on_before_create_db_from_template(
         self,
         dbname: str,
@@ -1098,6 +1142,10 @@ class Server(ha_base.ClusterProtocol):
         except Exception:
             metrics.background_errors.inc(1.0, 'on_after_drop_db')
             raise
+
+    def _on_after_drop_ns(self, dbname: str, namespace: str):
+        assert self._dbindex is not None
+        self._dbindex.unregister_ns(dbname, namespace)
 
     async def _on_system_config_add(self, setting_name, value):
         # CONFIGURE INSTANCE INSERT ConfigObject;
@@ -1248,7 +1296,7 @@ class Server(ha_base.ClusterProtocol):
             metrics.background_errors.inc(1.0, 'signal_sysevent')
             raise
 
-    def _on_remote_ddl(self, dbname):
+    def _on_remote_ddl(self, dbname, namespace):
         if not self._accept_new_tasks:
             return
 
@@ -1256,7 +1304,7 @@ class Server(ha_base.ClusterProtocol):
         # on the __edgedb_sysevent__ channel
         async def task():
             try:
-                await self.introspect_db(dbname)
+                await self.introspect_db(dbname, namespace)
             except Exception:
                 metrics.background_errors.inc(1.0, 'on_remote_ddl')
                 raise
@@ -1313,19 +1361,19 @@ class Server(ha_base.ClusterProtocol):
 
         self.create_task(task(), interruptable=True)
 
-    def _on_global_schema_change(self):
+    def _on_global_schema_change(self, namespace):
         if not self._accept_new_tasks:
             return
 
-        async def task():
+        async def task(ns):
             try:
-                await self._reintrospect_global_schema()
+                await self._reintrospect_global_schema(ns)
             except Exception:
                 metrics.background_errors.inc(
                     1.0, 'on_global_schema_change')
                 raise
 
-        self.create_task(task(), interruptable=True)
+        self.create_task(task(namespace), interruptable=True)
 
     def _on_sys_pgcon_connection_lost(self, exc):
         try:
@@ -1903,11 +1951,9 @@ class Server(ha_base.ClusterProtocol):
             )
 
     async def create_namespace(self, be_conn: pgcon.PGConnection, name: str):
-        tpl_sql = re.sub(
-            rb'(edgedb)(\.|instdata|pub|ss|std|;)',
+        tpl_sql = _RE_BYTES_REPL_NS.sub(
             name.encode('utf-8') + rb'_\1\2',
             self._ns_tpl_sql,
-            flags=re.MULTILINE,
         )
         tpl_sql = re.sub(
             rb'({ns_edgedbext})',
@@ -1953,26 +1999,31 @@ class Server(ha_base.ClusterProtocol):
         )
 
         dbs = {}
-        for db in self._dbindex.iter_dbs():
-            if db.name in defines.EDGEDB_SPECIAL_DBS:
+        for db_name, ns_map in self._dbindex.iter_dbs():
+            if db_name in defines.EDGEDB_SPECIAL_DBS:
                 continue
 
-            dbs[db.name] = dict(
-                name=db.name,
-                dbver=db.dbver,
-                config=serialize_config(db.db_config),
-                extensions=sorted(db.extensions),
-                query_cache_size=db.get_query_cache_size(),
-                connections=[
-                    dict(
-                        in_tx=view.in_tx(),
-                        in_tx_error=view.in_tx_error(),
-                        config=serialize_config(view.get_session_config()),
-                        module_aliases=view.get_modaliases(),
-                    )
-                    for view in db.iter_views()
-                ],
-            )
+            ns = {}
+            for ns_name, ns_db in ns_map.items():
+                ns[ns_name] = dict(
+                    name=ns_db.name,
+                    namespace=ns_name,
+                    dbver=ns_db.dbver,
+                    config=serialize_config(ns_db.db_config),
+                    extensions=sorted(ns_db.extensions),
+                    query_cache_size=ns_db.get_query_cache_size(),
+                    connections=[
+                        dict(
+                            in_tx=view.in_tx(),
+                            in_tx_error=view.in_tx_error(),
+                            config=serialize_config(view.get_session_config()),
+                            module_aliases=view.get_modaliases(),
+                        )
+                        for view in ns_db.iter_views()
+                    ],
+                )
+
+            dbs[db_name] = dict(name=db_name, namespace=ns)
 
         obj['databases'] = dbs
 

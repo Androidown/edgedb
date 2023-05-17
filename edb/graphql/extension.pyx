@@ -229,6 +229,7 @@ async def compile(
     compiler_pool = server.get_compiler_pool()
     return await compiler_pool.compile_graphql(
         db.name,
+        db.namespace,
         db.user_schema,
         server.get_global_schema(),
         db.reflection_cache,
@@ -373,6 +374,7 @@ async def _execute(
         dbname=db.name,
         query_cache=False,
         protocol_version=edbdef.CURRENT_PROTOCOL,
+        db=db.namespace
     )
 
     pgcon = await server.acquire_pgcon(db.name)

@@ -115,7 +115,7 @@ class GetMetadata(base.Command):
         if is_shared:
             return textwrap.dedent(f'''\
                 SELECT
-                    edgedb.shobj_metadata(
+                    {block.namespace_prefix}edgedb.shobj_metadata(
                         {objoid},
                         {classoid}::regclass::text
                     )
@@ -123,7 +123,7 @@ class GetMetadata(base.Command):
         elif objsubid:
             return textwrap.dedent(f'''\
                 SELECT
-                    edgedb.col_metadata(
+                    {block.namespace_prefix}edgedb.col_metadata(
                         {objoid},
                         {objsubid}
                     )
@@ -131,7 +131,7 @@ class GetMetadata(base.Command):
         else:
             return textwrap.dedent(f'''\
                 SELECT
-                    edgedb.obj_metadata(
+                    {block.namespace_prefix}edgedb.obj_metadata(
                         {objoid},
                         {classoid}::regclass::text,
                     )
@@ -149,7 +149,7 @@ class GetSingleDBMetadata(base.Command):
             SELECT
                 json
             FROM
-                edgedbinstdata.instdata
+                {block.namespace_prefix}edgedbinstdata.instdata
             WHERE
                 key = {ql(key)}
         ''')
@@ -211,7 +211,7 @@ class SetSingleDBMetadata(PutSingleDBMetadata):
         metadata = ql(json.dumps(self.metadata))
         return textwrap.dedent(f'''\
             UPDATE
-                edgedbinstdata.instdata
+                {block.namespace_prefix}edgedbinstdata.instdata
             SET
                 json = {metadata}
             WHERE
@@ -260,7 +260,7 @@ class UpdateSingleDBMetadata(PutSingleDBMetadata):
 
         return textwrap.dedent(f'''\
             UPDATE
-                edgedbinstdata.instdata
+                {block.namespace_prefix}edgedbinstdata.instdata
             SET
                 json = {json_v} || {meta_v}
             WHERE
@@ -329,7 +329,7 @@ class UpdateSingleDBMetadataSection(
         json_v, meta_v = self._merge(block)
         return textwrap.dedent(f'''\
             UPDATE
-                edgedbinstdata.instdata
+                {block.namespace_prefix}edgedbinstdata.instdata
             SET
                 json = {json_v} || {meta_v}
             WHERE

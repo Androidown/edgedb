@@ -84,6 +84,8 @@ async def execute(
             await server._on_before_drop_db(query_unit.drop_db, dbv.dbname)
         if query_unit.create_ns:
             await server.create_namespace(be_conn, query_unit.create_ns)
+        if query_unit.drop_ns:
+            await server._on_before_drop_ns(query_unit.drop_ns, dbv.namespace)
         if query_unit.system_config:
             await execute_system_config(be_conn, dbv, query_unit)
         else:
@@ -134,8 +136,14 @@ async def execute(
             if query_unit.create_db:
                 await server.introspect_db(query_unit.create_db)
 
+            if query_unit.create_ns:
+                await server.introspect_db(dbv.dbname, query_unit.create_ns)
+
             if query_unit.drop_db:
                 server._on_after_drop_db(query_unit.drop_db)
+
+            if query_unit.drop_ns:
+                server._on_after_drop_ns(dbv.dbname, query_unit.drop_ns)
 
             if config_ops:
                 await dbv.apply_config_ops(be_conn, config_ops)
@@ -380,6 +388,7 @@ def signal_side_effects(dbv, side_effects):
             server._signal_sysevent(
                 'schema-changes',
                 dbname=dbv.dbname,
+                namespace=dbv.namespace,
             ),
             interruptable=False,
         )
@@ -388,6 +397,7 @@ def signal_side_effects(dbv, side_effects):
         server.create_task(
             server._signal_sysevent(
                 'global-schema-changes',
+                namespace=dbv.namespace,
             ),
             interruptable=False,
         )
@@ -422,6 +432,7 @@ async def parse_execute(
         dbname=db.name,
         query_cache=False,
         protocol_version=edbdef.CURRENT_PROTOCOL,
+        namespace=db.namespace
     )
 
     query_req = dbview.QueryRequestInfo(
@@ -468,6 +479,7 @@ async def parse_execute_json(
         dbname=db.name,
         query_cache=query_cache_enabled,
         protocol_version=edbdef.CURRENT_PROTOCOL,
+        namespace=db.namespace
     )
 
     allow_cap = compiler.Capability(0) if read_only else compiler.Capability.MODIFICATIONS

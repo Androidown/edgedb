@@ -23,7 +23,8 @@ from typing import Optional, Mapping, Any
 
 from . import base
 from . import ddl
-from ..common import quote_ident as qi
+from edb.pgsql.common import quote_ident as qi
+from edb.schema.defines import DEFAULT_NS
 
 
 class NameSpace(base.DBObject):
@@ -39,7 +40,7 @@ class NameSpace(base.DBObject):
         return 'SCHEMA'
 
     def get_id(self):
-        return qi(f"{self.name}_edgedb")
+        return qi(f"{self.name}_edgedb") if self.name != DEFAULT_NS else qi("edgedb")
 
     def is_shared(self) -> bool:
         return False

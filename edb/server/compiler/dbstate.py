@@ -137,6 +137,7 @@ class DDLQuery(BaseQuery):
     create_db: Optional[str] = None
     create_ns: Optional[str] = None
     drop_db: Optional[str] = None
+    drop_ns: Optional[str] = None
     create_db_template: Optional[str] = None
     has_role_ddl: bool = False
     ddl_stmt_id: Optional[str] = None
@@ -261,9 +262,13 @@ class QueryUnit:
     # close all inactive unused pooled connections to the template db.
     create_db_template: Optional[str] = None
 
-    # If non-None, contains a name of the DB that is about to be
-    # created/deleted.
+    # If non-None, contains a name of the NameSpace that is about to be
+    # created.
     create_ns: Optional[str] = None
+
+    # If non-None, contains a name of the NameSpace that is about to be
+    # deleted.
+    drop_ns: Optional[str] = None
 
     # If non-None, the DDL statement will emit data packets marked
     # with the indicated ID.

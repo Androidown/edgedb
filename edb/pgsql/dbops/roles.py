@@ -153,7 +153,7 @@ class AlterRole(ddl.AlterObject, RoleCommand):
             value = json.dumps(self.object.single_role_metadata)
             query = base.Query(
                 f'''
-                UPDATE edgedbinstdata.instdata
+                UPDATE {block.namespace_prefix}edgedbinstdata.instdata
                 SET json = {ql(value)}::jsonb
                 WHERE key = 'single_role_metadata'
                 '''

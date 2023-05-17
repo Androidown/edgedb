@@ -290,6 +290,7 @@ cdef class Database:
         self,
         DatabaseIndex index,
         str name,
+        str namespace,
         *,
         object user_schema,
         object db_config,
@@ -298,6 +299,7 @@ cdef class Database:
         object extensions,
     ):
         self.name = name
+        self.namespace = namespace
 
         self.dbver = next_dbver()
 
@@ -500,11 +502,11 @@ cdef class Database:
         if self.user_schema is None:
             async with self._introspection_lock:
                 if self.user_schema is None:
-                    await self._index._server.introspect_db(self.name)
+                    await self._index._server.introspect_db(self.name, self.namespace)
 
     async def persist_schema(self):
         async with self._introspection_lock:
-            await self._index._server.persist_user_schema(self.name)
+            await self._index._server.persist_user_schema(self.name, self.namespace)
 
     def schedule_schema_persistence(self):
         asyncio.create_task(self.persist_schema())
@@ -948,6 +950,10 @@ cdef class DatabaseConnectionView:
         def __get__(self):
             return self._db.name
 
+    property namespace:
+        def __get__(self):
+            return self._db.namespace
+
     property reflection_cache:
         def __get__(self):
             return self._db.reflection_cache
@@ -1092,6 +1098,7 @@ cdef class DatabaseConnectionView:
     def save_schema_mutation(self, mut, mut_bytes):
         self._db._index._server.get_compiler_pool().append_schema_mutation(
             self.dbname,
+            self.namespace,
             mut_bytes,
             mut,
             self.get_user_schema(),
@@ -1369,6 +1376,7 @@ cdef class DatabaseConnectionView:
             if self.in_tx():
                 result = await compiler_pool.compile_in_tx(
                     self.dbname,
+                    self.namespace,
                     self.txid,
                     self._last_comp_state,
                     self._last_comp_state_id,
@@ -1390,6 +1398,7 @@ cdef class DatabaseConnectionView:
             else:
                 result = await compiler_pool.compile(
                     self.dbname,
+                    self.namespace,
                     self.get_user_schema(),
                     self.get_global_schema(),
                     self.reflection_cache,
@@ -1455,7 +1464,7 @@ cdef class DatabaseIndex:
         except KeyError:
             return 0
 
-        return len((<Database>db)._views)
+        return sum(len(ns._views) for ns in db.values())
 
     def get_sys_config(self):
         return self._sys_config
@@ -1470,15 +1479,15 @@ cdef class DatabaseIndex:
     def has_db(self, dbname):
         return dbname in self._dbs
 
-    def get_db(self, dbname):
+    def get_db(self, dbname, namespace):
         try:
-            return self._dbs[dbname]
+            return self._dbs[dbname][namespace]
         except KeyError:
             raise errors.UnknownDatabaseError(
-                f'database {dbname!r} does not exist')
+                f'database {dbname!r} (namespace: {namespace}) does not exist')
 
-    def maybe_get_db(self, dbname):
-        return self._dbs.get(dbname)
+    def maybe_get_db(self, dbname, namespace):
+        return self._dbs.get(dbname, {}).get(namespace)
 
     def get_global_schema(self):
         return self._global_schema
@@ -1486,9 +1495,10 @@ cdef class DatabaseIndex:
     def update_global_schema(self, global_schema):
         self._global_schema = global_schema
 
-    def register_db(
+    def register_ns(
         self,
         dbname,
+        namespace,
         *,
         user_schema,
         db_config,
@@ -1497,27 +1507,34 @@ cdef class DatabaseIndex:
         extensions=None,
     ):
         cdef Database db
-        db = self._dbs.get(dbname)
+        db = self._dbs.get(dbname, {}).get(namespace)
         if db is not None:
             db._set_and_signal_new_user_schema(
-                user_schema, reflection_cache, backend_ids, db_config)
+                user_schema, reflection_cache, backend_ids, db_config
+            )
         else:
             db = Database(
                 self,
                 dbname,
+                namespace=namespace,
                 user_schema=user_schema,
                 db_config=db_config,
                 reflection_cache=reflection_cache,
                 backend_ids=backend_ids,
                 extensions=extensions,
             )
-            self._dbs[dbname] = db
+            ns_map = self._dbs.get(dbname, {})
+            ns_map[namespace] = db
+            self._dbs[dbname] = ns_map
+
+    def unregister_ns(self, dbname, namespace):
+        self._dbs.get(dbname, {}).pop(namespace)
 
     def unregister_db(self, dbname):
         self._dbs.pop(dbname)
 
     def iter_dbs(self):
-        return iter(self._dbs.values())
+        return iter(self._dbs.items())
 
     async def _save_system_overrides(self, conn):
         data = config.to_json(
@@ -1584,10 +1601,10 @@ cdef class DatabaseIndex:
             await self._server._after_system_config_reset(
                 op.setting_name)
 
-    def new_view(self, dbname: str, *, query_cache: bool, protocol_version):
-        db = self.get_db(dbname)
+    def new_view(self, dbname: str, namespace: str, *, query_cache: bool, protocol_version):
+        db = self.get_db(dbname, namespace)
         return (<Database>db)._new_view(query_cache, protocol_version)
 
     def remove_view(self, view: DatabaseConnectionView):
-        db = self.get_db(view.dbname)
+        db = self.get_db(view.dbname, view.namespace)
         return (<Database>db)._remove_view(view)

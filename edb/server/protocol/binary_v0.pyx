@@ -282,6 +282,7 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
         compiler_pool = server.get_compiler_pool()
 
         dbname = _dbview.dbname
+        namespace = _dbview.namespace
         pgcon = await server.acquire_pgcon(dbname)
         self._in_dump_restore = True
         try:
@@ -312,8 +313,8 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
                 ''',
             )
 
-            user_schema = await server.introspect_user_schema(dbname, pgcon)
-            global_schema = await server.introspect_global_schema(pgcon)
+            user_schema = await server.introspect_user_schema(dbname, namespace, pgcon)
+            global_schema = await server.introspect_global_schema(namespace, pgcon)
             db_config = await server.introspect_db_config(pgcon)
             dump_protocol = self.max_protocol
 
@@ -515,6 +516,7 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
 
         self.buffer.finish_message()
         dbname = _dbview.dbname
+        namespace = _dbview.namespace
         pgcon = await server.acquire_pgcon(dbname)
 
         self._in_dump_restore = True
@@ -659,7 +661,7 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
             self._in_dump_restore = False
             server.release_pgcon(dbname, pgcon)
 
-        await server.introspect_db(dbname)
+        await server.introspect_db(dbname, namespace)
 
         msg = WriteBuffer.new_message(b'C')
         msg.write_int16(0)  # no headers
@@ -1238,12 +1240,13 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
                             query_unit.create_db_template, _dbview.dbname
                         )
                     if query_unit.drop_db:
-                        await self.server._on_before_drop_db(
-                            query_unit.drop_db, _dbview.dbname)
-
+                        await self.server._on_before_drop_db(query_unit.drop_db, _dbview.dbname)
+                    if query_unit.create_ns:
+                        await self.server.create_namespace(conn, query_unit.create_ns)
+                    if query_unit.drop_ns:
+                        await self.server._on_before_drop_ns(query_unit.drop_ns, _dbview.namespace)
                     if query_unit.system_config:
-                        await execute.execute_system_config(
-                            conn, _dbview, query_unit)
+                        await execute.execute_system_config(conn, _dbview, query_unit)
                     else:
                         if query_unit.sql:
                             if query_unit.ddl_stmt_id:
@@ -1251,10 +1254,7 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
                                 if ddl_ret and ddl_ret['new_types']:
                                     new_types = ddl_ret['new_types']
                             elif query_unit.is_transactional:
-                                await conn.sql_execute(
-                                    query_unit.sql,
-                                    state=state,
-                                )
+                                await conn.sql_execute(query_unit.sql, state=state)
                             else:
                                 i = 0
                                 for sql in query_unit.sql:
@@ -1270,18 +1270,19 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
                                 orig_state = None
 
                         if query_unit.create_db:
-                            await self.server.introspect_db(
-                                query_unit.create_db
-                            )
+                            await self.server.introspect_db(query_unit.create_db)
+
+                        if query_unit.create_ns:
+                            await self.server.introspect_db(_dbview.dbname, query_unit.create_ns)
 
                         if query_unit.drop_db:
-                            self.server._on_after_drop_db(
-                                query_unit.drop_db)
+                            self.server._on_after_drop_db(query_unit.drop_db)
+
+                        if query_unit.drop_db:
+                            self.server._on_after_drop_ns(_dbview.dbname, query_unit.drop_ns)
 
                         if query_unit.config_ops:
-                            await _dbview.apply_config_ops(
-                                conn,
-                                query_unit.config_ops)
+                            await _dbview.apply_config_ops(conn, query_unit.config_ops)
                 except Exception:
                     _dbview.on_error()
                     if not conn.in_tx() and _dbview.in_tx():

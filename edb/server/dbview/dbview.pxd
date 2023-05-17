@@ -84,6 +84,7 @@ cdef class Database:
         bint _log_cache
 
         readonly str name
+        readonly str namespace
         readonly object dbver
         readonly object db_config
         readonly object user_schema

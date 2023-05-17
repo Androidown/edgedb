@@ -72,12 +72,13 @@ class PLExpression(str):
 
 
 class SQLBlock:
-    def __init__(self):
+    def __init__(self, namespace_prefix: str = ''):
         self.commands = []
         self._transactional = True
+        self.namespace_prefix = namespace_prefix
 
     def add_block(self):
-        block = PLTopBlock()
+        block = PLTopBlock(self.namespace_prefix)
         self.add_command(block)
         return block
 
@@ -112,8 +113,11 @@ class SQLBlock:
 
 
 class PLBlock(SQLBlock):
-    def __init__(self, top_block, level):
-        super().__init__()
+    def __init__(self, top_block, level, namespace_prefix: str = ''):
+        if top_block is None:
+            super().__init__(namespace_prefix)
+        else:
+            super().__init__(top_block.namespace_prefix)
         self.top_block = top_block
         self.varcounter = collections.defaultdict(int)
         self.shared_vars = set()
@@ -132,7 +136,7 @@ class PLBlock(SQLBlock):
         return self.top_block
 
     def add_block(self):
-        block = PLBlock(top_block=self.top_block, level=self.level + 1)
+        block = PLBlock(top_block=self.top_block, level=self.level + 1, namespace_prefix=self.namespace_prefix)
         self.add_command(block)
         return block
 
@@ -225,9 +229,9 @@ class PLBlock(SQLBlock):
         self,
         type_name: Union[str, Tuple[str, str]],
         *,
-        var_name: str='',
-        var_name_prefix: str='v',
-        shared: bool=False,
+        var_name: str = '',
+        var_name_prefix: str = 'v',
+        shared: bool = False,
     ) -> str:
         if shared:
             if not var_name:
@@ -244,8 +248,8 @@ class PLBlock(SQLBlock):
 
 
 class PLTopBlock(PLBlock):
-    def __init__(self):
-        super().__init__(top_block=None, level=0)
+    def __init__(self, namespace_prefix: str = ''):
+        super().__init__(top_block=None, level=0, namespace_prefix=namespace_prefix)
         self.declare_var('text', var_name='_dummy_text', shared=True)
 
     def add_block(self):

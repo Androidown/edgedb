@@ -27,6 +27,7 @@ from edb.common import debug
 from edb.common import exceptions as edgedb_error
 
 from edb.ir import ast as irast
+from edb.schema import defines
 
 from edb.pgsql import ast as pgast
 from edb.pgsql import codegen as pgcodegen
@@ -147,6 +148,7 @@ def compile_ir_to_sql(
     expected_cardinality_one: bool=False,
     pretty: bool=True,
     backend_runtime_params: Optional[pgparams.BackendRuntimeParams]=None,
+    namespace: str = defines.DEFAULT_NS
 ) -> Tuple[str, Dict[str, pgast.Param]]:
 
     qtree = compile_ir_to_sql_tree(
@@ -172,7 +174,7 @@ def compile_ir_to_sql(
         argmap = {}
 
     # Generate query text
-    sql_text = run_codegen(qtree, pretty=pretty)
+    sql_text = run_codegen(qtree, pretty=pretty, namespace=namespace)
 
     if (  # pragma: no cover
         debug.flags.edgeql_compile or debug.flags.edgeql_compile_sql_text
@@ -194,8 +196,9 @@ def run_codegen(
     *,
     pretty: bool=True,
     reordered: bool=False,
+    namespace: str = defines.DEFAULT_NS
 ) -> str:
-    codegen = pgcodegen.SQLSourceGenerator(pretty=pretty, reordered=reordered)
+    codegen = pgcodegen.SQLSourceGenerator(pretty=pretty, reordered=reordered, namespace=namespace)
     try:
         codegen.visit(qtree)
     except pgcodegen.SQLSourceGeneratorError as e:  # pragma: no cover

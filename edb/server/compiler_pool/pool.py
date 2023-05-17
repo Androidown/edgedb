@@ -91,11 +91,12 @@ class _SchemaMutation(NamedTuple):
 
 
 class MutationHistory:
-    def __init__(self, dbname: str):
+    def __init__(self, dbname: str, namespace: str):
         self._history: List[_SchemaMutation] = []
         self._index: Dict[uuid.UUID, int] = {}
         self._cursor: Dict[uuid.UUID, int] = {}
         self._db = dbname
+        self._namespace = namespace
 
     @property
     def latest_ver(self):
@@ -109,7 +110,7 @@ class MutationHistory:
         self._cursor.clear()
 
     def get_pickled_mutation(self, worker: BaseWorker) -> Optional[bytes]:
-        start = self._cursor.get(worker.get_user_schema_id(self._db))
+        start = self._cursor.get(worker.get_user_schema_id(self._db, self._namespace))
         if start is None:
             return
 
@@ -117,13 +118,13 @@ class MutationHistory:
             mut_bytes = self._history[start].bytes
             if logger.isEnabledFor(logging.DEBUG):
                 logger.debug(
-                    f"::CPOOL:: WOKER<{worker.identifier}> | DB<{self._db}> - "
+                    f"::CPOOL:: WOKER<{worker.identifier}> | DB<{self._db}({self._namespace})> - "
                     f"Using stored {self._history[start]} to update."
                 )
         else:
             mut = s_schema.SchemaMutationLogger.merge([m.obj for m in self._history[start:]])
             logger.info(
-                f"::CPOOL:: WOKER<{worker.identifier}> | DB<{self._db}> - "
+                f"::CPOOL:: WOKER<{worker.identifier}> | DB<{self._db}({self._namespace})> - "
                 f"Using merged <MUT {_trim_uuid(mut.id)} -> {_trim_uuid(mut.target)}> to update."
             )
             mut_bytes = pickle.dumps(mut)
@@ -188,11 +189,11 @@ class BaseWorker:
         self._last_used = time.monotonic()
         self._closed = False
 
-    def get_user_schema_id(self, dbname: str) -> uuid.UUID:
-        if dbname not in self._dbs:
+    def get_user_schema_id(self, dbname: str, namespace: str) -> uuid.UUID:
+        if self._dbs.get(dbname, {}).get(namespace) is None:
             return UNKNOW_VER_ID
 
-        return self._dbs[dbname].user_schema_version
+        return self._dbs[dbname][namespace].user_schema_version
 
     @functools.cached_property
     def identifier(self):
@@ -292,7 +293,7 @@ class AbstractPool:
         self._std_schema = std_schema
         self._refl_schema = refl_schema
         self._schema_class_layout = schema_class_layout
-        self._mut_history: Dict[str, MutationHistory] = {}
+        self._mut_history: Dict[str, Dict[str, MutationHistory]] = {}
 
     @functools.lru_cache(maxsize=None)
     def _get_init_args(self):
@@ -302,19 +303,23 @@ class AbstractPool:
 
     def _get_init_args_uncached(self):
         dbs: state.DatabasesState = immutables.Map()
-        for db in self._dbindex.iter_dbs():
-            db_user_schema = db.user_schema
-            version_id = UNKNOW_VER_ID if db_user_schema is None else db_user_schema.version_id
-            dbs = dbs.set(
-                db.name,
-                state.DatabaseState(
-                    name=db.name,
-                    user_schema=db_user_schema,
-                    user_schema_version=version_id,
-                    reflection_cache=db.reflection_cache,
-                    database_config=db.db_config,
+        for db_name, ns_map in self._dbindex.iter_dbs():
+            namespace = immutables.Map()
+            for ns_name, ns_db in ns_map.items():
+                db_user_schema = ns_db.user_schema
+                version_id = UNKNOW_VER_ID if db_user_schema is None else db_user_schema.version_id
+                namespace.set(
+                    ns_name,
+                    state.DatabaseState(
+                        name=ns_db.name,
+                        namespace=ns_name,
+                        user_schema=db_user_schema,
+                        user_schema_version=version_id,
+                        reflection_cache=ns_db.reflection_cache,
+                        database_config=ns_db.db_config,
+                    )
                 )
-            )
+            dbs = dbs.set(db_name, namespace)
 
         init_args = (
             dbs,
@@ -337,7 +342,7 @@ class AbstractPool:
     async def stop(self):
         raise NotImplementedError
 
-    def collect_worker_schema_ids(self, dbname) -> List[uuid.UUID]:
+    def collect_worker_schema_ids(self, dbname, namespace) -> List[uuid.UUID]:
         raise NotImplementedError
 
     def get_template_pid(self):
@@ -346,6 +351,7 @@ class AbstractPool:
     async def sync_user_schema(
         self,
         dbname,
+        namespace,
         user_schema,
         reflection_cache,
         global_schema,
@@ -359,6 +365,7 @@ class AbstractPool:
             preargs, sync_state = await self._compute_compile_preargs(
                 worker,
                 dbname,
+                namespace,
                 user_schema,
                 global_schema,
                 reflection_cache,
@@ -369,7 +376,7 @@ class AbstractPool:
             if preargs[2] is not None:
                 logger.debug(f"[W::{worker.identifier}] Sync user schema.")
             else:
-                if worker.get_user_schema_id(dbname) is not UNKNOW_VER_ID:
+                if worker.get_user_schema_id(dbname, namespace) is not UNKNOW_VER_ID:
                     logger.warning(f"[W::{worker.identifier}] Attempt to sync user schema failed.")
                 logger.info(f"[W::{worker.identifier}] Initialize user schema.")
 
@@ -382,6 +389,7 @@ class AbstractPool:
         self,
         worker,
         dbname,
+        namespace,
         user_schema,
         global_schema,
         reflection_cache,
@@ -393,27 +401,34 @@ class AbstractPool:
             *,
             worker,
             dbname,
+            namespace,
             user_schema=None,
             global_schema=None,
             reflection_cache=None,
             database_config=None,
             system_config=None,
         ):
-            worker_db = worker._dbs.get(dbname)
+            worker_db = worker._dbs.get(dbname, {}).get(namespace)
             if worker_db is None:
                 assert user_schema is not None
                 assert reflection_cache is not None
                 assert global_schema is not None
                 assert database_config is not None
                 assert system_config is not None
+                ns = worker._dbs.get(dbname, immutables.Map())
+                ns.set(
+                    namespace,
+                    state.DatabaseState(
+                        name=dbname,
+                        namespace=namespace,
+                        user_schema=user_schema,
+                        user_schema_version=user_schema.version_id,
+                        reflection_cache=reflection_cache,
+                        database_config=database_config,
+                    )
+                )
 
-                worker._dbs = worker._dbs.set(dbname, state.DatabaseState(
-                    name=dbname,
-                    user_schema=user_schema,
-                    user_schema_version=user_schema.version_id,
-                    reflection_cache=reflection_cache,
-                    database_config=database_config,
-                ))
+                worker._dbs = worker._dbs.set(dbname, ns)
                 worker._global_schema = global_schema
                 worker._system_config = system_config
             else:
@@ -423,23 +438,30 @@ class AbstractPool:
                     or database_config is not None
                 ):
                     new_user_schema = user_schema or worker_db.user_schema
-                    worker._dbs = worker._dbs.set(dbname, state.DatabaseState(
-                        name=dbname,
-                        user_schema=new_user_schema,
-                        user_schema_version=new_user_schema.version_id,
-                        reflection_cache=(
-                            reflection_cache or worker_db.reflection_cache),
-                        database_config=(
-                            database_config if database_config is not None
-                            else worker_db.database_config),
-                    ))
+                    ns = worker._dbs[dbname]
+                    ns.set(
+                        namespace,
+                        state.DatabaseState(
+                            name=dbname,
+                            namespace=namespace,
+                            user_schema=new_user_schema,
+                            user_schema_version=new_user_schema.version_id,
+                            reflection_cache=(
+                                    reflection_cache or worker_db.reflection_cache),
+                            database_config=(
+                                database_config if database_config is not None
+                                else worker_db.database_config),
+                        )
+                    )
+
+                    worker._dbs = worker._dbs.set(dbname, ns)
 
                 if global_schema is not None:
                     worker._global_schema = global_schema
                 if system_config is not None:
                     worker._system_config = system_config
 
-        worker_db: state.DatabaseState = worker._dbs.get(dbname)
+        worker_db: state.DatabaseState = worker._dbs.get(dbname, {}).get(namespace)
         preargs = (dbname,)
         to_update = {}
 
@@ -468,16 +490,16 @@ class AbstractPool:
                         f"Initialize db <{dbname}> schema version to: [{user_schema.version_id}]"
                     )
                 else:
-                    if dbname not in self._mut_history:
+                    if self._mut_history.get(dbname, {}).get(namespace) is None:
                         # 当前实例初始化后未执行任何ddl，此时在其他实例发生DDL，
                         # 触发当前实例的introspect_db，导致worker的schema版本失效，
                         # 这种情况下，当前实例_mut_history可能不包含dbname
                         mutation_pickled = None
                     else:
-                        mutation_pickled = self._mut_history[dbname].get_pickled_mutation(worker)
+                        mutation_pickled = self._mut_history[dbname][namespace].get_pickled_mutation(worker)
                     if mutation_pickled is None:
                         logger.warning(
-                            f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}> - "
+                            f"::CPOOL:: WOKER<{worker.identifier}> | DB<{dbname}({namespace})> - "
                             f"No schema mutation available. "
                             f"Schema <{worker_db.user_schema_version}> is outdated, will issue a full update."
                         )
@@ -525,6 +547,7 @@ class AbstractPool:
                 sync_worker_state_cb,
                 worker=worker,
                 dbname=dbname,
+                namespace=namespace,
                 **to_update
             )
         else:
@@ -541,6 +564,7 @@ class AbstractPool:
     def append_schema_mutation(
         self,
         dbname,
+        namespace,
         mut_bytes,
         mutation: s_schema.SchemaMutationLogger,
         user_schema,
@@ -549,10 +573,12 @@ class AbstractPool:
         database_config,
         system_config,
     ):
-        if is_fresh := (dbname not in self._mut_history):
-            self._mut_history[dbname] = MutationHistory(dbname)
+        if is_fresh := (self._mut_history.get(dbname, {}).get(namespace) is None):
+            ns_map = self._mut_history.get(dbname, {})
+            ns_map[namespace] = MutationHistory(dbname, namespace)
+            self._mut_history[dbname] = ns_map
 
-        hist = self._mut_history[dbname]
+        hist = self._mut_history[dbname][namespace]
         hist.append(_SchemaMutation(
             base=mutation.id,
             target=user_schema.version_id,
@@ -561,7 +587,7 @@ class AbstractPool:
         ))
 
         if not is_fresh:
-            usids = self.collect_worker_schema_ids(dbname)
+            usids = self.collect_worker_schema_ids(dbname, namespace)
             hist.try_trim_history(usids)
 
             if (
@@ -570,18 +596,22 @@ class AbstractPool:
             ):
                 logger.debug(f"Schedule {n} tasks to sync worker's user schema.")
                 for _ in range(n):
-                    asyncio.create_task(self.sync_user_schema(
-                        dbname,
-                        user_schema,
-                        reflection_cache,
-                        global_schema,
-                        database_config,
-                        system_config,
-                    ))
+                    asyncio.create_task(
+                        self.sync_user_schema(
+                            dbname,
+                            namespace,
+                            user_schema,
+                            reflection_cache,
+                            global_schema,
+                            database_config,
+                            system_config,
+                        )
+                    )
 
     async def compile(
         self,
         dbname,
+        namespace,
         user_schema,
         global_schema,
         reflection_cache,
@@ -594,6 +624,7 @@ class AbstractPool:
             preargs, sync_state = await self._compute_compile_preargs(
                 worker,
                 dbname,
+                namespace,
                 user_schema,
                 global_schema,
                 reflection_cache,
@@ -619,6 +650,7 @@ class AbstractPool:
     async def compile_in_tx(
         self,
         dbname,
+        namespace,
         txid,
         pickled_state,
         state_id,
@@ -658,7 +690,7 @@ class AbstractPool:
             pickled_state = state.REUSE_LAST_STATE_MARKER
             user_schema = None
         else:
-            usid = worker.get_user_schema_id(dbname)
+            usid = worker.get_user_schema_id(dbname, namespace)
             if state_id == 0:
                 if base_user_schema.version_id != usid:
                     user_schema = _pickle_memoized(base_user_schema)
@@ -682,6 +714,7 @@ class AbstractPool:
                 'compile_in_tx',
                 pickled_state,
                 dbname,
+                namespace,
                 user_schema,
                 txid,
                 *compile_args
@@ -700,6 +733,7 @@ class AbstractPool:
         self,
         dbname,
         user_schema,
+        namespace,
         global_schema,
         reflection_cache,
         database_config,
@@ -711,6 +745,7 @@ class AbstractPool:
             preargs, sync_state = await self._compute_compile_preargs(
                 worker,
                 dbname,
+                namespace,
                 user_schema,
                 global_schema,
                 reflection_cache,
@@ -746,6 +781,7 @@ class AbstractPool:
     async def compile_graphql(
         self,
         dbname,
+        namespace,
         user_schema,
         global_schema,
         reflection_cache,
@@ -758,6 +794,7 @@ class AbstractPool:
             preargs, sync_state = await self._compute_compile_preargs(
                 worker,
                 dbname,
+                namespace,
                 user_schema,
                 global_schema,
                 reflection_cache,
@@ -778,6 +815,7 @@ class AbstractPool:
     async def infer_expr(
         self,
         dbname,
+        namespace,
         user_schema,
         global_schema,
         reflection_cache,
@@ -790,6 +828,7 @@ class AbstractPool:
             preargs, sync_state = await self._compute_compile_preargs(
                 worker,
                 dbname,
+                namespace,
                 user_schema,
                 global_schema,
                 reflection_cache,
@@ -1033,8 +1072,8 @@ class BaseLocalPool(
         if worker.get_pid() in self._workers:
             self._workers_queue.release(worker, put_in_front=put_in_front)
 
-    def collect_worker_schema_ids(self, dbname) -> Iterable[uuid.UUID]:
-        return [w.get_user_schema_id(dbname) for w in self._workers.values()]
+    def collect_worker_schema_ids(self, dbname, namespace) -> Iterable[uuid.UUID]:
+        return [w.get_user_schema_id(dbname, namespace) for w in self._workers.values()]
 
 
 @srvargs.CompilerPoolMode.Fixed.assign_implementation
@@ -1126,8 +1165,8 @@ class DebugWorker:
     _last_pickled_state = None
     connected = False
 
-    def get_user_schema_id(self, dbname):
-        return BaseWorker.get_user_schema_id(self, dbname)  # noqa
+    def get_user_schema_id(self, dbname, namespace):
+        return BaseWorker.get_user_schema_id(self, dbname, namespace)  # noqa
 
     async def call(self, method_name, *args, sync_state=None):
         from . import worker
@@ -1155,19 +1194,23 @@ class SoloPool(BaseLocalPool):
     @functools.lru_cache(maxsize=None)
     def _get_init_args(self):
         dbs: state.DatabasesState = immutables.Map()
-        for db in self._dbindex.iter_dbs():
-            db_user_schema = db.user_schema
-            version_id = UNKNOW_VER_ID if db_user_schema is None else db_user_schema.version_id
-            dbs = dbs.set(
-                db.name,
-                state.DatabaseState(
-                    name=db.name,
-                    user_schema=db_user_schema,
-                    user_schema_version=version_id,
-                    reflection_cache=db.reflection_cache,
-                    database_config=db.db_config,
+        for db_name, ns_map in self._dbindex.iter_dbs():
+            namespace = immutables.Map()
+            for ns_name, ns_db in ns_map.items():
+                db_user_schema = ns_db.user_schema
+                version_id = UNKNOW_VER_ID if db_user_schema is None else db_user_schema.version_id
+                namespace.set(
+                    ns_name,
+                    state.DatabaseState(
+                        name=db_name,
+                        namespace=ns_name,
+                        user_schema=db_user_schema,
+                        user_schema_version=version_id,
+                        reflection_cache=ns_db.reflection_cache,
+                        database_config=ns_db.db_config,
+                    )
                 )
-            )
+            dbs = dbs.set(db_name, namespace)
         self._worker._dbs = dbs
         self._worker._backend_runtime_params = self._backend_runtime_params
         self._worker._std_schema = self._std_schema
@@ -1228,8 +1271,8 @@ class SoloPool(BaseLocalPool):
         if self._worker.connected:
             self.worker_disconnected(os.getpid())
 
-    def collect_worker_schema_ids(self, dbname) -> Iterable[uuid.UUID]:
-        return [self._worker.get_user_schema_id(dbname)]
+    def collect_worker_schema_ids(self, dbname, namespace) -> Iterable[uuid.UUID]:
+        return [self._worker.get_user_schema_id(dbname, namespace)]
 
 
 @srvargs.CompilerPoolMode.OnDemand.assign_implementation
@@ -1520,7 +1563,7 @@ class RemotePool(AbstractPool):
                 self._sync_lock.release()
         return preargs, callback
 
-    def collect_worker_schema_ids(self, dbname) -> Iterable[uuid.UUID]:
+    def collect_worker_schema_ids(self, dbname, namespace) -> Iterable[uuid.UUID]:
         return []
 
 

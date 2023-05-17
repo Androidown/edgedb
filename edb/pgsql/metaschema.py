@@ -4008,8 +4008,18 @@ async def bootstrap(
     config_spec: edbconfig.Spec
 ) -> None:
     commands = dbops.CommandGroup()
+    default_ns = dbops.NameSpace(
+        defines.DEFAULT_NS,
+        metadata=dict(
+            id=str(uuidgen.uuid1mc()),
+            builtin=False,
+            name=defines.DEFAULT_NS,
+            internal=False
+        ),
+    )
     commands.add_commands([
         dbops.CreateSchema(name='edgedb'),
+        dbops.SetMetadata(default_ns, default_ns.metadata),
         dbops.CreateSchema(name='edgedbss'),
         dbops.CreateSchema(name='edgedbpub'),
         dbops.CreateSchema(name='edgedbstd'),
@@ -4821,7 +4831,7 @@ def _generate_namespace_views(schema: s_schema.Schema) -> List[dbops.View]:
                     AS {qi(ptr_col_name(schema, NameSpace, '__type__'))},
                 (ns.description->>'name')
                     AS {qi(ptr_col_name(schema, NameSpace, 'name'))},
-                (ns.description->>'name__internal')
+                (ns.description->>'name')
                     AS {qi(ptr_col_name(schema, NameSpace, 'name__internal'))},
                 ARRAY[]::text[]
                     AS {qi(ptr_col_name(schema, NameSpace, 'computed_fields'))},

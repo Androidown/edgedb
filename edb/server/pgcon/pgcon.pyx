@@ -1939,14 +1939,16 @@ cdef class PGConnection:
                 event_payload = event_data.get('args')
                 if event == 'schema-changes':
                     dbname = event_payload['dbname']
-                    self.server._on_remote_ddl(dbname)
+                    namespace = event_payload['namespace']
+                    self.server._on_remote_ddl(dbname, namespace)
                 elif event == 'database-config-changes':
                     dbname = event_payload['dbname']
                     self.server._on_remote_database_config_change(dbname)
                 elif event == 'system-config-changes':
                     self.server._on_remote_system_config_change()
                 elif event == 'global-schema-changes':
-                    self.server._on_global_schema_change()
+                    namespace = event_payload['namespace']
+                    self.server._on_global_schema_change(namespace)
                 else:
                     raise AssertionError(f'unexpected system event: {event!r}')
 
