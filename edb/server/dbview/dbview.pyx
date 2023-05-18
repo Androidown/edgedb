@@ -79,6 +79,7 @@ cdef class QueryRequestInfo:
         input_format: compiler.InputFormat = compiler.InputFormat.BINARY,
         expect_one: bint = False,
         implicit_limit: int = 0,
+        force_limit: int = 0,
         inline_typeids: bint = False,
         inline_typenames: bint = False,
         inline_objectids: bint = True,
@@ -94,6 +95,7 @@ cdef class QueryRequestInfo:
         self.input_format = input_format
         self.expect_one = expect_one
         self.implicit_limit = implicit_limit
+        self.force_limit = force_limit
         self.inline_typeids = inline_typeids
         self.inline_typenames = inline_typenames
         self.inline_objectids = inline_objectids
@@ -110,6 +112,7 @@ cdef class QueryRequestInfo:
             self.input_format,
             self.expect_one,
             self.implicit_limit,
+            self.force_limit,
             self.inline_typeids,
             self.inline_typenames,
             self.inline_objectids,
@@ -129,6 +132,7 @@ cdef class QueryRequestInfo:
             self.input_format == other.input_format and
             self.expect_one == other.expect_one and
             self.implicit_limit == other.implicit_limit and
+            self.force_limit == other.force_limit and
             self.inline_typeids == other.inline_typeids and
             self.inline_typenames == other.inline_typenames and
             self.inline_objectids == other.inline_objectids and
@@ -1386,6 +1390,7 @@ cdef class DatabaseConnectionView:
                     self.in_tx_error(),
                     query_req.module,
                     query_req.external_view,
+                    query_req.force_limit,
                 )
             else:
                 result = await compiler_pool.compile(
@@ -1410,7 +1415,8 @@ cdef class DatabaseConnectionView:
                     query_req.module,
                     query_req.external_view,
                     False,
-                    query_req.testmode
+                    query_req.testmode,
+                    query_req.force_limit
                 )
         finally:
             metrics.edgeql_query_compilation_duration.observe(
