@@ -446,6 +446,7 @@ class Compiler:
                 for c in pgdelta.get_subcommands()
             )
             and not context.testmode
+            and not ctx.bootstrap_mode
         )
 
         subblock = block.add_block()
