@@ -428,7 +428,7 @@ class Compiler:
             ns_prefix = ctx.namespace + '_'
 
         if db_cmd or ns_cmd:
-            block = pg_dbops.SQLBlock(ns_prefix)
+            block = pg_dbops.SQLBlock()
             new_be_types = new_types = frozenset()
         else:
             block = pg_dbops.PLTopBlock(ns_prefix)
