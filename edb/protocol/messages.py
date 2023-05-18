@@ -820,6 +820,7 @@ class Execute(ClientMessage):
     compilation_flags = EnumOf(UInt64, CompilationFlag,
                                'A bit mask of query options.')
     implicit_limit = UInt64('Implicit LIMIT clause on returned sets.')
+    force_limit = UInt64('Force LIMIT clause on returned sets.')
     output_format = EnumOf(UInt8, OutputFormat, 'Data output format.')
     expected_cardinality = EnumOf(UInt8, Cardinality,
                                   'Expected result cardinality.')

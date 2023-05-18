@@ -144,7 +144,9 @@ class EdgeQLTestCase(BaseHttpExtensionTest, server.QueryTestCase):
         return 'edgeql'
 
     def edgeql_query(
-            self, query, *, use_http_post=True, variables=None, globals=None, module=None):
+        self, query, *, use_http_post=True,
+        variables=None, globals=None, module=None, limit=None
+    ):
         req_data = {
             'query': query
         }
@@ -156,6 +158,8 @@ class EdgeQLTestCase(BaseHttpExtensionTest, server.QueryTestCase):
                 req_data['globals'] = globals
             if module is not None:
                 req_data['module'] = module
+            if limit is not None:
+                req_data['limit'] = limit
             req = urllib.request.Request(self.http_addr, method='POST')
             req.add_header('Content-Type', 'application/json')
             response = urllib.request.urlopen(
@@ -169,6 +173,8 @@ class EdgeQLTestCase(BaseHttpExtensionTest, server.QueryTestCase):
                 req_data['globals'] = json.dumps(globals)
             if module is not None:
                 req_data['module'] = module
+            if limit is not None:
+                req_data['limit'] = str(limit)
             response = urllib.request.urlopen(
                 f'{self.http_addr}/?{urllib.parse.urlencode(req_data)}',
                 context=self.tls_context,
@@ -185,16 +191,18 @@ class EdgeQLTestCase(BaseHttpExtensionTest, server.QueryTestCase):
 
         raise edgedb.EdgeDBError._from_code(ex_code, ex_msg)
 
-    def assert_edgeql_query_result(self, query, result, *,
-                                   msg=None, sort=None,
-                                   use_http_post=True,
-                                   variables=None,
-                                   globals=None):
+    def assert_edgeql_query_result(
+        self, query, result, *, msg=None, sort=None, use_http_post=True,
+        variables=None, globals=None, module=None, limit=None
+    ):
         res = self.edgeql_query(
             query,
             use_http_post=use_http_post,
             variables=variables,
-            globals=globals)
+            globals=globals,
+            module=module,
+            limit=limit
+        )
 
         if sort is not None:
             # GQL will always have a single object returned. The data is

@@ -116,13 +116,19 @@ def compile_SelectQuery(
             )
         )
 
-        if (
-            (ctx.expr_exposed or sctx.stmt is ctx.toplevel_stmt)
-            and ctx.implicit_limit
-            and expr.limit is None
-            and not ctx.inhibit_implicit_limit
-        ):
-            expr.limit = qlast.IntegerConstant(value=str(ctx.implicit_limit))
+        if ctx.expr_exposed or sctx.stmt is ctx.toplevel_stmt:
+            if ctx.force_limit:
+                if expr.limit is None:
+                    limit = ctx.force_limit
+                else:
+                    limit = min(ctx.force_limit, int(expr.limit.value))
+                expr.limit = qlast.IntegerConstant(value=str(limit))
+            elif (
+                ctx.implicit_limit
+                and expr.limit is None
+                and not ctx.inhibit_implicit_limit
+            ):
+                expr.limit = qlast.IntegerConstant(value=str(ctx.implicit_limit))
 
         stmt.result = compile_result_clause(
             expr.result,
@@ -131,7 +137,8 @@ def compile_SelectQuery(
             result_alias=expr.result_alias,
             view_name=ctx.toplevel_result_view_name,
             forward_rptr=forward_rptr,
-            ctx=sctx)
+            ctx=sctx
+        )
 
         clauses.compile_where_clause(
             stmt, expr.where, ctx=sctx)
@@ -243,12 +250,17 @@ def compile_ForQuery(
             )
 
         # Inject an implicit limit if appropriate
-        if ((ctx.expr_exposed or sctx.stmt is ctx.toplevel_stmt)
-                and ctx.implicit_limit):
-            stmt.limit = dispatch.compile(
-                qlast.IntegerConstant(value=str(ctx.implicit_limit)),
-                ctx=sctx,
-            )
+        if ctx.expr_exposed or sctx.stmt is ctx.toplevel_stmt:
+            if ctx.force_limit:
+                stmt.limit = dispatch.compile(
+                    qlast.IntegerConstant(value=str(ctx.force_limit)),
+                    ctx=sctx,
+                )
+            elif ctx.implicit_limit:
+                stmt.limit = dispatch.compile(
+                    qlast.IntegerConstant(value=str(ctx.implicit_limit)),
+                    ctx=sctx,
+                )
 
         result = fini_stmt(stmt, qlstmt, ctx=sctx, parent_ctx=ctx)
 
