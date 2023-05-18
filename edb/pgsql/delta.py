@@ -6254,11 +6254,11 @@ class UpdateEndpointDeleteActions(MetaCommand):
 
                         IF FOUND THEN
                             SELECT
-                                {ns_prefix}.shortname_from_fullname(link.name),
-                                {ns_prefix}._get_schema_object_name(link.{far_endpoint})
+                                {ns_prefix}edgedb.shortname_from_fullname(link.name),
+                                {ns_prefix}edgedb._get_schema_object_name(link.{far_endpoint})
                                 INTO linkname, endname
                             FROM
-                                {ns_prefix}."_SchemaLink" AS link
+                                {ns_prefix}edgedb."_SchemaLink" AS link
                             WHERE
                                 link.id = link_type_id;
                             RAISE foreign_key_violation

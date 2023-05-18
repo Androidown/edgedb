@@ -330,6 +330,89 @@ class TestHttpEdgeQL(tb.EdgeQLTestCase):
                 use_http_post=use_http_post,
             )
 
+    def test_http_edgeql_query_limit(self):
+        for use_http_post in [True, False]:
+            # Force limited in final select
+            self.assert_edgeql_query_result(
+                r"""
+                    SELECT Setting {
+                        name,
+                        value
+                    }
+                    ORDER BY .value ASC;
+                """,
+                [
+                    {'name': 'template', 'value': 'blue'},
+                ],
+                use_http_post=use_http_post,
+                limit=1
+            )
+            # Won't replace limit in outter select when force limit is larger than limit in stmt
+            self.assert_edgeql_query_result(
+                r"""
+                    SELECT Setting {
+                        name,
+                        value
+                    }
+                    ORDER BY .value ASC
+                    LIMIT 2;
+                """,
+                [
+                    {'name': 'template', 'value': 'blue'},
+                    {'name': 'perks', 'value': 'full'},
+                ],
+                use_http_post=use_http_post,
+                limit=4
+            )
+            # Will replace limit in outter select when force limit is less than limit in stmt
+            self.assert_edgeql_query_result(
+                r"""
+                    SELECT Setting {
+                        name,
+                        value
+                    }
+                    ORDER BY .value ASC
+                    LIMIT 8;
+                """,
+                [
+                    {'name': 'template', 'value': 'blue'},
+                    {'name': 'perks', 'value': 'full'},
+                ],
+                use_http_post=use_http_post,
+                limit=2
+            )
+            # Won't have effect when limit is 0
+            self.assert_edgeql_query_result(
+                r"""
+                    SELECT Setting {
+                        name,
+                        value
+                    }
+                    ORDER BY .value ASC;
+                """,
+                [
+                    {'name': 'template', 'value': 'blue'},
+                    {'name': 'perks', 'value': 'full'},
+                    {'name': 'template', 'value': 'none'},
+                ],
+                use_http_post=use_http_post,
+                limit=0
+            )
+            # Side case
+            self.assert_edgeql_query_result(
+                r"""
+                    SELECT Setting {
+                        name,
+                        value
+                    }
+                    ORDER BY .value ASC
+                    LIMIT 0;
+                """,
+                [],
+                use_http_post=use_http_post,
+                limit=1
+            )
+
 
 class TestHttpEdgeQLReadOnly(TestHttpEdgeQL):
     @classmethod

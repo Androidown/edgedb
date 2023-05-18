@@ -119,6 +119,7 @@ class CompileContext:
     json_parameters: bool = False
     schema_reflection_mode: bool = False
     implicit_limit: int = 0
+    force_limit: int = 0
     inline_typeids: bool = False
     inline_typenames: bool = False
     inline_objectids: bool = True
@@ -459,6 +460,7 @@ class Compiler:
                 for c in pgdelta.get_subcommands()
             )
             and not context.testmode
+            and not ctx.bootstrap_mode
         )
 
         subblock = block.add_block()
@@ -730,6 +732,7 @@ class Compiler:
             constant_folding=not disable_constant_folding,
             json_parameters=ctx.json_parameters,
             implicit_limit=ctx.implicit_limit,
+            force_limit=ctx.force_limit,
             bootstrap_mode=ctx.bootstrap_mode,
             apply_query_rewrites=(
                 not ctx.bootstrap_mode
@@ -1947,6 +1950,7 @@ class Compiler:
                 ctx,
                 source=original,
                 implicit_limit=0,
+                force_limit=0,
             )
             return self._try_compile(ctx=ctx, source=original)
 
@@ -2466,6 +2470,7 @@ class Compiler:
         external_view: Optional[Mapping] = None,
         restoring_external: Optional[bool] = False,
         testmode: bool = False,
+        force_limit: int = 0
     ) -> Tuple[dbstate.QueryUnitGroup,
                Optional[dbstate.CompilerConnectionState]]:
 
@@ -2502,6 +2507,7 @@ class Compiler:
             output_format=output_format,
             expected_cardinality_one=expect_one,
             implicit_limit=implicit_limit,
+            force_limit=force_limit,
             inline_typeids=inline_typeids,
             inline_typenames=inline_typenames,
             inline_objectids=inline_objectids,
@@ -2547,6 +2553,7 @@ class Compiler:
         module: Optional[str] = None,
         external_view: Optional[Mapping] = None,
         restoring_external: Optional[bool] = False,
+        force_limit: int = 0,
     ) -> Tuple[dbstate.QueryUnitGroup, dbstate.CompilerConnectionState]:
         if (
             expect_rollback and
@@ -2566,6 +2573,7 @@ class Compiler:
             output_format=output_format,
             expected_cardinality_one=expect_one,
             implicit_limit=implicit_limit,
+            force_limit=force_limit,
             inline_typeids=inline_typeids,
             inline_typenames=inline_typenames,
             inline_objectids=inline_objectids,

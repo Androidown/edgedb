@@ -468,7 +468,8 @@ async def parse_execute_json(
     output_format: compiler.OutputFormat = compiler.OutputFormat.JSON,
     query_cache_enabled: Optional[bool] = None,
     read_only: bool = False,
-    module: str = None
+    module: str = None,
+    limit: int = 0
 ) -> bytes:
     if query_cache_enabled is None:
         query_cache_enabled = not (
@@ -491,7 +492,8 @@ async def parse_execute_json(
         output_format=output_format,
         allow_capabilities=allow_cap,
         read_only=read_only,
-        module=module
+        module=module,
+        force_limit=limit
     )
 
     compiled = await dbv.parse(query_req)

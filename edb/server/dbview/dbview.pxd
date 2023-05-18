@@ -40,6 +40,7 @@ cdef class QueryRequestInfo:
     cdef public object input_format
     cdef public bint expect_one
     cdef public int implicit_limit
+    cdef public int force_limit
     cdef public bint inline_typeids
     cdef public bint inline_typenames
     cdef public bint inline_objectids

@@ -63,6 +63,7 @@ async def handle_request(
     globals_ = None
     query = None
     module = None
+    limit = 0
 
     try:
         if request.method == b'POST':
@@ -75,6 +76,7 @@ async def handle_request(
                 variables = body.get('variables')
                 globals_ = body.get('globals')
                 module = body.get('module')
+                limit = body.get('limit', 0)
             else:
                 raise TypeError(
                     'unable to interpret EdgeQL POST request')
@@ -107,6 +109,12 @@ async def handle_request(
                 module = qs.get('module')
                 if module is not None:
                     module = module[0]
+
+                limit = qs.get('limit')
+                if limit is not None:
+                    limit = int(limit[0])
+                else:
+                    limit = 0
         else:
             raise TypeError('expected a GET or a POST request')
 
@@ -121,6 +129,9 @@ async def handle_request(
 
         if module is not None and not isinstance(module, str):
             raise TypeError('"module" must be a str object')
+
+        if limit is not None and not isinstance(limit, int):
+            raise TypeError('"limit" must be an integer object')
 
     except Exception as ex:
         if debug.flags.server:
@@ -140,7 +151,8 @@ async def handle_request(
             variables=variables or {},
             globals_=globals_ or {},
             read_only=read_only,
-            module=module
+            module=module,
+            limit=limit
         )
     except Exception as ex:
         if debug.flags.server:

@@ -520,6 +520,9 @@ class ContextLevel(compiler.ContextLevel):
     implicit_limit: int
     """Implicit LIMIT clause in SELECT statements."""
 
+    force_limit: int
+    """Force LIMIT clause in SELECT statements."""
+
     inhibit_implicit_limit: bool
     """Whether implicit limit injection should be inhibited."""
 
@@ -601,6 +604,7 @@ class ContextLevel(compiler.ContextLevel):
             self.implicit_tid_in_shapes = False
             self.implicit_tname_in_shapes = False
             self.implicit_limit = 0
+            self.force_limit = 0
             self.inhibit_implicit_limit = False
             self.special_computables_in_mutation_shape = frozenset()
             self.empty_result_type_hint = None
@@ -646,6 +650,7 @@ class ContextLevel(compiler.ContextLevel):
             self.implicit_tid_in_shapes = prevlevel.implicit_tid_in_shapes
             self.implicit_tname_in_shapes = prevlevel.implicit_tname_in_shapes
             self.implicit_limit = prevlevel.implicit_limit
+            self.force_limit = prevlevel.force_limit
             self.inhibit_implicit_limit = prevlevel.inhibit_implicit_limit
             self.special_computables_in_mutation_shape = \
                 prevlevel.special_computables_in_mutation_shape
