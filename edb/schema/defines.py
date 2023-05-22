@@ -35,5 +35,6 @@ EDGEDB_TEMPLATE_DB = '__edgedbtpl__'
 EDGEDB_SYSTEM_DB = '__edgedbsys__'
 
 EDGEDB_SPECIAL_DBS = {EDGEDB_TEMPLATE_DB, EDGEDB_SYSTEM_DB}
+EDGEDB_OWNED_DBS = ['edgedbext', 'edgedb', 'edgedbss', 'edgedbpub', 'edgedbstd', 'edgedbinstdata']
 
 DEFAULT_NS = 'default'

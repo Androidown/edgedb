@@ -36,6 +36,7 @@ from edb.schema import expr as s_expr
 from edb.schema import inheriting as s_inh
 from edb.schema import links as s_links
 from edb.schema import name as sn
+from edb.schema import namespace as s_ns
 from edb.schema import objects as s_obj
 from edb.schema import objtypes as s_objtypes
 from edb.schema import schema as s_schema
@@ -794,7 +795,8 @@ def generate_structure(schema: s_schema.Schema) -> SchemaReflectionParts:
             qry += ' FILTER NOT .builtin'
 
         if issubclass(py_cls, s_obj.GlobalObject):
-            global_parts.append(qry)
+            if not issubclass(py_cls, s_ns.NameSpace):
+                global_parts.append(qry)
         else:
             local_parts.append(qry)
 

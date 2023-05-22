@@ -123,8 +123,8 @@ def __sync__(
     global INSTANCE_CONFIG
 
     try:
-        db = DBS.get(dbname, {}).get(namespace)
-        if db is None:
+        ns_db = DBS.get(dbname, {}).get(namespace)
+        if ns_db is None:
             assert user_schema is not None
             assert reflection_cache is not None
             assert database_config is not None
@@ -132,17 +132,15 @@ def __sync__(
             reflection_cache_unpacked = pickle.loads(reflection_cache)
             database_config_unpacked = pickle.loads(database_config)
             ns = DBS.get(dbname, immutables.Map())
-            ns.set(
+            ns_db = state.DatabaseState(
+                dbname,
                 namespace,
-                state.DatabaseState(
-                    dbname,
-                    namespace,
-                    user_schema_unpacked,
-                    user_schema_unpacked.version_id,
-                    reflection_cache_unpacked,
-                    database_config_unpacked,
-                )
+                user_schema_unpacked,
+                user_schema_unpacked.version_id,
+                reflection_cache_unpacked,
+                database_config_unpacked,
             )
+            ns.set(namespace, ns_db)
             DBS = DBS.set(dbname, ns)
         else:
             updates = {}
@@ -162,9 +160,9 @@ def __sync__(
                 updates['database_config'] = pickle.loads(database_config)
 
             if updates:
-                db = db._replace(**updates)
+                ns_db = ns_db._replace(**updates)
                 ns = DBS[dbname]
-                ns.set(namespace, db)
+                ns.set(namespace, ns_db)
                 DBS = DBS.set(dbname, ns)
 
         if global_schema is not None:
@@ -178,7 +176,7 @@ def __sync__(
             f'failed to sync worker state: {type(ex).__name__}({ex})') from ex
 
     if need_return:
-        return db
+        return ns_db
 
 
 def compile(

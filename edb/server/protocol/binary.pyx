@@ -515,7 +515,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         msg_buf.write_bytes(b'\x00' * 32)
         msg_buf.end_message()
         buf.write_buffer(msg_buf)
-
+        # TODO add namespace
         buf.write_buffer(self.make_state_data_description_msg())
 
         self.write(buf)
@@ -1005,10 +1005,10 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         msg.end_message()
         return msg
 
-    cdef WriteBuffer make_state_data_description_msg(self):
+    cdef WriteBuffer make_state_data_description_msg(self, namespace=edbdef.DEFAULT_NS):
         cdef WriteBuffer msg
 
-        type_id, type_data = self.get_dbview().describe_state()
+        type_id, type_data = self.get_dbview().describe_state(namespace)
 
         msg = WriteBuffer.new_message(b's')
         msg.write_bytes(type_id.bytes)
@@ -1092,7 +1092,8 @@ cdef class EdgeConnection(frontend.FrontendConnection):
                 EdgeSeverity.EDGE_SEVERITY_NOTICE,
                 errors.LogMessage.get_code(),
                 'server restart is required for the configuration '
-                'change to take effect')
+                'change to take effect'
+            )
 
     cdef dbview.QueryRequestInfo parse_execute_request(self):
         cdef:
@@ -1140,8 +1141,10 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         state_tid = self.buffer.read_bytes(16)
         state_data = self.buffer.read_len_prefixed_bytes()
         try:
+            # TODO add namespace
             self.get_dbview().decode_state(state_tid, state_data)
         except errors.StateMismatchError:
+            # TODO add namespace
             self.write(self.make_state_data_description_msg())
             raise
 
@@ -1274,6 +1277,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         if self._cancelled:
             raise ConnectionAbortedError
 
+        # TODO add namespace
         if _dbview.is_state_desc_changed():
             self.write(self.make_state_data_description_msg())
         self.write(
@@ -2032,7 +2036,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
 
         server = self.server
         compiler_pool = server.get_compiler_pool()
-
+        # TODO add namespace
         global_schema = _dbview.get_global_schema()
         user_schema = _dbview.get_user_schema()
 
@@ -2236,8 +2240,9 @@ cdef class EdgeConnection(frontend.FrontendConnection):
             self._in_dump_restore = False
             server.release_pgcon(dbname, pgcon)
 
-        await server.introspect_db(dbname)
+        await server.introspect(dbname)
 
+        # TODO add namespace
         if _dbview.is_state_desc_changed():
             self.write(self.make_state_data_description_msg())
 

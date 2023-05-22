@@ -417,7 +417,7 @@ class Server(ha_base.ClusterProtocol):
 
             await self._load_instance_data()
 
-            global_schema = await self.introspect_global_schema(defines.DEFAULT_NS)
+            global_schema = await self.introspect_global_schema()
             sys_config = await self.load_sys_config()
             await self.load_reported_config()
 
@@ -541,19 +541,19 @@ class Server(ha_base.ClusterProtocol):
     def get_suggested_client_pool_size(self) -> int:
         return self._suggested_client_pool_size
 
-    def get_db(self, *, dbname: str, namespace: str = defines.DEFAULT_NS):
+    def get_db(self, *, dbname: str):
         assert self._dbindex is not None
-        return self._dbindex.get_db(dbname, namespace)
+        return self._dbindex.get_db(dbname)
 
-    def maybe_get_db(self, *, dbname: str, namespace: str = defines.DEFAULT_NS):
+    def maybe_get_db(self, *, dbname: str):
         assert self._dbindex is not None
-        return self._dbindex.maybe_get_db(dbname, namespace)
+        return self._dbindex.maybe_get_db(dbname)
 
-    async def new_dbview(self, *, dbname, query_cache, protocol_version, namespace: str = defines.DEFAULT_NS):
-        db = self.get_db(dbname=dbname, namespace=namespace)
+    async def new_dbview(self, *, dbname, query_cache, protocol_version):
+        db = self.get_db(dbname=dbname)
         await db.introspection()
         return self._dbindex.new_view(
-            dbname, namespace=namespace, query_cache=query_cache, protocol_version=protocol_version
+            dbname, query_cache=query_cache, protocol_version=protocol_version
         )
 
     def remove_dbview(self, dbview):
@@ -640,11 +640,8 @@ class Server(ha_base.ClusterProtocol):
         finally:
             self._release_sys_pgcon()
 
-    async def introspect_global_schema(self, namespace, conn=None):
-        intro_query = _RE_BYTES_REPL_NS.sub(
-            namespace.encode('utf-8') + rb'_\1\2',
-            self._global_intro_query
-        )
+    async def introspect_global_schema(self, conn=None):
+        intro_query = self._global_intro_query
         if conn is not None:
             json_data = await conn.sql_fetch_val(intro_query)
         else:
@@ -661,22 +658,25 @@ class Server(ha_base.ClusterProtocol):
             schema_class_layout=self._schema_class_layout,
         )
 
-    async def _reintrospect_global_schema(self, namespace):
+    async def _reintrospect_global_schema(self):
         if not self._initing and not self._serving:
             logger.warning(
                 "global-schema-changes event received during shutdown; "
                 "ignoring."
             )
             return
-        new_global_schema = await self.introspect_global_schema(namespace)
+        new_global_schema = await self.introspect_global_schema()
         self._dbindex.update_global_schema(new_global_schema)
         self._fetch_roles()
 
     async def introspect_user_schema(self, dbname, namespace, conn):
         await self._persist_user_schema(dbname, namespace, conn)
-
+        if namespace == defines.DEFAULT_NS:
+            ns_prefix = ''
+        else:
+            ns_prefix = namespace + '_'
         ns_intro_query = _RE_BYTES_REPL_NS.sub(
-            namespace.encode('utf-8') + rb'_\1\2',
+            ns_prefix.encode('utf-8') + rb'\1\2',
             self._local_intro_query
         )
         json_data = await conn.sql_fetch_val(ns_intro_query)
@@ -712,8 +712,8 @@ class Server(ha_base.ClusterProtocol):
                 raise
         return conn
 
-    async def introspect_db(self, dbname, namespace: str = None):
-        """Use this method to (re-)introspect a DB.
+    async def introspect(self, dbname, namespace: str = None):
+        """Use this method to (re-)introspect a DB or namespace.
 
         If the DB is already registered in self._dbindex, its
         schema, config, etc. would simply be updated. If it's missing
@@ -742,11 +742,11 @@ class Server(ha_base.ClusterProtocol):
                 ns_list = [namespace]
 
             for ns in ns_list:
-                await self.introspect_ns(conn, dbname, ns)
+                await self._introspect_ns(conn, dbname, ns)
         finally:
             self.release_pgcon(dbname, conn)
 
-    async def introspect_ns(self, conn, dbname, namespace):
+    async def _introspect_ns(self, conn, dbname, namespace):
         user_schema = await self.introspect_user_schema(dbname, namespace, conn)
         if namespace == defines.DEFAULT_NS:
             schema_name = 'edgedb'
@@ -1304,7 +1304,7 @@ class Server(ha_base.ClusterProtocol):
         # on the __edgedb_sysevent__ channel
         async def task():
             try:
-                await self.introspect_db(dbname, namespace)
+                await self.introspect(dbname, namespace)
             except Exception:
                 metrics.background_errors.inc(1.0, 'on_remote_ddl')
                 raise
@@ -1319,7 +1319,7 @@ class Server(ha_base.ClusterProtocol):
         # on the __edgedb_sysevent__ channel
         async def task():
             try:
-                await self.introspect_db(dbname)
+                await self.introspect(dbname)
             except Exception:
                 metrics.background_errors.inc(
                     1.0, 'on_remote_database_config_change')
@@ -1336,7 +1336,7 @@ class Server(ha_base.ClusterProtocol):
         # of the DB and update all components of it.
         async def task():
             try:
-                await self.introspect_db(dbname)
+                await self.introspect(dbname)
             except Exception:
                 metrics.background_errors.inc(
                     1.0, 'on_local_database_config_change')
@@ -1367,7 +1367,7 @@ class Server(ha_base.ClusterProtocol):
 
         async def task(ns):
             try:
-                await self._reintrospect_global_schema(ns)
+                await self._reintrospect_global_schema()
             except Exception:
                 metrics.background_errors.inc(
                     1.0, 'on_global_schema_change')
@@ -1999,31 +1999,33 @@ class Server(ha_base.ClusterProtocol):
         )
 
         dbs = {}
-        for db_name, ns_map in self._dbindex.iter_dbs():
-            if db_name in defines.EDGEDB_SPECIAL_DBS:
+        for db in self._dbindex.iter_dbs():
+            if db.name in defines.EDGEDB_SPECIAL_DBS:
                 continue
 
             ns = {}
-            for ns_name, ns_db in ns_map.items():
+            for ns_name, ns_db in db.ns_map.items():
                 ns[ns_name] = dict(
-                    name=ns_db.name,
                     namespace=ns_name,
-                    dbver=ns_db.dbver,
-                    config=serialize_config(ns_db.db_config),
                     extensions=sorted(ns_db.extensions),
-                    query_cache_size=ns_db.get_query_cache_size(),
-                    connections=[
-                        dict(
-                            in_tx=view.in_tx(),
-                            in_tx_error=view.in_tx_error(),
-                            config=serialize_config(view.get_session_config()),
-                            module_aliases=view.get_modaliases(),
-                        )
-                        for view in ns_db.iter_views()
-                    ],
+                    query_cache_size=ns_db.get_query_cache_size()
                 )
 
-            dbs[db_name] = dict(name=db_name, namespace=ns)
+            dbs[db.name] = dict(
+                name=db.name,
+                dbver=db.dbver,
+                config=serialize_config(db.db_config),
+                connections=[
+                    dict(
+                        in_tx=view.in_tx(),
+                        in_tx_error=view.in_tx_error(),
+                        config=serialize_config(view.get_session_config()),
+                        module_aliases=view.get_modaliases(),
+                    )
+                    for view in db.iter_views()
+                ],
+                namespace=ns
+            )
 
         obj['databases'] = dbs
 

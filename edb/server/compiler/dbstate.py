@@ -39,7 +39,7 @@ from edb.schema import migrations as s_migrations
 from edb.schema import objects as s_obj
 from edb.schema import schema as s_schema
 
-from edb.server import config
+from edb.server import config, defines
 
 from . import enums
 from . import sertypes
@@ -316,6 +316,7 @@ class QueryUnit:
     # schema reflection sqls, only available if this is a ddl stmt.
     schema_refl_sqls: Tuple[bytes, ...] = None
     stdview_sqls: Tuple[bytes, ...] = None
+    namespace: str = defines.DEFAULT_NS
 
     @property
     def has_ddl(self) -> bool:
@@ -371,6 +372,7 @@ class QueryUnitGroup:
     ref_ids: Optional[Set[uuid.UUID]] = None
     # Record affected object ids for cache clear
     affected_obj_ids: Optional[Set[uuid.UUID]] = None
+    namespace: str = defines.DEFAULT_NS
 
     def __iter__(self):
         return iter(self.units)

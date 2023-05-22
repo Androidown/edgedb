@@ -122,7 +122,7 @@ class SQLSourceGenerator(codegen.SourceGenerator):
         else:
             if self.namespace == defines.DEFAULT_NS:
                 self.write(common.qname(node.schemaname, node.name))
-            elif node.schemaname in ['edgedbext', 'edgedb', 'edgedbss', 'edgedbpub', 'edgedbstd', 'edgedbinstdata']:
+            elif node.schemaname in defines.EDGEDB_OWNED_DBS:
                 self.write(common.qname(f"{self.namespace}_{node.schemaname}", node.name))
             else:
                 self.write(common.qname(node.schemaname, node.name))

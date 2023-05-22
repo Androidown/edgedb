@@ -1997,6 +1997,7 @@ class Compiler:
             raise errors.ProtocolError('nothing to compile')
 
         rv = dbstate.QueryUnitGroup()
+        rv.namespace = ctx.namespace
 
         is_script = statements_len > 1
         script_info = None
@@ -2035,6 +2036,7 @@ class Compiler:
                 cardinality=default_cardinality,
                 capabilities=capabilities,
                 output_format=stmt_ctx.output_format,
+                namespace=ctx.namespace
             )
 
             if not comp.is_transactional:

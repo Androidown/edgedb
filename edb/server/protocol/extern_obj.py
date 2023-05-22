@@ -25,6 +25,7 @@ import enum
 
 
 from edb import errors
+from edb.server import defines
 from edb.server.protocol import execute
 from edb.pgsql.types import base_type_name_map_r
 
@@ -305,6 +306,7 @@ async def handle_request(
     try:
         if request.content_type and b'json' in request.content_type:
             body = json.loads(request.body)
+            namespace = body.pop('namespace', defines.DEFAULT_NS)
             if not isinstance(body, dict):
                 raise TypeError(
                     'the body of the request must be a JSON object')
@@ -334,6 +336,7 @@ async def handle_request(
     try:
         await execute.parse_execute(
             db,
+            namespace,
             req.to_ddl(),
             external_view=req.resolve_view(),
             testmode=bool(request.testmode)

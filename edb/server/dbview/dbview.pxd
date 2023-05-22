@@ -46,6 +46,7 @@ cdef class QueryRequestInfo:
     cdef public bint inline_objectids
     cdef public uint64_t allow_capabilities
     cdef public object module
+    cdef public object namespace
     cdef public bint read_only
     cdef public object external_view
     cdef public bint testmode
@@ -71,12 +72,26 @@ cdef class DatabaseIndex:
         object _factory
 
 
+cdef class NameSpace:
+    cdef:
+        public object _eql_to_compiled
+        public object _eql_to_compiled_disk
+        public object _object_id_to_eql
+        DatabaseIndex _dbindex
+        object _state_serializers
+        str _sql_bak_dir
+        bint _log_cache
+
+        readonly str name
+        public object user_schema
+        public object reflection_cache
+        public object backend_ids
+        public object extensions
+
+
 cdef class Database:
 
     cdef:
-        object _eql_to_compiled
-        object _eql_to_compiled_disk
-        object _object_id_to_eql
         DatabaseIndex _index
         object _views
         object _introspection_lock
@@ -85,30 +100,27 @@ cdef class Database:
         bint _log_cache
 
         readonly str name
-        readonly str namespace
+        public object ns_map
         readonly object dbver
         readonly object db_config
-        readonly object user_schema
-        readonly object reflection_cache
-        readonly object backend_ids
-        readonly object extensions
 
     cdef schedule_config_update(self)
 
-    cdef _invalidate_caches(self, drop_ids)
+    cdef _invalidate_caches(self)
     cdef _cache_compiled_query(self, key, query_unit)
     cdef _new_view(self, query_cache, protocol_version)
     cdef _remove_view(self, view)
-    cdef _update_backend_ids(self, new_types)
+    cdef _update_backend_ids(self, namespace, new_types)
     cdef _set_and_signal_new_user_schema(
         self,
+        namespace,
         new_schema,
         reflection_cache=?,
         backend_ids=?,
         db_config=?,
         affecting_ids=?,
     )
-    cdef get_state_serializer(self, protocol_version)
+    cdef get_state_serializer(self, namespace, protocol_version)
 
 
 cdef class DatabaseConnectionView:
@@ -138,8 +150,6 @@ cdef class DatabaseConnectionView:
         tuple _session_state_db_cache
         tuple _session_state_cache
 
-        object _eql_to_compiled
-
         object _txid
         object _in_tx_db_config
         object _in_tx_savepoints
@@ -167,12 +177,11 @@ cdef class DatabaseConnectionView:
 
         object __weakref__
 
-    cdef _invalidate_local_cache(self)
     cdef _reset_tx_state(self)
 
     cdef clear_tx_error(self)
     cdef rollback_tx_to_savepoint(self, name)
-    cdef declare_savepoint(self, name, spid)
+    cdef declare_savepoint(self, namespace, name, spid)
     cdef recover_aliases_and_config(self, modaliases, config, globals)
     cdef abort_tx(self)
 
@@ -185,12 +194,12 @@ cdef class DatabaseConnectionView:
     cdef tx_error(self)
 
     cdef start(self, query_unit)
-    cdef _start_tx(self)
+    cdef _start_tx(self, namespace)
     cdef _apply_in_tx(self, query_unit)
     cdef start_implicit(self, query_unit)
     cdef on_error(self)
     cdef commit_implicit_tx(
-        self, user_schema, user_schema_unpacked,
+        self, namespace, user_schema, user_schema_unpacked,
         user_schema_mutation, global_schema,
         cached_reflection, affecting_ids,
     )
@@ -201,7 +210,7 @@ cdef class DatabaseConnectionView:
     cpdef get_globals(self)
     cpdef set_globals(self, new_globals)
 
-    cdef get_state_serializer(self)
+    cdef get_state_serializer(self, namespace)
     cdef set_state_serializer(self, new_serializer)
 
     cdef update_database_config(self)
@@ -215,8 +224,8 @@ cdef class DatabaseConnectionView:
     cpdef get_modaliases(self)
 
     cdef bytes serialize_state(self)
-    cdef bint is_state_desc_changed(self)
-    cdef describe_state(self)
+    cdef bint is_state_desc_changed(self, namespace=?)
+    cdef describe_state(self, namespace)
     cdef encode_state(self)
-    cdef decode_state(self, type_id, data)
+    cdef decode_state(self, type_id, data, namespace=?)
     cdef inline recode_global(self, serializer, k, v)

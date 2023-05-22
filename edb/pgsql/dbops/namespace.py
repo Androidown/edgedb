@@ -24,7 +24,7 @@ from typing import Optional, Mapping, Any
 from . import base
 from . import ddl
 from edb.pgsql.common import quote_ident as qi
-from edb.schema.defines import DEFAULT_NS
+from edb.schema.defines import DEFAULT_NS, EDGEDB_OWNED_DBS
 
 
 class NameSpace(base.DBObject):
@@ -63,7 +63,7 @@ class DropNameSpace(
         schemas = ",".join(
             [
                 qi(f"{self.name}_{schema}")
-                for schema in ['edgedbext', 'edgedb', 'edgedbss', 'edgedbpub', 'edgedbstd', 'edgedbinstdata', ]
+                for schema in EDGEDB_OWNED_DBS
             ]
         )
         return f'DROP SCHEMA {schemas} CASCADE;'

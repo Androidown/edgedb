@@ -5849,7 +5849,7 @@ class UpdateEndpointDeleteActions(MetaCommand):
                     MESSAGE = 'deletion of {tgtname} (' || OLD.id
                         || ') is prohibited by link target policy',
                     DETAIL = 'Object is still referenced in link __type__'
-                        || ' of ' || {ns_prefix}._get_schema_object_name(OLD.id) || ' ('
+                        || ' of ' || {ns_prefix}edgedb._get_schema_object_name(OLD.id) || ' ('
                         || OLD.id || ').';
             END IF;
         '''.format(tgtname=target.get_displayname(schema), ns_prefix=ns_prefix))
@@ -6200,8 +6200,12 @@ class UpdateEndpointDeleteActions(MetaCommand):
         return tuple(group_var)
 
     def _get_inline_link_trigger_proc_text(
-        self, target, links, *, disposition, schema
+        self, target, links, *, disposition, schema, namespace
     ):
+        if namespace == defines.DEFAULT_NS:
+            ns_prefix = ''
+        else:
+            ns_prefix = namespace + '_'
 
         chunks = []
 
@@ -6279,6 +6283,7 @@ class UpdateEndpointDeleteActions(MetaCommand):
                         tgtname=target.get_displayname(schema),
                         near_endpoint=near_endpoint,
                         far_endpoint=far_endpoint,
+                        ns_prefix=ns_prefix
                     )
 
                     chunks.append(text)

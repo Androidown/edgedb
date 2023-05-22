@@ -303,9 +303,9 @@ class AbstractPool:
 
     def _get_init_args_uncached(self):
         dbs: state.DatabasesState = immutables.Map()
-        for db_name, ns_map in self._dbindex.iter_dbs():
+        for db in self._dbindex.iter_dbs():
             namespace = immutables.Map()
-            for ns_name, ns_db in ns_map.items():
+            for ns_name, ns_db in db.ns_map.items():
                 db_user_schema = ns_db.user_schema
                 version_id = UNKNOW_VER_ID if db_user_schema is None else db_user_schema.version_id
                 namespace.set(
@@ -316,10 +316,10 @@ class AbstractPool:
                         user_schema=db_user_schema,
                         user_schema_version=version_id,
                         reflection_cache=ns_db.reflection_cache,
-                        database_config=ns_db.db_config,
+                        database_config=db.db_config,
                     )
                 )
-            dbs = dbs.set(db_name, namespace)
+            dbs = dbs.set(db.name, namespace)
 
         init_args = (
             dbs,
@@ -462,7 +462,7 @@ class AbstractPool:
                     worker._system_config = system_config
 
         worker_db: state.DatabaseState = worker._dbs.get(dbname, {}).get(namespace)
-        preargs = (dbname,)
+        preargs = (dbname, namespace)
         to_update = {}
 
         if worker_db is None:
@@ -1194,23 +1194,23 @@ class SoloPool(BaseLocalPool):
     @functools.lru_cache(maxsize=None)
     def _get_init_args(self):
         dbs: state.DatabasesState = immutables.Map()
-        for db_name, ns_map in self._dbindex.iter_dbs():
+        for db in self._dbindex.iter_dbs():
             namespace = immutables.Map()
-            for ns_name, ns_db in ns_map.items():
+            for ns_name, ns_db in db.ns_map.items():
                 db_user_schema = ns_db.user_schema
                 version_id = UNKNOW_VER_ID if db_user_schema is None else db_user_schema.version_id
                 namespace.set(
                     ns_name,
                     state.DatabaseState(
-                        name=db_name,
+                        name=db.name,
                         namespace=ns_name,
                         user_schema=db_user_schema,
                         user_schema_version=version_id,
                         reflection_cache=ns_db.reflection_cache,
-                        database_config=ns_db.db_config,
+                        database_config=db.db_config,
                     )
                 )
-            dbs = dbs.set(db_name, namespace)
+            dbs = dbs.set(db.name, namespace)
         self._worker._dbs = dbs
         self._worker._backend_runtime_params = self._backend_runtime_params
         self._worker._std_schema = self._std_schema
