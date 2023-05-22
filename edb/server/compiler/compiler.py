@@ -62,6 +62,7 @@ from edb.schema import delta as s_delta
 from edb.schema import expr as s_expr
 from edb.schema import functions as s_func
 from edb.schema import links as s_links
+from edb.schema import policies as s_policies
 from edb.schema import properties as s_props
 from edb.schema import modules as s_mod
 from edb.schema import name as s_name
@@ -2075,7 +2076,7 @@ class Compiler:
                         mutation = comp.user_schema.get_mutation()
 
                     self.gather_affected_obj_ids(
-                        mutation, unit
+                        mutation, unit, comp.user_schema
                     )
                     self.send_schema_change(
                         comp.user_schema,
@@ -2097,7 +2098,7 @@ class Compiler:
                     else:
                         mutation = comp.user_schema.get_mutation()
                     self.gather_affected_obj_ids(
-                        mutation, unit
+                        mutation, unit, comp.user_schema
                     )
                     self.send_schema_change(
                         comp.user_schema,
@@ -2135,7 +2136,7 @@ class Compiler:
                     else:
                         mutation = comp.user_schema.get_mutation()
                     self.gather_affected_obj_ids(
-                        mutation, unit
+                        mutation, unit, comp.user_schema
                     )
                     self.send_schema_change(
                         comp.user_schema,
@@ -2254,9 +2255,14 @@ class Compiler:
                 raise errors.InternalServerError(
                     f'unit has invalid "cardinality": {unit!r}')
 
+            if unit.affected_obj_ids:
+                if rv.affected_obj_ids is None:
+                    rv.affected_obj_ids = unit.affected_obj_ids
+                else:
+                    rv.affected_obj_ids = rv.affected_obj_ids.union(unit.affected_obj_ids)
+
         if mutations:
             mutation = s_schema.SchemaMutationLogger.merge(mutations)
-            self.gather_affected_obj_ids(mutation, rv)
             rv.user_schema_mutation = pickle.dumps(mutation, -1)
 
         return rv
@@ -2282,17 +2288,23 @@ class Compiler:
     @staticmethod
     def gather_affected_obj_ids(
         mutation: s_schema.SchemaMutationLogger,
-        unit: Union[dbstate.QueryUnit, dbstate.QueryUnitGroup]
+        unit: dbstate.QueryUnit,
+        schema: s_schema.FlatSchema
     ):
         if mutation is None:
             return
 
         if mutation.ops and (id_to_data_ops := mutation.ops[s_schema.SC.ITD]):
             for op in id_to_data_ops:
+                affected_id = op.key
+
                 if unit.affected_obj_ids is None:
-                    unit.affected_obj_ids = {op.key}
+                    unit.affected_obj_ids = {affected_id}
                 else:
-                    unit.affected_obj_ids.add(op.key)
+                    unit.affected_obj_ids.add(affected_id)
+
+                if isinstance((obj := schema.get_by_id(affected_id, default=None)), s_policies.AccessPolicy):
+                    unit.affected_obj_ids.add(obj.get_subject(schema).id)
     # API
 
     @staticmethod
