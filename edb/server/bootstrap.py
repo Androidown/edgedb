@@ -1228,7 +1228,7 @@ async def _populate_misc_instance_data(
                     dbops.Column(
                         name='active',
                         type='bool',
-                        default='false'
+                        default='true'
                     )
                 ],
                 constraints=[
