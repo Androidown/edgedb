@@ -155,6 +155,11 @@ def _sess_reset_alias(ql):
     return b'RESET ALIAS'
 
 
+@get_status.register(qlast.UseNameSpaceCommand)
+def _sess_use_ns(ql):
+    return f'USE NAMESPACE {ql.name}'.encode()
+
+
 @get_status.register(qlast.ConfigOp)
 def _sess_set_config(ql):
     if ql.scope == qltypes.ConfigScope.GLOBAL:

@@ -22,7 +22,6 @@ import collections
 import hashlib
 import json
 import logging
-import os
 import time
 import statistics
 import traceback
@@ -478,9 +477,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
                 f'accept connections'
             )
 
-        # for local test
-        namespace = params.get('namespace', os.environ.get('EDGEDB_TEST_CASES_NAMESPACE', defines.DEFAULT_NS))
-        # namespace = params.get('namespace', edbdef.DEFAULT_NS)
+        namespace = params.get('namespace', edbdef.DEFAULT_NS)
 
         await self._start_connection(database, namespace)
 
@@ -602,6 +599,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         assert type(dbv) is dbview.DatabaseConnectionView
         self._dbview = <dbview.DatabaseConnectionView>dbv
         self.dbname = database
+        dbv.valid_namespace(namespace)
         self.namespace = namespace
 
         self._con_status = EDGECON_STARTED
@@ -1275,11 +1273,17 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         elif len(query_unit_group) > 1:
             await self._execute_script(compiled, args)
         else:
-            use_prep = (
-                len(query_unit_group) == 1
-                and bool(query_unit_group[0].sql_hash)
-            )
-            await self._execute(compiled, args, use_prep)
+            if len(query_unit_group) == 1 and query_unit_group[0].ns_to_switch is not None:
+                new_ns = query_unit_group[0].ns_to_switch
+                self.get_dbview().valid_namespace(new_ns)
+                self.namespace = query_unit_group[0].ns_to_switch
+                logger.info(f'NameSpace changed to {query_unit_group[0].ns_to_switch} in current connection.')
+            else:
+                use_prep = (
+                    len(query_unit_group) == 1
+                    and bool(query_unit_group[0].sql_hash)
+                )
+                await self._execute(compiled, args, use_prep)
 
         if self._cancelled:
             raise ConnectionAbortedError

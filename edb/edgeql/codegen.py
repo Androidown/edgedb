@@ -2191,6 +2191,13 @@ class EdgeQLSourceGenerator(codegen.SourceGenerator):
         self._write_keywords('RESET ALIAS ')
         self.write(node.alias)
 
+    def visit_UseNameSpaceCommand(
+        self,
+        node: qlast.UseNameSpaceCommand
+    ) -> None:
+        self._write_keywords('USE NAMESPACE ')
+        self.write(node.name)
+
     def visit_StartTransaction(self, node: qlast.StartTransaction) -> None:
         self._write_keywords('START TRANSACTION')
 

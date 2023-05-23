@@ -81,6 +81,13 @@ class NullQuery(BaseQuery):
 
 
 @dataclasses.dataclass(frozen=True)
+class NameSpaceSwitchQuery(BaseQuery):
+    new_ns: str
+    is_transactional: bool = False
+    single_unit: bool = True
+
+
+@dataclasses.dataclass(frozen=True)
 class Query(BaseQuery):
 
     sql_hash: bytes
@@ -316,7 +323,10 @@ class QueryUnit:
     # schema reflection sqls, only available if this is a ddl stmt.
     schema_refl_sqls: Tuple[bytes, ...] = None
     stdview_sqls: Tuple[bytes, ...] = None
+    # NameSpace to use for current compile
     namespace: str = defines.DEFAULT_NS
+    # NameSpace to switch for connection
+    ns_to_switch: str = None
 
     @property
     def has_ddl(self) -> bool:
@@ -372,6 +382,7 @@ class QueryUnitGroup:
     ref_ids: Optional[Set[uuid.UUID]] = None
     # Record affected object ids for cache clear
     affected_obj_ids: Optional[Set[uuid.UUID]] = None
+    # NameSpace to use for current compile
     namespace: str = defines.DEFAULT_NS
 
     def __iter__(self):

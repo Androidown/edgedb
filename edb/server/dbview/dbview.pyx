@@ -574,10 +574,6 @@ cdef class Database:
         self._views.remove(view)
 
     cdef get_state_serializer(self, namespace, protocol_version):
-        if namespace not in self.ns_map:
-            raise errors.InternalServerError(
-                f'NameSpace: [{namespace}] not in current db [{self.name}](ver:{self.dbver})'
-            )
         return self.ns_map[namespace].get_state_serializer(protocol_version)
 
     def iter_views(self):
@@ -725,6 +721,7 @@ cdef class DatabaseConnectionView:
             return self._in_tx_state_serializer
         else:
             if self._state_serializer is None:
+                self.valid_namespace(namespace)
                 # Executed a DDL, recalculate the state descriptor
                 self._state_serializer = self._db.get_state_serializer(
                     namespace,
@@ -816,18 +813,19 @@ cdef class DatabaseConnectionView:
                 self._in_tx_user_schema_mut_pickled = None
             return self._in_tx_user_schema
         else:
-            if namespace in self._db.ns_map:
-                return self._db.ns_map[namespace].user_schema
-            raise errors.InternalServerError(
-                f'NameSpace: [{namespace}] not in current db [{self._db.name}](ver:{self._db.dbver})'
-            )
+            self.valid_namespace(namespace)
+            return self._db.ns_map[namespace].user_schema
 
     def get_reflection_cache(self, namespace: str):
-        if namespace in self._db.ns_map:
-            return self._db.ns_map[namespace].reflection_cache
-        raise errors.InternalServerError(
-            f'NameSpace: [{namespace}] not in current db [{self._db.name}](ver:{self._db.dbver})'
-        )
+        self.valid_namespace(namespace)
+        return self._db.ns_map[namespace].reflection_cache
+
+    def valid_namespace(self, namespace: str):
+        if namespace not in self._db.ns_map:
+            raise errors.QueryError(
+                f'NameSpace: [{namespace}] not in current db [{self._db.name}](ver:{self._db.dbver}).'
+                f'Current NameSpace(s): [{", ".join(self._db.ns_map.keys())}]'
+            )
 
     def get_global_schema(self):
         if self._in_tx:
@@ -857,11 +855,7 @@ cdef class DatabaseConnectionView:
             except KeyError:
                 pass
 
-        if namespace not in self._db.ns_map:
-            raise errors.InternalServerError(
-                f'NameSpace: [{namespace}] not in current db [{self._db.name}](ver:{self._db.dbver})'
-            )
-
+        self.valid_namespace(namespace)
         tid = self._db.ns_map[namespace].backend_ids.get(type_id)
         if tid is None:
             raise RuntimeError(
@@ -1065,11 +1059,7 @@ cdef class DatabaseConnectionView:
                 self._in_tx_with_ddl):
             return None
 
-        if key.namespace not in self._db.ns_map:
-            raise errors.InternalServerError(
-                f'NameSpace: [{key.namespace}] not in current db [{self._db.name}](ver:{self._db.dbver})'
-            )
-
+        self.valid_namespace(key.namespace)
         ns = self._db.ns_map[key.namespace]
 
         key = (key, self.get_modaliases(), self.get_session_config())

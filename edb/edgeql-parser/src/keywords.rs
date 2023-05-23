@@ -100,6 +100,8 @@ pub const UNRESERVED_KEYWORDS: &[&str] = &[
     "version",
     "view",
     "write",
+    "use",
+    "show",
 ];
 
 

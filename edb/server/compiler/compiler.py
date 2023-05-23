@@ -1899,7 +1899,11 @@ class Compiler:
                 self._compile_ql_sess_state(ctx, ql),
                 enums.Capability.SESSION_CONFIG,
             )
-
+        elif isinstance(ql, qlast.UseNameSpaceCommand):
+            return (
+                dbstate.NameSpaceSwitchQuery(new_ns=ql.name, sql=()),
+                enums.Capability.SESSION_CONFIG,
+            )
         elif isinstance(ql, qlast.ConfigOp):
             if ql.scope is qltypes.ConfigScope.SESSION:
                 capability = enums.Capability.SESSION_CONFIG
@@ -1969,6 +1973,12 @@ class Compiler:
         default_cardinality = enums.Cardinality.NO_RESULT
         statements = edgeql.parse_block(source)
         statements_len = len(statements)
+        is_script = statements_len > 1
+
+        if is_script and any(isinstance(stmt, qlast.UseNameSpaceCommand) for stmt in statements):
+            raise errors.ProtocolError(
+                'USE NAMESPACE statement is not allowed to be used in script.'
+            )
 
         if ctx.skip_first:
             statements = statements[1:]
@@ -1984,8 +1994,6 @@ class Compiler:
 
         rv = dbstate.QueryUnitGroup()
         rv.namespace = ctx.namespace
-
-        is_script = statements_len > 1
         script_info = None
         if is_script:
             if ctx.expect_rollback:
@@ -2213,7 +2221,8 @@ class Compiler:
                     unit.config_ops.append(comp.config_op)
 
                 unit.has_set = True
-
+            elif isinstance(comp, dbstate.NameSpaceSwitchQuery):
+                unit.ns_to_switch = comp.new_ns
             elif isinstance(comp, dbstate.NullQuery):
                 pass
 

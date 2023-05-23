@@ -226,6 +226,10 @@ class SessionResetAllAliases(BaseSessionReset):
     pass
 
 
+class UseNameSpaceCommand(BaseSessionCommand):
+    name: str
+
+
 class BaseObjectRef(Base):
     __abstract_node__ = True
 
