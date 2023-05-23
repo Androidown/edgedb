@@ -22,6 +22,7 @@ import collections
 import hashlib
 import json
 import logging
+import os
 import time
 import statistics
 import traceback
@@ -166,6 +167,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         self.loop = server.get_loop()
         self._dbview = None
         self.dbname = None
+        self.namespace = None
 
         self._transport = None
         self.buffer = ReadBuffer()
@@ -476,7 +478,11 @@ cdef class EdgeConnection(frontend.FrontendConnection):
                 f'accept connections'
             )
 
-        await self._start_connection(database)
+        # for local test
+        namespace = params.get('namespace', os.environ.get('EDGEDB_TEST_CASES_NAMESPACE', defines.DEFAULT_NS))
+        # namespace = params.get('namespace', edbdef.DEFAULT_NS)
+
+        await self._start_connection(database, namespace)
 
         # The user has already been authenticated by other means
         # (such as the ability to write to a protected socket).
@@ -515,7 +521,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         msg_buf.write_bytes(b'\x00' * 32)
         msg_buf.end_message()
         buf.write_buffer(msg_buf)
-        # TODO add namespace
+
         buf.write_buffer(self.make_state_data_description_msg())
 
         self.write(buf)
@@ -587,7 +593,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
 
         return params
 
-    async def _start_connection(self, database: str) -> None:
+    async def _start_connection(self, database: str, namespace: str) -> None:
         dbv = await self.server.new_dbview(
             dbname=database,
             query_cache=self.query_cache_enabled,
@@ -596,8 +602,10 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         assert type(dbv) is dbview.DatabaseConnectionView
         self._dbview = <dbview.DatabaseConnectionView>dbv
         self.dbname = database
+        self.namespace = namespace
 
         self._con_status = EDGECON_STARTED
+        logger.info(f'Connection started to {database}[{namespace}].')
 
     def stop_connection(self) -> None:
         self._con_status = EDGECON_BAD
@@ -1005,10 +1013,10 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         msg.end_message()
         return msg
 
-    cdef WriteBuffer make_state_data_description_msg(self, namespace=edbdef.DEFAULT_NS):
+    cdef WriteBuffer make_state_data_description_msg(self, namespace=None):
         cdef WriteBuffer msg
 
-        type_id, type_data = self.get_dbview().describe_state(namespace)
+        type_id, type_data = self.get_dbview().describe_state(namespace or self.namespace)
 
         msg = WriteBuffer.new_message(b's')
         msg.write_bytes(type_id.bytes)
@@ -1141,10 +1149,8 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         state_tid = self.buffer.read_bytes(16)
         state_data = self.buffer.read_len_prefixed_bytes()
         try:
-            # TODO add namespace
-            self.get_dbview().decode_state(state_tid, state_data)
+            self.get_dbview().decode_state(state_tid, state_data, self.namespace)
         except errors.StateMismatchError:
-            # TODO add namespace
             self.write(self.make_state_data_description_msg())
             raise
 
@@ -1158,6 +1164,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
             inline_typenames=inline_typenames,
             inline_objectids=inline_objectids,
             allow_capabilities=allow_capabilities,
+            namespace=self.namespace
         )
 
     async def parse(self):
@@ -1277,8 +1284,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         if self._cancelled:
             raise ConnectionAbortedError
 
-        # TODO add namespace
-        if _dbview.is_state_desc_changed():
+        if _dbview.is_state_desc_changed(self.namespace):
             self.write(self.make_state_data_description_msg())
         self.write(
             self.make_command_complete_msg(
@@ -1580,7 +1586,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
             # only use the backend if schema is required
             if static_exc is errormech.SchemaRequired:
                 exc = errormech.interpret_backend_error(
-                    self.get_dbview().get_schema(),
+                    self.get_dbview().get_schema(self.namespace),
                     exc.fields
                 )
             elif isinstance(static_exc, (
@@ -2038,7 +2044,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         compiler_pool = server.get_compiler_pool()
         # TODO add namespace
         global_schema = _dbview.get_global_schema()
-        user_schema = _dbview.get_user_schema()
+        user_schema = _dbview.get_user_schema(edbdef.DEFAULT_NS)
 
         dump_server_ver_str = None
         headers_num = self.buffer.read_int16()
@@ -2100,7 +2106,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
 
         self._in_dump_restore = True
         try:
-            _dbview.decode_state(sertypes.NULL_TYPE_ID.bytes, b'')
+            _dbview.decode_state(sertypes.NULL_TYPE_ID.bytes, b'', edbdef.DEFAULT_NS)
             await self._execute_utility_stmt(
                 'START TRANSACTION ISOLATION SERIALIZABLE',
                 pgcon,
@@ -2243,7 +2249,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         await server.introspect(dbname)
 
         # TODO add namespace
-        if _dbview.is_state_desc_changed():
+        if _dbview.is_state_desc_changed(edbdef.DEFAULT_NS):
             self.write(self.make_state_data_description_msg())
 
         state_tid, state_data = _dbview.encode_state()

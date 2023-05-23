@@ -1564,7 +1564,7 @@ def check_update_type(
     # also the (dynamic) type of the argument, so that we can produce
     # a good error message.
     check_result = pgast.FuncCall(
-        name=('edgedb', 'issubclass'),
+        name=(common.actual_schemaname('edgedb'), 'issubclass'),
         args=[typ, typeref_val],
     )
     maybe_null = pgast.CaseExpr(

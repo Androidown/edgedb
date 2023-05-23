@@ -78,7 +78,17 @@ if TYPE_CHECKING:
 ADMIN_PLACEHOLDER = "<edgedb:admin>"
 logger = logging.getLogger('edb.server')
 log_metrics = logging.getLogger('edb.server.metrics')
-_RE_BYTES_REPL_NS = re.compile(rb'(edgedb)(\.|instdata|pub|ss|std|;)', flags=re.MULTILINE)
+_RE_BYTES_REPL_NS = re.compile(
+    r'(current_setting\([\']+)?'
+    r'(edgedb)(\.|instdata|pub|ss|std|;)',
+)
+
+
+def repl_ignore_setting(match_obj):
+    maybe_setting, to_repl, tailing = match_obj.groups()
+    if maybe_setting:
+        return maybe_setting + to_repl + tailing
+    return "{ns_prefix}" + to_repl + tailing
 
 
 class RoleDescriptor(TypedDict):
@@ -98,10 +108,11 @@ class Server(ha_base.ClusterProtocol):
     _roles: Mapping[str, RoleDescriptor]
     _instance_data: Mapping[str, str]
     _sys_queries: Mapping[str, str]
-    _local_intro_query: bytes
+    _local_intro_query: str
     _global_intro_query: bytes
     _report_config_typedesc: bytes
     _report_config_data: bytes
+    _ns_tpl_sql: Optional[str]
 
     _std_schema: s_schema.Schema
     _refl_schema: s_schema.Schema
@@ -675,10 +686,7 @@ class Server(ha_base.ClusterProtocol):
             ns_prefix = ''
         else:
             ns_prefix = namespace + '_'
-        ns_intro_query = _RE_BYTES_REPL_NS.sub(
-            ns_prefix.encode('utf-8') + rb'\1\2',
-            self._local_intro_query
-        )
+        ns_intro_query = self._local_intro_query.format(ns_prefix=ns_prefix).encode('utf-8')
         json_data = await conn.sql_fetch_val(ns_intro_query)
 
         base_schema = s_schema.ChainedSchema(
@@ -936,10 +944,15 @@ class Server(ha_base.ClusterProtocol):
             self._sys_queries = immutables.Map(
                 {k: q.encode() for k, q in queries.items()})
 
-            self._local_intro_query = await syscon.sql_fetch_val(b'''\
+            local_intro_query = await syscon.sql_fetch_val(b'''\
                 SELECT text FROM edgedbinstdata.instdata
                 WHERE key = 'local_intro_query';
             ''')
+
+            self._local_intro_query = _RE_BYTES_REPL_NS.sub(
+                r"{ns_prefix}\2\3",
+                local_intro_query.decode('utf-8'),
+            )
 
             self._global_intro_query = await syscon.sql_fetch_val(b'''\
                 SELECT text FROM edgedbinstdata.instdata
@@ -984,9 +997,11 @@ class Server(ha_base.ClusterProtocol):
             if (tpldbdump := await get_tpl_sql(syscon)) is None:
                 tpldbdump = await gen_tpl_dump(self._cluster)
                 await store_tpl_sql(tpldbdump, syscon)
-                self._ns_tpl_sql = tpldbdump
+                ns_tpl_sql = tpldbdump.decode()
             else:
-                self._ns_tpl_sql = tpldbdump
+                ns_tpl_sql = tpldbdump.decode()
+
+            self._ns_tpl_sql = _RE_BYTES_REPL_NS.sub(repl_ignore_setting, ns_tpl_sql)
 
         finally:
             self._release_sys_pgcon()
@@ -1361,11 +1376,11 @@ class Server(ha_base.ClusterProtocol):
 
         self.create_task(task(), interruptable=True)
 
-    def _on_global_schema_change(self, namespace):
+    def _on_global_schema_change(self):
         if not self._accept_new_tasks:
             return
 
-        async def task(ns):
+        async def task():
             try:
                 await self._reintrospect_global_schema()
             except Exception:
@@ -1373,7 +1388,7 @@ class Server(ha_base.ClusterProtocol):
                     1.0, 'on_global_schema_change')
                 raise
 
-        self.create_task(task(namespace), interruptable=True)
+        self.create_task(task(), interruptable=True)
 
     def _on_sys_pgcon_connection_lost(self, exc):
         try:
@@ -1951,17 +1966,8 @@ class Server(ha_base.ClusterProtocol):
             )
 
     async def create_namespace(self, be_conn: pgcon.PGConnection, name: str):
-        tpl_sql = _RE_BYTES_REPL_NS.sub(
-            name.encode('utf-8') + rb'_\1\2',
-            self._ns_tpl_sql,
-        )
-        tpl_sql = re.sub(
-            rb'({ns_edgedbext})',
-            name.encode('utf-8') + rb'_edgedbext',
-            tpl_sql,
-            flags=re.MULTILINE,
-        )
-        await be_conn.sql_execute(tpl_sql)
+        tpl_sql = self._ns_tpl_sql.replace("{ns_prefix}", f"{name}_")
+        await be_conn.sql_execute(tpl_sql.encode('utf-8'))
 
     def get_active_pgcon_num(self) -> int:
         return (

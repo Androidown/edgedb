@@ -112,7 +112,7 @@ async def handle_request(
 async def execute(db, server, namespace: str, query_uuid: str):
     if namespace not in db.ns_map:
         raise errors.InternalServerError(
-            f'NameSpace: [{namespace}] not in current db(ver:{db.dbver})'
+            f'NameSpace: [{namespace}] not in current db [{db.name}](ver:{db.dbver})'
         )
     user_schema = db.ns_map[namespace].user_schema
     global_schema = server.get_global_schema()

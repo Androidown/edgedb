@@ -1947,8 +1947,7 @@ cdef class PGConnection:
                 elif event == 'system-config-changes':
                     self.server._on_remote_system_config_change()
                 elif event == 'global-schema-changes':
-                    namespace = event_payload['namespace']
-                    self.server._on_global_schema_change(namespace)
+                    self.server._on_global_schema_change()
                 else:
                     raise AssertionError(f'unexpected system event: {event!r}')
 

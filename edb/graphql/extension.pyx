@@ -262,7 +262,7 @@ async def _execute(
 
     if namespace not in db.ns_map:
         raise errors.InternalServerError(
-            f'NameSpace: [{namespace}] not in current db(ver:{db.dbver})'
+            f'NameSpace: [{namespace}] not in current db [{db.name}](ver:{db.dbver})'
         )
     ns = db.ns_map[namespace]
 

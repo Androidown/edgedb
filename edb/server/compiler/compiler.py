@@ -391,7 +391,6 @@ class Compiler:
         context.module = ctx.module
         context.external_view = ctx.external_view
         context.restoring_external = ctx.restoring_external
-        context.namespace = ctx.namespace
         return context
 
     def _process_delta(self, ctx: CompileContext, delta):
@@ -423,16 +422,12 @@ class Compiler:
             isinstance(c, s_ns.NameSpaceCommand)
             for c in pgdelta.get_subcommands()
         )
-        if ctx.namespace == defines.DEFAULT_NS:
-            ns_prefix = ''
-        else:
-            ns_prefix = ctx.namespace + '_'
 
         if db_cmd or ns_cmd:
             block = pg_dbops.SQLBlock()
             new_be_types = new_types = frozenset()
         else:
-            block = pg_dbops.PLTopBlock(ns_prefix)
+            block = pg_dbops.PLTopBlock()
 
             def may_has_backend_id(_id):
                 obj = schema.get_by_id(_id, None)
@@ -468,7 +463,7 @@ class Compiler:
 
         # Generate schema storage SQL (DML into schema storage tables).
         if schema_peristence_async:
-            refl_block = pg_dbops.PLTopBlock(ns_prefix)
+            refl_block = pg_dbops.PLTopBlock()
         else:
             refl_block = None
 
@@ -476,7 +471,7 @@ class Compiler:
             ctx, pgdelta, subblock, context=context,
             schema_persist_block=refl_block
         )
-        instdata_schemaname = f"{ns_prefix}edgedbinstdata"
+        instdata_schemaname = pg_common.actual_schemaname("edgedbinstdata")
         if schema_peristence_async:
             if debug.flags.keep_schema_persistence_history:
                 invalid_persist_his = f"""\
@@ -500,7 +495,7 @@ class Compiler:
             """))
 
         if pgdelta.std_inhview_updates:
-            stdview_block = pg_dbops.PLTopBlock(ns_prefix)
+            stdview_block = pg_dbops.PLTopBlock()
             pgdelta.generate_std_inhview(stdview_block)
         else:
             stdview_block = None
@@ -544,15 +539,10 @@ class Compiler:
 
         cache = current_tx.get_cached_reflection()
 
-        if ctx.namespace == defines.DEFAULT_NS:
-            schema_name = 'edgedb'
-        else:
-            schema_name = f'{ctx.namespace}_edgedb'
-
         with cache.mutate() as cache_mm:
             for eql, args in meta_blocks:
                 eql_hash = hashlib.sha1(eql.encode()).hexdigest()
-                fname = (schema_name, f'__rh_{eql_hash}')
+                fname = (pg_common.actual_schemaname('edgedb'), f'__rh_{eql_hash}')
 
                 if eql_hash in cache_mm:
                     argnames = cache_mm[eql_hash]
@@ -787,7 +777,6 @@ class Compiler:
             expected_cardinality_one=ctx.expected_cardinality_one,
             output_format=_convert_format(ctx.output_format),
             backend_runtime_params=ctx.backend_runtime_params,
-            namespace=ctx.namespace
         )
 
         if (
@@ -1100,11 +1089,6 @@ class Compiler:
         else:
             sql = (block.to_string().encode('utf-8'),)
 
-            if context.namespace == defines.DEFAULT_NS:
-                ns_prefix = ''
-            else:
-                ns_prefix = context.namespace + '_'
-
             if new_types:
                 # Inject a query returning backend OIDs for the newly
                 # created types.
@@ -1122,7 +1106,7 @@ class Compiler:
                                 "backend_id"
                             )
                         FROM
-                            {ns_prefix}edgedb."_SchemaType"
+                            {pg_common.actual_schemaname('edgedb')}."_SchemaType"
                         WHERE
                                 "id" = any(ARRAY[
                                     {', '.join(new_type_ids)}
@@ -1945,6 +1929,7 @@ class Compiler:
         source: edgeql.Source,
     ) -> dbstate.QueryUnitGroup:
         current_tx = ctx.state.current_tx()
+        pg_common.NAMESPACE = ctx.namespace
         if current_tx.get_migration_state() is not None:
             original = edgeql.Source.from_string(source.text())
             ctx = dataclasses.replace(

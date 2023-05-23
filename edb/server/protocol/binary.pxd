@@ -64,6 +64,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         object loop
         readonly dbview.DatabaseConnectionView _dbview
         str dbname
+        str namespace
 
         ReadBuffer buffer
 

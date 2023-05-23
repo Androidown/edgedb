@@ -197,7 +197,9 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
                 f'accept connections'
             )
 
-        await self._start_connection(database)
+        namespace = params.get('namespace', edbdef.DEFAULT_NS)
+
+        await self._start_connection(database, namespace)
 
         # The user has already been authenticated by other means
         # (such as the ability to write to a protected socket).
@@ -520,7 +522,7 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
         self._in_dump_restore = True
         try:
             # TODO add namespace
-            _dbview.decode_state(sertypes.NULL_TYPE_ID.bytes, b'')
+            _dbview.decode_state(sertypes.NULL_TYPE_ID.bytes, b'', edbdef.DEFAULT_NS)
             await self._execute_utility_stmt(
                 'START TRANSACTION ISOLATION SERIALIZABLE',
                 pgcon,
@@ -935,7 +937,6 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
             bint inline_objectids = True
             bytes stmt_name = b''
             str module = None
-            str namespace = None
             bint read_only = False
 
         headers = self.legacy_parse_headers()
@@ -955,8 +956,6 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
                     module = v.decode()
                 elif k == QUERY_HEADER_PROHIBIT_MUTATION:
                     read_only = parse_boolean(v, "PROHIBIT_MUTATION")
-                elif k == QUERY_HEADER_EXPLICIT_NS:
-                    namespace = v.decode()
                 else:
                     raise errors.BinaryProtocolError(
                         f'unexpected message header: {k}'
@@ -991,7 +990,7 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
             allow_capabilities=allow_capabilities,
             module=module,
             read_only=read_only,
-            namespace=namespace
+            namespace=self.namespace
         )
 
         return eql, query_req, stmt_name
@@ -1084,7 +1083,6 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
         skip_first: bool,
         module: str = None,
         read_only: bool = False,
-        namespace: str = defines.DEFAULT_NS,
     ):
         query_req = dbview.QueryRequestInfo(
             source=edgeql.Source.from_string(query.decode("utf-8")),
@@ -1092,7 +1090,7 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
             output_format=FMT_NONE,
             module=module,
             read_only=read_only,
-            namespace=namespace,
+            namespace=self.namespace,
         )
 
         return await self.get_dbview()._compile(
@@ -1145,7 +1143,6 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
 
         module = None
         read_only = False
-        namespace = defines.DEFAULT_NS
         headers = self.legacy_parse_headers()
         if headers:
             for k, v in headers.items():
@@ -1153,8 +1150,6 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
                     allow_capabilities = parse_capabilities_header(v)
                 elif k == QUERY_HEADER_EXPLICIT_MODULE:
                     module = v.decode()
-                elif k == QUERY_HEADER_EXPLICIT_NS:
-                    namespace = v.decode()
                 elif k == QUERY_HEADER_PROHIBIT_MUTATION:
                     read_only = parse_boolean(v, "PROHIBIT_MUTATION")
                 else:
@@ -1192,7 +1187,7 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
 
         query_unit = await self._legacy_simple_query(
             eql, allow_capabilities, skip_first,
-            module, read_only, namespace)
+            module, read_only)
 
         packet = WriteBuffer.new()
         packet.write_buffer(self.make_legacy_command_complete_msg(query_unit))
@@ -1207,7 +1202,6 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
         skip_first: bint,
         module: str = None,
         read_only: bool = False,
-        namespace: str = defines.DEFAULT_NS,
     ):
         cdef:
             bytes state = None, orig_state = None
@@ -1216,8 +1210,7 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
             pgcon.PGConnection conn
 
         unit_group = await self._legacy_compile_script(
-            eql, skip_first=skip_first, module=module, read_only=read_only,
-            namespace=namespace
+            eql, skip_first=skip_first, module=module, read_only=read_only
         )
 
         if self._cancelled:
@@ -1255,7 +1248,7 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
                     if query_unit.create_ns:
                         await self.server.create_namespace(conn, query_unit.create_ns)
                     if query_unit.drop_ns:
-                        await self.server._on_before_drop_ns(query_unit.drop_ns, _dbview.namespace)
+                        await self.server._on_before_drop_ns(query_unit.drop_ns)
                     if query_unit.system_config:
                         await execute.execute_system_config(conn, _dbview, query_unit)
                     else:

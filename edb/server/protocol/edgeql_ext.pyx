@@ -26,7 +26,7 @@ import immutables
 
 from edb import errors
 from edb import edgeql
-from edb.server import defines as edbdef, defines
+from edb.server import defines as edbdef
 from edb.server.protocol import execute
 
 from edb.common import debug
@@ -64,7 +64,7 @@ async def handle_request(
     query = None
     module = None
     limit = 0
-    namespace = defines.DEFAULT_NS
+    namespace = edbdef.DEFAULT_NS
 
     try:
         if request.method == b'POST':
@@ -77,7 +77,7 @@ async def handle_request(
                 variables = body.get('variables')
                 globals_ = body.get('globals')
                 module = body.get('module')
-                namespace = body.get('namespace', defines.DEFAULT_NS)
+                namespace = body.get('namespace', edbdef.DEFAULT_NS)
                 limit = body.get('limit', 0)
             else:
                 raise TypeError(
@@ -116,7 +116,7 @@ async def handle_request(
                 if namespace is not None:
                     namespace = namespace[0]
                 else:
-                    namespace = defines.DEFAULT_NS
+                    namespace = edbdef.DEFAULT_NS
 
                 limit = qs.get('limit')
                 if limit is not None:

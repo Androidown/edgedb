@@ -63,11 +63,10 @@ class SQLSourceGeneratorError(errors.InternalServerError):
 
 
 class SQLSourceGenerator(codegen.SourceGenerator):
-    def __init__(self, *args, reordered: bool=False, namespace: str = defines.DEFAULT_NS, **kwargs):
+    def __init__(self, *args, reordered: bool=False, **kwargs):
         super().__init__(*args, **kwargs)
         self.param_index: dict[object, int] = {}
         self.reordered = reordered
-        self.namespace = namespace
 
     @classmethod
     def to_source(
@@ -120,10 +119,8 @@ class SQLSourceGenerator(codegen.SourceGenerator):
         if node.schemaname is None:
             self.write(common.qname(node.name))
         else:
-            if self.namespace == defines.DEFAULT_NS:
-                self.write(common.qname(node.schemaname, node.name))
-            elif node.schemaname in defines.EDGEDB_OWNED_DBS:
-                self.write(common.qname(f"{self.namespace}_{node.schemaname}", node.name))
+            if node.schemaname in defines.EDGEDB_OWNED_DBS:
+                self.write(common.qname(common.actual_schemaname(node.schemaname), node.name))
             else:
                 self.write(common.qname(node.schemaname, node.name))
 

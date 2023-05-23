@@ -1018,7 +1018,7 @@ async def gen_tpl_dump(cluster: pgcluster.BaseCluster):
         exclude_schemas=['edgedbext'],
         dump_object_owners=False,
     )
-    commands = [dbops.CreateSchema(name='{ns_edgedbext}')]
+    commands = [dbops.CreateSchema(name='{ns_prefix}edgedbext')]
     for uuid_func in [
         'uuid_generate_v1',
         'uuid_generate_v1mc',
@@ -1032,7 +1032,7 @@ async def gen_tpl_dump(cluster: pgcluster.BaseCluster):
         commands.append(
             dbops.CreateOrReplaceFunction(
                 dbops.Function(
-                    name=('{ns_edgedbext}', uuid_func),
+                    name=('{ns_prefix}edgedbext', uuid_func),
                     returns=('pg_catalog', 'uuid'), language='plpgsql',
                     text=f"""
                     BEGIN 
@@ -1047,7 +1047,7 @@ async def gen_tpl_dump(cluster: pgcluster.BaseCluster):
         commands.append(
             dbops.CreateOrReplaceFunction(
                 dbops.Function(
-                    name=('{ns_edgedbext}', uuid_func),
+                    name=('{ns_prefix}edgedbext', uuid_func),
                     returns=('pg_catalog', 'uuid'), language='plpgsql',
                     args=[('namespace', 'uuid'), ('name', 'text')],
                     text=f"""

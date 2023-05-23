@@ -25,6 +25,7 @@ import textwrap
 
 from ..common import quote_ident as qi
 from ..common import quote_literal as ql
+from ..common import actual_schemaname as actual
 
 from . import base
 from . import ddl
@@ -153,7 +154,7 @@ class AlterRole(ddl.AlterObject, RoleCommand):
             value = json.dumps(self.object.single_role_metadata)
             query = base.Query(
                 f'''
-                UPDATE {block.namespace_prefix}edgedbinstdata.instdata
+                UPDATE {actual("edgedbinstdata")}.instdata
                 SET json = {ql(value)}::jsonb
                 WHERE key = 'single_role_metadata'
                 '''

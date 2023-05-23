@@ -43,7 +43,7 @@ from edb.edgeql import ast as qlast
 from edb.edgeql import compiler as qlcompiler
 from edb.edgeql import qltypes
 
-from . import expr as s_expr, defines
+from . import expr as s_expr
 from . import name as sn
 from . import objects as so
 from . import schema as s_schema
@@ -1219,7 +1219,6 @@ class CommandContext:
         module_is_implicit: Optional[bool] = False,
         external_view: Optional[Mapping] = None,
         restoring_external: Optional[bool] = False,
-        namespace: str = defines.DEFAULT_NS,
     ) -> None:
         self.stack: List[CommandContextToken[Command]] = []
         self._cache: Dict[Hashable, Any] = {}
@@ -1251,7 +1250,6 @@ class CommandContext:
         self.external_view = external_view or immutables.Map()
         self.restoring_external = restoring_external
         self.external_objs = set()
-        self.namespace = namespace
 
     @property
     def modaliases(self) -> Mapping[Optional[str], str]:
@@ -1504,11 +1502,6 @@ class CommandContext:
         ver: Tuple[int, int, verutils.VersionStage, int],
     ) -> bool:
         return self.compat_ver is not None and self.compat_ver < ver
-
-    def pg_schema(self, schema_name: str):
-        if self.namespace == defines.DEFAULT_NS:
-            return schema_name
-        return f"{self.namespace}_{schema_name}"
 
 
 class ContextStack:

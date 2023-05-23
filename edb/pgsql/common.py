@@ -26,7 +26,7 @@ import base64
 import re
 
 from edb.common import uuidgen
-from edb.schema import abc as s_abc
+from edb.schema import abc as s_abc, defines
 from edb.schema import casts as s_casts
 from edb.schema import constraints as s_constr
 from edb.schema import defines as s_def
@@ -45,6 +45,7 @@ from . import keywords as pg_keywords
 
 RE_LINK_TRIGGER = re.compile(r'(source|target)-del-(def|imm)-(inl|otl)-(f|t)')
 RE_DUNDER_TYPE_LINK_TRIGGER = re.compile(r'dunder-type-link-[ft]')
+NAMESPACE = defines.DEFAULT_NS
 
 
 def quote_e_literal(string):
@@ -129,7 +130,19 @@ def quote_type(type_):
 
 def get_module_backend_name(module: s_name.Name) -> str:
     # standard modules go into "edgedbstd", user ones into "edgedbpub"
-    return "edgedbstd" if module in s_schema.STD_MODULES else "edgedbpub"
+    return actual_schemaname("edgedbstd") if module in s_schema.STD_MODULES else actual_schemaname("edgedbpub")
+
+
+def actual_schemaname(name: str) -> str:
+    global NAMESPACE
+    if name not in defines.EDGEDB_OWNED_DBS:
+        return name
+
+    if NAMESPACE == defines.DEFAULT_NS:
+        ns_prefix = ''
+    else:
+        ns_prefix = NAMESPACE + '_'
+    return f"{ns_prefix}{name}"
 
 
 def get_unique_random_name() -> str:

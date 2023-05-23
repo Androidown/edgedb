@@ -576,7 +576,7 @@ cdef class Database:
     cdef get_state_serializer(self, namespace, protocol_version):
         if namespace not in self.ns_map:
             raise errors.InternalServerError(
-                f'NameSpace: [{namespace}] not in current db(ver:{self._db.dbver})'
+                f'NameSpace: [{namespace}] not in current db [{self.name}](ver:{self.dbver})'
             )
         return self.ns_map[namespace].get_state_serializer(protocol_version)
 
@@ -819,14 +819,14 @@ cdef class DatabaseConnectionView:
             if namespace in self._db.ns_map:
                 return self._db.ns_map[namespace].user_schema
             raise errors.InternalServerError(
-                f'NameSpace: [{namespace}] not in current db(ver:{self._db.dbver})'
+                f'NameSpace: [{namespace}] not in current db [{self._db.name}](ver:{self._db.dbver})'
             )
 
     def get_reflection_cache(self, namespace: str):
         if namespace in self._db.ns_map:
             return self._db.ns_map[namespace].reflection_cache
         raise errors.InternalServerError(
-            f'NameSpace: [{namespace}] not in current db(ver:{self._db.dbver})'
+            f'NameSpace: [{namespace}] not in current db [{self._db.name}](ver:{self._db.dbver})'
         )
 
     def get_global_schema(self):
@@ -859,7 +859,7 @@ cdef class DatabaseConnectionView:
 
         if namespace not in self._db.ns_map:
             raise errors.InternalServerError(
-                f'NameSpace: [{namespace}] not in current db(ver:{self._db.dbver})'
+                f'NameSpace: [{namespace}] not in current db [{self._db.name}](ver:{self._db.dbver})'
             )
 
         tid = self._db.ns_map[namespace].backend_ids.get(type_id)
@@ -893,7 +893,7 @@ cdef class DatabaseConnectionView:
         self._session_state_db_cache = (self._config, spec)
         return spec
 
-    cdef bint is_state_desc_changed(self, namespace=defines.DEFAULT_NS):
+    cdef bint is_state_desc_changed(self, namespace):
         serializer = self.get_state_serializer(namespace)
         if not self._in_tx:
             # We may have executed a query, or COMMIT/ROLLBACK - just use
@@ -964,7 +964,7 @@ cdef class DatabaseConnectionView:
             state['globals'] = {k: v.value for k, v in globals_.items()}
         return serializer.type_id, serializer.encode(state)
 
-    cdef decode_state(self, type_id, data, namespace=defines.DEFAULT_NS):
+    cdef decode_state(self, type_id, data, namespace):
         if not self._in_tx:
             # make sure we start clean
             self._state_serializer = None
@@ -1067,7 +1067,7 @@ cdef class DatabaseConnectionView:
 
         if key.namespace not in self._db.ns_map:
             raise errors.InternalServerError(
-                f'NameSpace: [{key.namespace}] not in current db(ver:{self._db.dbver})'
+                f'NameSpace: [{key.namespace}] not in current db [{self._db.name}](ver:{self._db.dbver})'
             )
 
         ns = self._db.ns_map[key.namespace]

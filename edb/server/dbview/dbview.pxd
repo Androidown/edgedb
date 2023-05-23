@@ -224,8 +224,8 @@ cdef class DatabaseConnectionView:
     cpdef get_modaliases(self)
 
     cdef bytes serialize_state(self)
-    cdef bint is_state_desc_changed(self, namespace=?)
+    cdef bint is_state_desc_changed(self, namespace)
     cdef describe_state(self, namespace)
     cdef encode_state(self)
-    cdef decode_state(self, type_id, data, namespace=?)
+    cdef decode_state(self, type_id, data, namespace)
     cdef inline recode_global(self, serializer, k, v)
