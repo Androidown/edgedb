@@ -57,19 +57,18 @@ class MessageStream:
                 return
 
 
-class HubProtocol(asyncio.BufferedProtocol):
+class HubProtocol(asyncio.Protocol):
     """The Protocol used on the hub side connecting to workers."""
 
     def __init__(self, *, loop, on_pid, on_connection_lost):
         self._loop = loop
         self._transport = None
         self._closed = False
+        self._stream = MessageStream()
         self._resp_waiters = {}
         self._on_pid = on_pid
         self._on_connection_lost = on_connection_lost
         self._pid = None
-
-        self._new_buffer(16)
 
     def connection_made(self, tr):
         self._transport = tr
@@ -82,7 +81,8 @@ class HubProtocol(asyncio.BufferedProtocol):
             (_uint64_packer(len(payload) + 8), _uint64_packer(req_id), payload)
         )
 
-    def process_message(self, msgview):
+    def process_message(self, msg):
+        msgview = memoryview(msg)
         req_id = _uint64_unpacker(msgview[:8])[0]
         waiter = self._resp_waiters.pop(req_id, None)
         if waiter is None:
@@ -91,38 +91,15 @@ class HubProtocol(asyncio.BufferedProtocol):
         if not waiter.done():
             waiter.set_result(msgview[8:])
 
-    def _new_buffer(
-        self,
-        size: int,
-        is_payload: bool = False,
-    ):
-        self._buf_idx = 0
-        self._buf = memoryview(bytearray(size))
-        self._is_payload = is_payload
-        self._expect_len = size
-
-    def get_buffer(self, sizehint: int):
-        return self._buf[self._buf_idx:]
-
-    def buffer_updated(self, nbytes: int) -> None:
-        self._buf_idx += nbytes
-
-        if self._buf_idx != self._expect_len:
-            return
-
+    def data_received(self, data):
         if self._pid is None:
-            self._pid = _uint64_unpacker(self._buf[:8])[0]
-            version = _uint64_unpacker(self._buf[8:16])[0]
+            pid_data = data[:8]
+            version = _uint64_unpacker(data[8:16])[0]
+            data = data[16:]
+            self._pid = _uint64_unpacker(pid_data)[0]
             self._on_pid(self, self._transport, self._pid, version)
-            self._new_buffer(8)
-        elif self._is_payload:
-            self.process_message(self._buf)
-            self._new_buffer(8)
-        else:
-            self._new_buffer(
-                _uint64_unpacker(self._buf)[0],
-                is_payload=True
-            )
+        for msg in self._stream.feed_data(data):
+            self.process_message(msg)
 
     def connection_lost(self, exc):
         self._closed = True
@@ -167,91 +144,46 @@ class HubConnection:
         self._transport.abort()
 
 
-class WorkerProtocol(asyncio.BufferedProtocol):
-    def __init__(self, on_message):
-        self._transport = None
-        self._new_buffer(8)
-        self._on_msg = on_message
-        self._closed = False
-
-    def connection_made(self, tr):
-        self._transport = tr
-
-    def _new_buffer(
-        self,
-        size: int,
-        is_payload: bool = False,
-    ):
-        self._buf_idx = 0
-        self._buf = memoryview(bytearray(size))
-        self._is_payload = is_payload
-        self._expect_len = size
-
-    def get_buffer(self, sizehint: int):
-        return self._buf[self._buf_idx:]
-
-    def buffer_updated(self, nbytes: int) -> None:
-        self._buf_idx += nbytes
-
-        if self._buf_idx != self._expect_len:
-            return
-
-        if self._is_payload:
-            self._on_msg(self._buf)
-            self._new_buffer(8)
-        else:
-            self._new_buffer(
-                _uint64_unpacker(self._buf)[0],
-                is_payload=True
-            )
-
-    def connection_lost(self, error):
-        self._closed = True
-
-
 class WorkerConnection:
-    def __init__(self, sockname, version, *, loop):
-        self.sockname = sockname
-        self.version = version
+    """Connection object used by the worker's process."""
 
-        self._loop = loop
-        self.transport = None
-        self.proto = None
+    def __init__(self, sockname, version):
+        self._sock = socket.socket(socket.AF_UNIX)
+        self._sock.connect(sockname)
+        self._sock.sendall(
+            _uint64_packer(os.getpid()) + _uint64_packer(version)
+        )
+        self._stream = MessageStream()
 
-        self._pending_msg = asyncio.Queue()
-
-    def on_message(self, msgview: memoryview):
+    def _on_message(self, msg: bytes):
+        msgview = memoryview(msg)
         req_id = _uint64_unpacker(msgview[:8])[0]
-        self._pending_msg.put_nowait((req_id, msgview[8:]))
-
-    async def connect(self):
-        self.transport, self.proto = await \
-            self._loop.create_unix_connection(
-                lambda: WorkerProtocol(self.on_message),
-                self.sockname
-            )
-
-        self.transport.writelines((
-            _uint64_packer(os.getpid()),
-            _uint64_packer(self.version)
-        ))
-
-    async def iter_request(self):
-        while True:
-            yield await self._pending_msg.get()
-
-    def abort(self):
-        if self.transport is not None:
-            self.transport.abort()
-        self.transport = None
-        self.proto = None
+        return req_id, msgview[8:]
 
     def reply(self, req_id, payload):
-        self.transport.writelines((
-            _uint64_packer(len(payload) + 8),
-            _uint64_packer(req_id),
-            payload,
-        ))
+        self._sock.sendall(
+            b"".join(
+                (
+                    _uint64_packer(len(payload) + 8),
+                    _uint64_packer(req_id),
+                    payload,
+                )
+            )
+        )
+
+    def iter_request(self):
+        while True:
+            data = b'' if self._sock is None else self._sock.recv(4096)
+            if not data:
+                # EOF received - abort
+                self.abort()
+                return
+            yield from map(self._on_message, self._stream.feed_data(data))
+
+    def abort(self):
+        if self._sock is not None:
+            self._sock.close()
+            self._sock = None
 
 
 class ServerProtocol:
