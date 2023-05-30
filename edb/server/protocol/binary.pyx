@@ -2063,7 +2063,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         return external_views
 
     def restore_schema_info(self, external_views=None):
-        if external_views:
+        if external_views is not None:
             external_views = external_views
         else:
             external_views = self.restore_external_views()
