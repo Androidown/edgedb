@@ -66,7 +66,7 @@ def compile_ConfigSet(
             )
 
         fcall = pgast.FuncCall(
-            name=(common.actual_schemaname('edgedb'), '_alter_current_database_set'),
+            name=('edgedb', '_alter_current_database_set'),
             args=[pgast.StringConstant(val=op.backend_setting), val],
         )
 
@@ -257,7 +257,7 @@ def compile_ConfigReset(
 
     elif op.scope is qltypes.ConfigScope.DATABASE and op.backend_setting:
         fcall = pgast.FuncCall(
-            name=(common.actual_schemaname('edgedb'), '_alter_current_database_set'),
+            name=('edgedb', '_alter_current_database_set'),
             args=[
                 pgast.StringConstant(val=op.backend_setting),
                 pgast.NullConstant(),

@@ -1980,6 +1980,11 @@ class Compiler:
                 'USE NAMESPACE statement is not allowed to be used in script.'
             )
 
+        if isinstance(statements[0], qlast.UseNameSpaceCommand) and ctx.in_tx:
+            raise errors.ProtocolError(
+                'USE NAMESPACE statement is not allowed to be used in transaction.'
+            )
+
         if ctx.skip_first:
             statements = statements[1:]
             if not statements:  # pragma: no cover
@@ -2601,12 +2606,13 @@ class Compiler:
 
     def describe_database_dump(
         self,
+        namespace: str,
         user_schema: s_schema.Schema,
         global_schema: s_schema.Schema,
         database_config: immutables.Map[str, config.SettingValue],
         protocol_version: Tuple[int, int],
     ) -> DumpDescriptor:
-        # TODO namespace支持
+        pg_common.NAMESPACE = namespace
         schema = s_schema.ChainedSchema(
             self._std_schema,
             user_schema,
@@ -2867,6 +2873,7 @@ class Compiler:
 
     def describe_database_restore(
         self,
+        namespace,
         user_schema: s_schema.Schema,
         global_schema: s_schema.Schema,
         dump_server_ver_str: Optional[str],
@@ -2876,7 +2883,6 @@ class Compiler:
         protocol_version: Tuple[int, int],
         external_view: Dict[str, str]
     ) -> RestoreDescriptor:
-        # TODO namespace支持
         schema_object_ids = {
             (
                 s_name.name_from_string(name),
@@ -2927,7 +2933,9 @@ class Compiler:
                 log_ddl_as_migrations=False,
                 protocol_version=protocol_version,
                 external_view=external_view,
-                restoring_external=True
+                restoring_external=True,
+                namespace=namespace,
+                bootstrap_mode=True
             )
         else:
             ctx = CompileContext(
@@ -2938,6 +2946,8 @@ class Compiler:
                 schema_object_ids=schema_object_ids,
                 log_ddl_as_migrations=False,
                 protocol_version=protocol_version,
+                namespace=namespace,
+                bootstrap_mode=True
             )
 
         ctx.state.start_tx()
@@ -3231,3 +3241,10 @@ class RestoreBlockDescriptor(NamedTuple):
     #: this will contain the recursive descriptor on which parts of
     #: each datum need mending.
     data_mending_desc: Tuple[Optional[DataMendingDescriptor], ...]
+
+
+class RestoreSchemaInfo(NamedTuple):
+    schema_ddl: bytes
+    schema_ids: List[Tuple]
+    blocks: List
+    external_views: List[Tuple]

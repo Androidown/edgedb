@@ -1018,6 +1018,14 @@ async def gen_tpl_dump(cluster: pgcluster.BaseCluster):
         exclude_schemas=['edgedbext'],
         dump_object_owners=False,
     )
+    # exclude create type & domain
+    tpldbdump = re.sub(
+        rb'CREATE (?:(TYPE|DOMAIN))[^;]*;',
+        rb'',
+        tpldbdump,
+        flags=re.DOTALL
+    )
+
     commands = [dbops.CreateSchema(name='{ns_prefix}edgedbext')]
     for uuid_func in [
         'uuid_generate_v1',

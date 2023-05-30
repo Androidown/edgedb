@@ -225,9 +225,9 @@ class PLBlock(SQLBlock):
         self,
         type_name: Union[str, Tuple[str, str]],
         *,
-        var_name: str = '',
-        var_name_prefix: str = 'v',
-        shared: bool = False,
+        var_name: str='',
+        var_name_prefix: str='v',
+        shared: bool=False,
     ) -> str:
         if shared:
             if not var_name:

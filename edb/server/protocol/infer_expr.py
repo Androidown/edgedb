@@ -113,6 +113,11 @@ async def handle_request(
 
 
 async def execute(db, server, namespace: str, module: str, objname: str, expression: str):
+    if namespace not in db.ns_map:
+        raise errors.InternalServerError(
+            f'NameSpace: [{namespace}] not in current db [{db.name}](ver:{db.dbver})'
+        )
+    ns = db.ns_map[namespace]
     dbver = db.dbver
     query_cache = server._http_query_cache
 
@@ -129,9 +134,9 @@ async def execute(db, server, namespace: str, module: str, objname: str, express
     result = await compiler_pool.infer_expr(
         db.name,
         namespace,
-        db.user_schema,
+        ns.user_schema,
         server.get_global_schema(),
-        db.reflection_cache,
+        ns.reflection_cache,
         db.db_config,
         server.get_compilation_system_config(),
         name_str,

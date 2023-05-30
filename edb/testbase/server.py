@@ -48,7 +48,7 @@ import edgedb
 from edb.edgeql import quote as qlquote
 from edb.pgsql import common as pgcommon
 from edb.pgsql import params as pgparams
-from edb.server import args as edgedb_args, pgcon, pgconnparams
+from edb.server import args as edgedb_args, pgcon, pgconnparams, defines
 from edb.server import cluster as edgedb_cluster
 from edb.server import defines as edgedb_defines
 from edb.server import main as edgedb_main
@@ -1089,11 +1089,6 @@ class DatabaseTestCase(ClusterTestCase, ConnectedTestCaseMixin):
 
         cls.con = cls.loop.run_until_complete(cls.connect(database=dbname))
 
-        if class_set_up != 'skip':
-            script = cls.get_setup_script()
-            if script:
-                cls.loop.run_until_complete(cls.con.execute(script))
-
     @classmethod
     def tearDownClass(cls):
         script = ''
@@ -1259,6 +1254,39 @@ class Error:
 class BaseQueryTestCase(DatabaseTestCase):
 
     BASE_TEST_CLASS = True
+    test_ns: str
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        class_set_up = os.environ.get('EDGEDB_TEST_CASES_SET_UP', 'run')
+        cls.test_ns = os.environ.get('EDGEDB_TEST_CASES_NAMESPACE', defines.DEFAULT_NS)
+
+        if class_set_up != 'skip':
+            if cls.test_ns != defines.DEFAULT_NS:
+                cls.loop.run_until_complete(
+                    cls.con.execute(f'CREATE NAMESPACE {cls.test_ns}')
+                )
+            cls.loop.run_until_complete(
+                cls.con.execute(f'use namespace {cls.test_ns}')
+            )
+            script = cls.get_setup_script()
+            if script:
+                cls.loop.run_until_complete(cls.con.execute(script))
+
+    def setUp(self):
+        if self.test_ns != defines.DEFAULT_NS:
+            self.loop.run_until_complete(
+                self.con.execute(f'use namespace {self.test_ns}')
+            )
+            self.loop.run_until_complete(
+                self.assert_query_result(
+                    r'show namespace',
+                    [self.test_ns]
+                )
+            )
+
+        super().setUp()
 
 
 class DDLTestCase(BaseQueryTestCase):

@@ -119,10 +119,7 @@ class SQLSourceGenerator(codegen.SourceGenerator):
         if node.schemaname is None:
             self.write(common.qname(node.name))
         else:
-            if node.schemaname in defines.EDGEDB_OWNED_DBS:
-                self.write(common.qname(common.actual_schemaname(node.schemaname), node.name))
-            else:
-                self.write(common.qname(node.schemaname, node.name))
+            self.write(common.qname(common.actual_schemaname(node.schemaname), node.name))
 
     def _visit_values_expr(self, node):
         self.new_lines = 1

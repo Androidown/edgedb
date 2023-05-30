@@ -171,7 +171,7 @@ cdef WriteBuffer recode_bind_args(
                 if param.array_type_id is not None:
                     # ndimensions + flags
                     array_tid = dbv.resolve_backend_type_id(
-                        param.array_type_id)
+                        param.array_type_id, qug.namespace)
                     out_buf.write_cstr(data, 8)
                     out_buf.write_int32(<int32_t>array_tid)
                     out_buf.write_cstr(&data[12], in_len - 12)

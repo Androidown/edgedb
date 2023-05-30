@@ -183,7 +183,7 @@ cdef class DatabaseConnectionView:
     cdef rollback_tx_to_savepoint(self, name)
     cdef declare_savepoint(self, namespace, name, spid)
     cdef recover_aliases_and_config(self, modaliases, config, globals)
-    cdef abort_tx(self)
+    cpdef abort_tx(self)
 
     cpdef in_tx(self)
     cpdef in_tx_error(self)
@@ -193,11 +193,11 @@ cdef class DatabaseConnectionView:
 
     cdef tx_error(self)
 
-    cdef start(self, query_unit)
+    cpdef start(self, query_unit)
     cdef _start_tx(self, namespace)
     cdef _apply_in_tx(self, query_unit)
     cdef start_implicit(self, query_unit)
-    cdef on_error(self)
+    cpdef on_error(self)
     cdef commit_implicit_tx(
         self, namespace, user_schema, user_schema_unpacked,
         user_schema_mutation, global_schema,
@@ -224,8 +224,8 @@ cdef class DatabaseConnectionView:
     cpdef get_modaliases(self)
 
     cdef bytes serialize_state(self)
-    cdef bint is_state_desc_changed(self, namespace)
+    cpdef bint is_state_desc_changed(self, namespace)
     cdef describe_state(self, namespace)
-    cdef encode_state(self)
-    cdef decode_state(self, type_id, data, namespace)
-    cdef inline recode_global(self, serializer, k, v)
+    cpdef encode_state(self)
+    cpdef decode_state(self, type_id, data, namespace)
+    cdef inline recode_global(self, serializer, namespace, k, v)

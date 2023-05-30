@@ -50,7 +50,8 @@ class TestGraphQLFunctional(tb.GraphQLTestCase):
                                 value
                             }
                         }
-                    '''
+                    ''',
+                    'namespace': self.test_ns
                 }
                 data, headers, status = self.http_con_request(con, req1_data)
                 self.assertEqual(status, 200)

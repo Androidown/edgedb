@@ -2372,7 +2372,7 @@ def process_link_values(
     ):
         if src_prop.out_target.is_sequence:
             seq_backend_name = pgast.StringConstant(
-                val=f'"edgedbpub"."{src_prop.out_target.id}_sequence"'
+                val=f'"{common.actual_schemaname("edgedbpub")}"."{src_prop.out_target.id}_sequence"'
             )
             source_val = pgast.FuncCall(
                 name=('currval', ),

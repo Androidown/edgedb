@@ -22,6 +22,7 @@ from __future__ import annotations
 import contextlib
 import http.client
 import json
+import os
 import ssl
 import urllib.parse
 import urllib.request
@@ -34,6 +35,7 @@ from edb.common import assert_data_shape
 
 from . import server
 from .server import PGConnMixin
+from edb.server import defines
 
 
 class StubbornHttpConnection(http.client.HTTPSConnection):
@@ -148,7 +150,8 @@ class EdgeQLTestCase(BaseHttpExtensionTest, server.QueryTestCase):
         variables=None, globals=None, module=None, limit=None
     ):
         req_data = {
-            'query': query
+            'query': query,
+            'namespace': os.environ.get('EDGEDB_TEST_CASES_NAMESPACE', defines.DEFAULT_NS)
         }
 
         if use_http_post:
@@ -226,7 +229,8 @@ class GraphQLTestCase(BaseHttpExtensionTest, server.QueryTestCase):
                       variables=None,
                       globals=None):
         req_data = {
-            'query': query
+            'query': query,
+            'namespace': self.test_ns
         }
 
         if operation_name is not None:
@@ -319,7 +323,8 @@ class InferExprTestCase(BaseHttpTest, server.QueryTestCase):
         req_data = {
             'object': objname,
             'module': module,
-            'expression': expression
+            'expression': expression,
+            'namespace': os.environ.get('EDGEDB_TEST_CASES_NAMESPACE', defines.DEFAULT_NS)
         }
 
         req = urllib.request.Request(self.http_addr, method='POST')
@@ -373,7 +378,7 @@ class ExternTestCase(BaseHttpTest, server.QueryTestCase, PGConnMixin):
 
     def create_type(self, body):
         req_data = body.as_dict()
-
+        req_data['namespace'] = os.environ.get('EDGEDB_TEST_CASES_NAMESPACE', defines.DEFAULT_NS)
         req = urllib.request.Request(self.http_addr, method='POST')
         req.add_header('Content-Type', 'application/json')
         req.add_header('testmode', '1')

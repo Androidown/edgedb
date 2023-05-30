@@ -162,6 +162,8 @@ class TypeRef(ImmutableBase):
     is_opaque_union: bool = False
     # True, if this describes an sequnce type
     is_sequence: bool = False
+    # True, if this contains enums
+    has_enum: bool = False
 
     def __repr__(self) -> str:
         return f'<ir.TypeRef \'{self.name_hint}\' at 0x{id(self):x}>'

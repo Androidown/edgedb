@@ -11224,6 +11224,7 @@ class TestEdgeQLDataMigrationNonisolated(EdgeQLDataMigrationTestCase):
     async def test_edgeql_migration_recovery_commit_fail(self):
         con2 = await self.connect(database=self.con.dbname)
         try:
+            await con2.execute(f'USE NAMESPACE {self.test_ns};')
             await con2.execute('START MIGRATION TO {}')
             await con2.execute('POPULATE MIGRATION')
 

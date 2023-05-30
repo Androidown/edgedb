@@ -80,15 +80,26 @@ logger = logging.getLogger('edb.server')
 log_metrics = logging.getLogger('edb.server.metrics')
 _RE_BYTES_REPL_NS = re.compile(
     r'(current_setting\([\']+)?'
-    r'(edgedb)(\.|instdata|pub|ss|std|;)',
+    r'(edgedb)(\.|instdata|pub\.|pub;|pub\'|ss|std\.|std\'|std;|;)([\"a-z0-9_\-]+)?',
 )
 
 
 def repl_ignore_setting(match_obj):
-    maybe_setting, to_repl, tailing = match_obj.groups()
+    maybe_setting, schema_name, tailing, maybe_domain_name = match_obj.groups()
     if maybe_setting:
-        return maybe_setting + to_repl + tailing
-    return "{ns_prefix}" + to_repl + tailing
+        return maybe_setting + schema_name + tailing + (maybe_domain_name or '')
+    if maybe_domain_name:
+        # skip create type/domain in builtin:
+        # Type ends with '_t' in edgedb
+        # Type ends with '_t' in edgedbpub
+        # Domain ends with '_domain' in edgedbstd
+        if (
+            (tailing == '.' and maybe_domain_name.strip('"').endswith('_t'))
+            or (tailing == 'pub.' and maybe_domain_name.strip('"').endswith('_t'))
+            or (tailing == 'std.' and maybe_domain_name.strip('"').endswith('_domain'))
+        ):
+            return schema_name + tailing + maybe_domain_name
+    return "{ns_prefix}" + schema_name + tailing + (maybe_domain_name or '')
 
 
 class RoleDescriptor(TypedDict):
@@ -950,7 +961,7 @@ class Server(ha_base.ClusterProtocol):
             ''')
 
             self._local_intro_query = _RE_BYTES_REPL_NS.sub(
-                r"{ns_prefix}\2\3",
+                repl_ignore_setting,
                 local_intro_query.decode('utf-8'),
             )
 

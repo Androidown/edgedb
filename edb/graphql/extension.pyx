@@ -37,7 +37,7 @@ from edb import _graphql_rewrite
 from edb import errors
 from edb.graphql import errors as gql_errors
 from edb.server.dbview cimport dbview
-from edb.server import compiler, defines
+from edb.server import compiler
 from edb.server import defines as edbdef
 from edb.server.pgcon import errors as pgerrors
 from edb.server.protocol import execute
@@ -97,7 +97,7 @@ async def handle_request(
     globals = None
     query = None
     module = None
-    namespace = defines.DEFAULT_NS
+    namespace = edbdef.DEFAULT_NS
     limit = 0
 
     try:
@@ -112,7 +112,7 @@ async def handle_request(
                 variables = body.get('variables')
                 module = body.get('module')
                 limit = body.get('limit', 0)
-                namespace = body.get('namespace', defines.DEFAULT_NS)
+                namespace = body.get('namespace', edbdef.DEFAULT_NS)
                 globals = body.get('globals')
             elif request.content_type == 'application/graphql':
                 query = request.body.decode('utf-8')
@@ -163,7 +163,7 @@ async def handle_request(
                 if namespace is not None:
                     namespace = namespace[0]
                 else:
-                    namespace = defines.DEFAULT_NS
+                    namespace = edbdef.DEFAULT_NS
 
         else:
             raise TypeError('expected a GET or a POST request')
@@ -261,8 +261,9 @@ async def _execute(
 ):
 
     if namespace not in db.ns_map:
-        raise errors.InternalServerError(
-            f'NameSpace: [{namespace}] not in current db [{db.name}](ver:{db.dbver})'
+        raise errors.QueryError(
+            f'NameSpace: [{namespace}] not in current db [{db.name}](ver:{db.dbver}).'
+            f'Current NameSpace(s): [{", ".join(db.ns_map.keys())}]'
         )
     ns = db.ns_map[namespace]
 

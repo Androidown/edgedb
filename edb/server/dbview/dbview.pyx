@@ -692,7 +692,7 @@ cdef class DatabaseConnectionView:
         self.set_session_config(config)
         self.set_globals(globals)
 
-    cdef abort_tx(self):
+    cpdef abort_tx(self):
         if not self.in_tx():
             raise errors.InternalServerError('abort_tx(): not in transaction')
         self._reset_tx_state()
@@ -846,7 +846,7 @@ cdef class DatabaseConnectionView:
             self._db._index._global_schema,
         )
 
-    def resolve_backend_type_id(self, type_id, namespace: defines.DEFAULT_NS):
+    def resolve_backend_type_id(self, type_id, namespace):
         type_id = str(type_id)
 
         if self._in_tx:
@@ -887,7 +887,7 @@ cdef class DatabaseConnectionView:
         self._session_state_db_cache = (self._config, spec)
         return spec
 
-    cdef bint is_state_desc_changed(self, namespace):
+    cpdef bint is_state_desc_changed(self, namespace):
         serializer = self.get_state_serializer(namespace)
         if not self._in_tx:
             # We may have executed a query, or COMMIT/ROLLBACK - just use
@@ -918,7 +918,7 @@ cdef class DatabaseConnectionView:
     cdef describe_state(self, namespace):
         return self.get_state_serializer(namespace).describe()
 
-    cdef encode_state(self):
+    cpdef encode_state(self):
         modaliases = self.get_modaliases()
         session_config = self.get_session_config()
         globals_ = self.get_globals()
@@ -958,7 +958,7 @@ cdef class DatabaseConnectionView:
             state['globals'] = {k: v.value for k, v in globals_.items()}
         return serializer.type_id, serializer.encode(state)
 
-    cdef decode_state(self, type_id, data, namespace):
+    cpdef decode_state(self, type_id, data, namespace):
         if not self._in_tx:
             # make sure we start clean
             self._state_serializer = None
@@ -998,7 +998,7 @@ cdef class DatabaseConnectionView:
         globals_ = immutables.Map({
             k: config.SettingValue(
                 name=k,
-                value=self.recode_global(serializer, k, v),
+                value=self.recode_global(serializer, namespace, k, v),
                 source='global',
                 scope=qltypes.ConfigScope.GLOBAL,
             ) for k, v in state.get('globals', {}).items()
@@ -1010,13 +1010,13 @@ cdef class DatabaseConnectionView:
             aliases, session_config, globals_, type_id, data
         )
 
-    cdef inline recode_global(self, serializer, k, v):
+    cdef inline recode_global(self, serializer, namespace, k, v):
         if v and v[:4] == b'\x00\x00\x00\x01':
             array_type_id = serializer.get_global_array_type_id(k)
             if array_type_id:
                 va = bytearray(v)
                 va[8:12] = INT32_PACKER(
-                    self.resolve_backend_type_id(array_type_id)
+                    self.resolve_backend_type_id(array_type_id, namespace)
                 )
                 v = bytes(va)
         return v
@@ -1038,6 +1038,9 @@ cdef class DatabaseConnectionView:
     @property
     def server(self):
         return self._db._index._server
+
+    def iter_ns_name(self):
+        return iter(self._db.ns_map.keys())
 
     cpdef in_tx(self):
         return self._in_tx
@@ -1095,7 +1098,7 @@ cdef class DatabaseConnectionView:
         if self._in_tx:
             self._tx_error = True
 
-    cdef start(self, query_unit):
+    cpdef start(self, query_unit):
         if self._tx_error:
             self.raise_in_tx_error()
 
@@ -1152,7 +1155,7 @@ cdef class DatabaseConnectionView:
 
         self._apply_in_tx(query_unit)
 
-    cdef on_error(self):
+    cpdef on_error(self):
         self.tx_error()
 
     async def in_tx_persist_schema(self, be_conn):
@@ -1604,7 +1607,7 @@ cdef class DatabaseIndex:
     def unregister_ns(self, dbname, namespace):
         if dbname not in self._dbs:
             return
-        self._dbs[dbname].ns_map.pop(namespace)
+        self._dbs[dbname].ns_map.pop(namespace, None)
 
     def unregister_db(self, dbname):
         self._dbs.pop(dbname)
