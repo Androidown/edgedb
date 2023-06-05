@@ -912,7 +912,7 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
                 else:
                     side_effects = _dbview.on_success(query_unit, new_types)
                     if side_effects:
-                        execute.signal_side_effects(_dbview, query_unit.namespace, side_effects)
+                        execute.signal_side_effects(_dbview, query_unit, side_effects)
                     if not _dbview.in_tx():
                         state = _dbview.serialize_state()
                         if state is not orig_state:

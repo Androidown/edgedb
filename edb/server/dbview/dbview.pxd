@@ -27,9 +27,11 @@ cpdef enum SideEffects:
 
     SchemaChanges = 1 << 0
     DatabaseConfigChanges = 1 << 1
-    InstanceConfigChanges = 1 << 2
-    RoleChanges = 1 << 3
-    GlobalSchemaChanges = 1 << 4
+    DatabaseDrop = 1 << 2
+    DatabaseCreate = 1 << 3
+    InstanceConfigChanges = 1 << 4
+    RoleChanges = 1 << 5
+    GlobalSchemaChanges = 1 << 6
 
 
 @cython.final

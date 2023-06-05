@@ -1976,13 +1976,13 @@ class Compiler:
         is_script = statements_len > 1
 
         if is_script and any(isinstance(stmt, qlast.UseNameSpaceCommand) for stmt in statements):
-            raise errors.ProtocolError(
+            raise errors.QueryError(
                 'USE NAMESPACE statement is not allowed to be used in script.'
             )
 
         if isinstance(statements[0], qlast.UseNameSpaceCommand) and ctx.in_tx:
-            raise errors.ProtocolError(
-                'USE NAMESPACE statement is not allowed to be used in transaction.'
+            raise errors.QueryError(
+                'cannot execute USE NAMESPACE in a transaction'
             )
 
         if ctx.skip_first:

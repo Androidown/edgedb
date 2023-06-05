@@ -27,6 +27,27 @@ class TestNameSpace(tb.DatabaseTestCase):
             [{'name': s_def.DEFAULT_NS}]
         )
 
+    async def test_create_drop_namespace_invalid(self):
+        await self.con.execute("START TRANSACTION")
+
+        with self.assertRaisesRegex(
+                edgedb.QueryError,
+                'cannot execute CREATE NAMESPACE in a transaction',
+        ):
+            await self.con.execute("create namespace ns;")
+
+        await self.con.execute("ROLLBACK")
+
+        await self.con.execute("START TRANSACTION")
+
+        with self.assertRaisesRegex(
+                edgedb.QueryError,
+                'cannot execute DROP NAMESPACE in a transaction',
+        ):
+            await self.con.execute("drop namespace ns;")
+
+        await self.con.execute("ROLLBACK")
+
     async def test_create_namespace_invalid(self):
         with self.assertRaisesRegex(
                 edgedb.SchemaDefinitionError,
@@ -124,7 +145,7 @@ class TestNameSpace(tb.DatabaseTestCase):
                 await self.con.execute("use namespace ns5;")
 
             with self.assertRaisesRegex(
-                    edgedb.ProtocolError,
+                    edgedb.QueryError,
                     'USE NAMESPACE statement is not allowed to be used in script.',
             ):
                 await self.con.execute("use namespace ns4;select 1;")
@@ -132,8 +153,8 @@ class TestNameSpace(tb.DatabaseTestCase):
             await self.con.execute("START TRANSACTION")
 
             with self.assertRaisesRegex(
-                    edgedb.ProtocolError,
-                    'USE NAMESPACE statement is not allowed to be used in transaction.',
+                    edgedb.QueryError,
+                    'cannot execute USE NAMESPACE in a transaction',
             ):
                 await self.con.execute("use namespace ns4;")
 

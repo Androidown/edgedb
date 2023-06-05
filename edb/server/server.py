@@ -1322,7 +1322,7 @@ class Server(ha_base.ClusterProtocol):
             metrics.background_errors.inc(1.0, 'signal_sysevent')
             raise
 
-    def _on_remote_ddl(self, dbname, namespace):
+    def _on_remote_ddl(self, dbname, namespace, drop_ns=None):
         if not self._accept_new_tasks:
             return
 
@@ -1330,7 +1330,11 @@ class Server(ha_base.ClusterProtocol):
         # on the __edgedb_sysevent__ channel
         async def task():
             try:
-                await self.introspect(dbname, namespace)
+                if drop_ns:
+                    assert self._dbindex is not None
+                    self._dbindex.unregister_ns(dbname, drop_ns)
+                else:
+                    await self.introspect(dbname, namespace)
             except Exception:
                 metrics.background_errors.inc(1.0, 'on_remote_ddl')
                 raise

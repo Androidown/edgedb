@@ -369,7 +369,7 @@ async def _execute(
             query_cache[cache_key] = redir
             key_vars2 = tuple(vars[k] for k in key_var_names)
             cache_key2 = (
-                'graphql', prepared_query, key_vars2, operation_name, dbver, query_only, module, limit
+                'graphql', prepared_query, key_vars2, operation_name, dbver, query_only, namespace, module, limit
             )
             query_cache[cache_key2] = qug, gql_op
             if gql_op.is_introspection:

@@ -161,7 +161,7 @@ async def execute(
     else:
         side_effects = dbv.on_success(query_unit, new_types)
         if side_effects:
-            signal_side_effects(dbv, query_unit.namespace, side_effects)
+            signal_side_effects(dbv, query_unit, side_effects)
         if not dbv.in_tx():
             state = dbv.serialize_state()
             if state is not orig_state:
@@ -327,7 +327,7 @@ async def execute_script(
                 global_schema, cached_reflection, unit_group.affected_obj_ids
             )
             if side_effects:
-                signal_side_effects(dbv, query_unit.namespace, side_effects)
+                signal_side_effects(dbv, query_unit, side_effects)
                 if (
                     side_effects & dbview.SideEffects.SchemaChanges
                     and group_mutation is not None
@@ -379,17 +379,38 @@ async def execute_system_config(
         await conn.sql_execute(b'SELECT pg_reload_conf()')
 
 
-def signal_side_effects(dbv, namespace, side_effects):
+def signal_side_effects(dbv, query_unit, side_effects):
     server = dbv.server
     if not server._accept_new_tasks:
         return
 
     if side_effects & dbview.SideEffects.SchemaChanges:
+        if query_unit.create_ns:
+            namespace = query_unit.create_ns
+        else:
+            namespace = query_unit.namespace
         server.create_task(
             server._signal_sysevent(
                 'schema-changes',
                 dbname=dbv.dbname,
                 namespace=namespace,
+                drop_ns=query_unit.drop_ns
+            ),
+            interruptable=False,
+        )
+    if side_effects & dbview.SideEffects.DatabaseCreate:
+        server.create_task(
+            server._signal_sysevent(
+                'database-create',
+                dbname=query_unit.create_db,
+            ),
+            interruptable=False,
+        )
+    if side_effects & dbview.SideEffects.DatabaseDrop:
+        server.create_task(
+            server._signal_sysevent(
+                'database-drop',
+                dbname=query_unit.drop_db,
             ),
             interruptable=False,
         )

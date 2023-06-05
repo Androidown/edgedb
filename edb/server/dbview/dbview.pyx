@@ -1186,6 +1186,7 @@ cdef class DatabaseConnectionView:
             not self._in_tx
             and side_effects
             and (side_effects & SideEffects.SchemaChanges)
+            and not (query_unit.create_ns or query_unit.drop_ns)
         ):
             self.save_schema_mutation(
                 query_unit.namespace,
@@ -1217,6 +1218,15 @@ cdef class DatabaseConnectionView:
                 if query_unit.stdview_sqls:
                     self._db.schedule_stdobj_inhview_update(query_unit.stdview_sqls)
                 side_effects |= SideEffects.SchemaChanges
+
+            if query_unit.create_ns or query_unit.drop_ns:
+                self._db.dbver = next_dbver()
+                side_effects |= SideEffects.SchemaChanges
+            if query_unit.create_db:
+                side_effects |= SideEffects.DatabaseCreate
+            if query_unit.drop_db:
+                side_effects |= SideEffects.DatabaseDrop
+
             if query_unit.system_config:
                 side_effects |= SideEffects.InstanceConfigChanges
             if query_unit.database_config:
