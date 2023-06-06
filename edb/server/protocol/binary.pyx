@@ -2005,7 +2005,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
                 _dbview.abort_tx()
             raise
         else:
-            await _dbview.on_success(query_unit, {})
+            _dbview.on_success(query_unit, {})
 
     async def restore(self):
         cdef:
@@ -2145,7 +2145,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
                     _dbview.on_error()
                     raise
                 else:
-                    await _dbview.on_success(query_unit, new_types)
+                    _dbview.on_success(query_unit, new_types)
 
             restore_blocks = {
                 b.schema_object_id: b

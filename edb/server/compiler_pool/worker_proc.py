@@ -25,6 +25,8 @@ import signal
 import time
 import traceback
 
+import uvloop
+
 from edb.common import debug
 from edb.common import devmode
 from edb.common import markup
@@ -73,6 +75,8 @@ def worker(sockname, version_serial, get_handler):
 
 
 def run_worker(sockname, version_serial, get_handler):
+    # asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+
     with devmode.CoverageConfig.enable_coverage_if_requested():
         worker(sockname, version_serial, get_handler)
 
