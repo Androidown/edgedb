@@ -75,7 +75,7 @@ def worker(sockname, version_serial, get_handler):
 
 
 def run_worker(sockname, version_serial, get_handler):
-    # asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 
     with devmode.CoverageConfig.enable_coverage_if_requested():
         worker(sockname, version_serial, get_handler)
