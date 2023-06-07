@@ -859,6 +859,7 @@ class TestServerProto(tb.QueryTestCase):
         lock_key = tb.gen_lock_key()
 
         con2 = await self.connect(database=self.con.dbname)
+        await con2.execute(f"use namespace {self.test_ns}")
 
         await self.con.query('START TRANSACTION')
         await self.con.query(
@@ -1416,6 +1417,7 @@ class TestServerProto(tb.QueryTestCase):
         # to make sure that Opportunistic Execute isn't used.
 
         con2 = await self.connect(database=self.con.dbname)
+        await con2.execute(f"use namespace {self.test_ns}")
 
         try:
             with self.assertRaises(edgedb.DivisionByZeroError):
@@ -1448,6 +1450,7 @@ class TestServerProto(tb.QueryTestCase):
         # to make sure that "ROLLBACK" is cached.
 
         con2 = await self.connect(database=self.con.dbname)
+        await con2.execute(f"use namespace {self.test_ns}")
 
         try:
             for _ in range(5):
@@ -1521,6 +1524,7 @@ class TestServerProto(tb.QueryTestCase):
         query = 'SELECT 1'
 
         con2 = await self.connect(database=self.con.dbname)
+        await con2.execute(f"use namespace {self.test_ns}")
         try:
             for _ in range(5):
                 self.assertEqual(
@@ -1867,6 +1871,7 @@ class TestServerProto(tb.QueryTestCase):
     async def test_server_proto_tx_17(self):
         con1 = self.con
         con2 = await self.connect(database=con1.dbname)
+        await con2.execute(f"use namespace {self.test_ns}")
 
         tx1 = con1.transaction()
         tx2 = con2.transaction()
@@ -2183,6 +2188,10 @@ class TestServerProtoDDL(tb.DDLTestCase):
 
     TRANSACTION_ISOLATION = False
 
+    SETUP = '''
+        CONFIGURE SESSION SET __internal_testmode := true;
+    '''
+
     async def test_server_proto_create_db_01(self):
         if not self.has_create_database:
             self.skipTest('create database is not supported by the backend')
@@ -2224,6 +2233,8 @@ class TestServerProtoDDL(tb.DDLTestCase):
         con1 = self.con
         con2 = await self.connect(database=con1.dbname)
         try:
+            await con2.execute(f"use namespace {self.test_ns}")
+            await con2.execute("CONFIGURE SESSION SET __internal_testmode := true;")
             await con2.execute(f'''
                 CREATE TYPE {typename} {{
                     CREATE REQUIRED PROPERTY prop1 -> std::str;
@@ -2271,6 +2282,8 @@ class TestServerProtoDDL(tb.DDLTestCase):
         con1 = self.con
         con2 = await self.connect(database=con1.dbname)
         try:
+            await con2.execute(f"use namespace {self.test_ns}")
+            await con2.execute("CONFIGURE SESSION SET __internal_testmode := true;")
             await con2.query(f'''
                 CREATE TYPE {typename} {{
                     CREATE REQUIRED PROPERTY prop1 -> std::str;
@@ -2326,6 +2339,8 @@ class TestServerProtoDDL(tb.DDLTestCase):
         con1 = self.con
         con2 = await self.connect(database=con1.dbname)
         try:
+            await con2.execute(f"use namespace {self.test_ns}")
+            await con2.execute("CONFIGURE SESSION SET __internal_testmode := true;")
             await con2.execute(f'''
                 CREATE TYPE {typename} {{
                     CREATE REQUIRED PROPERTY prop1 -> array<std::str>;
@@ -2364,6 +2379,8 @@ class TestServerProtoDDL(tb.DDLTestCase):
                     await con1.query(query),
                     edgedb.Set([[1, 23]]))
 
+            await con2.execute("CONFIGURE SESSION SET __internal_testmode := false;")
+
         finally:
             await con2.aclose()
 
@@ -2373,6 +2390,8 @@ class TestServerProtoDDL(tb.DDLTestCase):
         con1 = self.con
         con2 = await self.connect(database=con1.dbname)
         try:
+            await con2.execute(f"use namespace {self.test_ns}")
+            await con2.execute("CONFIGURE SESSION SET __internal_testmode := true;")
             await con2.execute(f'''
                 CREATE TYPE {typename} {{
                     CREATE REQUIRED PROPERTY prop1 -> std::str;
@@ -2420,6 +2439,8 @@ class TestServerProtoDDL(tb.DDLTestCase):
         con1 = self.con
         con2 = await self.connect(database=con1.dbname)
         try:
+            await con2.execute(f"use namespace {self.test_ns}")
+            await con2.execute("CONFIGURE SESSION SET __internal_testmode := true;")
             await con2.execute(f'''
                 CREATE TYPE {typename} {{
                     CREATE REQUIRED PROPERTY prop1 -> std::str;
@@ -2477,6 +2498,8 @@ class TestServerProtoDDL(tb.DDLTestCase):
         con1 = self.con
         con2 = await self.connect(database=con1.dbname)
         try:
+            await con2.execute(f"use namespace {self.test_ns}")
+            await con2.execute("CONFIGURE SESSION SET __internal_testmode := true;")
             await con2.execute(f'''
                 CREATE TYPE Foo{typename};
 
@@ -2534,6 +2557,8 @@ class TestServerProtoDDL(tb.DDLTestCase):
         con1 = self.con
         con2 = await self.connect(database=con1.dbname)
         try:
+            await con2.execute(f"use namespace {self.test_ns}")
+            await con2.execute("CONFIGURE SESSION SET __internal_testmode := true;")
             await con2.execute(f'''
                 CREATE TYPE Foo{typename};
 

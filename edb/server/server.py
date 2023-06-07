@@ -78,7 +78,7 @@ if TYPE_CHECKING:
 ADMIN_PLACEHOLDER = "<edgedb:admin>"
 logger = logging.getLogger('edb.server')
 log_metrics = logging.getLogger('edb.server.metrics')
-_RE_BYTES_REPL_NS = re.compile(
+_RE_STR_REPL_NS = re.compile(
     r'(current_setting\([\']+)?'
     r'(edgedb)(\.|instdata|pub\.|pub;|pub\'|ss|std\.|std\'|std;|;)([\"a-z0-9_\-]+)?',
 )
@@ -86,6 +86,7 @@ _RE_BYTES_REPL_NS = re.compile(
 
 def repl_ignore_setting(match_obj):
     maybe_setting, schema_name, tailing, maybe_domain_name = match_obj.groups()
+    # skip changing pg_catalog.current_setting('edgedb.xxx')
     if maybe_setting:
         return maybe_setting + schema_name + tailing + (maybe_domain_name or '')
     if maybe_domain_name:
@@ -960,7 +961,7 @@ class Server(ha_base.ClusterProtocol):
                 WHERE key = 'local_intro_query';
             ''')
 
-            self._local_intro_query = _RE_BYTES_REPL_NS.sub(
+            self._local_intro_query = _RE_STR_REPL_NS.sub(
                 repl_ignore_setting,
                 local_intro_query.decode('utf-8'),
             )
@@ -1012,7 +1013,7 @@ class Server(ha_base.ClusterProtocol):
             else:
                 ns_tpl_sql = tpldbdump.decode()
 
-            self._ns_tpl_sql = _RE_BYTES_REPL_NS.sub(repl_ignore_setting, ns_tpl_sql)
+            self._ns_tpl_sql = _RE_STR_REPL_NS.sub(repl_ignore_setting, ns_tpl_sql)
 
         finally:
             self._release_sys_pgcon()
