@@ -67,6 +67,7 @@ from edb.server import defines as edbdef
 from edb.server.compiler import errormech
 from edb.server.compiler import enums
 from edb.server.compiler import sertypes
+from edb.server.compiler.compiler import RestoreSchemaInfo
 from edb.server.protocol import execute
 from edb.server.protocol cimport frontend
 from edb.server.pgcon cimport pgcon
@@ -117,6 +118,7 @@ DEF QUERY_HEADER_ALLOW_CAPABILITIES = 0xFF04
 DEF QUERY_HEADER_EXPLICIT_OBJECTIDS = 0xFF05
 DEF QUERY_HEADER_EXPLICIT_MODULE = 0xFF06
 DEF QUERY_HEADER_PROHIBIT_MUTATION = 0xFF07
+DEF QUERY_HEADER_EXPLICIT_NS = 0xFF08
 
 DEF SERVER_HEADER_CAPABILITIES = 0x1001
 
@@ -165,6 +167,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         self.loop = server.get_loop()
         self._dbview = None
         self.dbname = None
+        self.namespace = None
 
         self._transport = None
         self.buffer = ReadBuffer()
@@ -475,7 +478,9 @@ cdef class EdgeConnection(frontend.FrontendConnection):
                 f'accept connections'
             )
 
-        await self._start_connection(database)
+        namespace = params.get('namespace', edbdef.DEFAULT_NS)
+
+        await self._start_connection(database, namespace)
 
         # The user has already been authenticated by other means
         # (such as the ability to write to a protected socket).
@@ -586,7 +591,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
 
         return params
 
-    async def _start_connection(self, database: str) -> None:
+    async def _start_connection(self, database: str, namespace: str) -> None:
         dbv = await self.server.new_dbview(
             dbname=database,
             query_cache=self.query_cache_enabled,
@@ -595,6 +600,8 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         assert type(dbv) is dbview.DatabaseConnectionView
         self._dbview = <dbview.DatabaseConnectionView>dbv
         self.dbname = database
+        dbv.valid_namespace(namespace)
+        self.namespace = namespace
 
         self._con_status = EDGECON_STARTED
 
@@ -1004,10 +1011,10 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         msg.end_message()
         return msg
 
-    cdef WriteBuffer make_state_data_description_msg(self):
+    cdef WriteBuffer make_state_data_description_msg(self, namespace=None):
         cdef WriteBuffer msg
 
-        type_id, type_data = self.get_dbview().describe_state()
+        type_id, type_data = self.get_dbview().describe_state(namespace or self.namespace)
 
         msg = WriteBuffer.new_message(b's')
         msg.write_bytes(type_id.bytes)
@@ -1091,7 +1098,8 @@ cdef class EdgeConnection(frontend.FrontendConnection):
                 EdgeSeverity.EDGE_SEVERITY_NOTICE,
                 errors.LogMessage.get_code(),
                 'server restart is required for the configuration '
-                'change to take effect')
+                'change to take effect'
+            )
 
     cdef dbview.QueryRequestInfo parse_execute_request(self):
         cdef:
@@ -1139,7 +1147,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         state_tid = self.buffer.read_bytes(16)
         state_data = self.buffer.read_len_prefixed_bytes()
         try:
-            self.get_dbview().decode_state(state_tid, state_data)
+            self.get_dbview().decode_state(state_tid, state_data, self.namespace)
         except errors.StateMismatchError:
             self.write(self.make_state_data_description_msg())
             raise
@@ -1154,6 +1162,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
             inline_typenames=inline_typenames,
             inline_objectids=inline_objectids,
             allow_capabilities=allow_capabilities,
+            namespace=self.namespace
         )
 
     async def parse(self):
@@ -1264,16 +1273,21 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         elif len(query_unit_group) > 1:
             await self._execute_script(compiled, args)
         else:
-            use_prep = (
-                len(query_unit_group) == 1
-                and bool(query_unit_group[0].sql_hash)
-            )
-            await self._execute(compiled, args, use_prep)
+            if len(query_unit_group) == 1 and query_unit_group[0].ns_to_switch is not None:
+                new_ns = query_unit_group[0].ns_to_switch
+                self.get_dbview().valid_namespace(new_ns)
+                self.namespace = query_unit_group[0].ns_to_switch
+            else:
+                use_prep = (
+                    len(query_unit_group) == 1
+                    and bool(query_unit_group[0].sql_hash)
+                )
+                await self._execute(compiled, args, use_prep)
 
         if self._cancelled:
             raise ConnectionAbortedError
 
-        if _dbview.is_state_desc_changed():
+        if _dbview.is_state_desc_changed(self.namespace):
             self.write(self.make_state_data_description_msg())
         self.write(
             self.make_command_complete_msg(
@@ -1438,6 +1452,11 @@ cdef class EdgeConnection(frontend.FrontendConnection):
 
                     await self.recover_from_error()
 
+                    try:
+                        self.get_dbview().valid_namespace(self.namespace)
+                    except Exception:
+                        self.namespace = edbdef.DEFAULT_NS
+
                 else:
                     self.buffer.finish_message()
 
@@ -1575,7 +1594,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
             # only use the backend if schema is required
             if static_exc is errormech.SchemaRequired:
                 exc = errormech.interpret_backend_error(
-                    self.get_dbview().get_schema(),
+                    self.get_dbview().get_schema(self.namespace),
                     exc.fields
                 )
             elif isinstance(static_exc, (
@@ -1583,6 +1602,11 @@ cdef class EdgeConnection(frontend.FrontendConnection):
                     errors.UnknownDatabaseError)):
                 tenant_id = self.server.get_tenant_id()
                 message = static_exc.args[0].replace(f'{tenant_id}_', '')
+                exc = type(static_exc)(message)
+            elif isinstance(static_exc,
+                (errors.DuplicateNameSpaceDefinitionError, errors.UnknownSchemaError)
+            ):
+                message = static_exc.args[0].replace('schema', 'namespace').replace('_edgedbext', '')
                 exc = type(static_exc)(message)
             else:
                 exc = static_exc
@@ -1793,6 +1817,18 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         self._write_waiter.set_result(True)
 
     async def dump(self):
+        await self._dump()
+
+        msg_buf = WriteBuffer.new_message(b'C')
+        msg_buf.write_int16(0)  # no headers
+        msg_buf.write_int64(0)  # capabilities
+        msg_buf.write_len_prefixed_bytes(b'DUMP')
+        msg_buf.write_bytes(sertypes.NULL_TYPE_ID.bytes)
+        msg_buf.write_len_prefixed_bytes(b'')
+        self.write(msg_buf.end_message())
+        self.flush()
+
+    async def _dump(self):
         cdef:
             WriteBuffer msg_buf
             dbview.DatabaseConnectionView _dbview
@@ -1825,7 +1861,11 @@ cdef class EdgeConnection(frontend.FrontendConnection):
             #
             # This guarantees that every pg connection and the compiler work
             # with the same DB state.
-            user_schema = await server.introspect_user_schema(dbname, pgcon)
+
+            global_schema = await server.introspect_global_schema(pgcon)
+            db_config = await server.introspect_db_config(pgcon)
+            dump_protocol = self.max_protocol
+
 
             await pgcon.sql_execute(
                 b'''START TRANSACTION
@@ -1840,27 +1880,10 @@ cdef class EdgeConnection(frontend.FrontendConnection):
                     SET statement_timeout = 0;
                 ''',
             )
-            global_schema = await server.introspect_global_schema(pgcon)
-            db_config = await server.introspect_db_config(pgcon)
-            dump_protocol = self.max_protocol
 
-            schema_ddl, schema_dynamic_ddl, schema_ids, blocks, external_ids = (
-                await compiler_pool.describe_database_dump(
-                    user_schema,
-                    global_schema,
-                    db_config,
-                    dump_protocol,
-                )
-            )
-
-            if schema_dynamic_ddl:
-                for query in schema_dynamic_ddl:
-                    result = await pgcon.sql_fetch_val(query.encode('utf-8'))
-                    if result:
-                        schema_ddl += '\n' + result.decode('utf-8')
+            namespaces = list(_dbview.iter_ns_name())
 
             msg_buf = WriteBuffer.new_message(b'@')
-
             msg_buf.write_int16(4)  # number of headers
             msg_buf.write_int16(DUMP_HEADER_BLOCK_TYPE)
             msg_buf.write_len_prefixed_bytes(DUMP_HEADER_BLOCK_TYPE_INFO)
@@ -1868,48 +1891,73 @@ cdef class EdgeConnection(frontend.FrontendConnection):
             msg_buf.write_len_prefixed_utf8(str(buildmeta.get_version()))
             msg_buf.write_int16(DUMP_HEADER_SERVER_TIME)
             msg_buf.write_len_prefixed_utf8(str(int(time.time())))
-
-            # adding external ddl & external ids
-            msg_buf.write_int16(DUMP_EXTERNAL_VIEW)
-            external_views = await self.external_views(external_ids, pgcon)
-            msg_buf.write_int32(len(external_views))
-            for name, view_sql in external_views:
-                if isinstance(name, tuple):
-                    msg_buf.write_int16(DUMP_EXTERNAL_KEY_LINK)
-                    msg_buf.write_len_prefixed_utf8(name[0])
-                    msg_buf.write_len_prefixed_utf8(name[1])
-                else:
-                    msg_buf.write_int16(DUMP_EXTERNAL_KEY_OBJ)
-                    msg_buf.write_len_prefixed_utf8(name)
-                msg_buf.write_len_prefixed_utf8(view_sql)
+            msg_buf.write_int16(DUMP_NAMESPACE_COUNT)
+            msg_buf.write_int32(len(namespaces))
 
             msg_buf.write_int16(dump_protocol[0])
             msg_buf.write_int16(dump_protocol[1])
 
-            msg_buf.write_len_prefixed_utf8(schema_ddl)
+            all_blocks = []
 
-            msg_buf.write_int32(len(schema_ids))
-            for (tn, td, tid) in schema_ids:
-                msg_buf.write_len_prefixed_utf8(tn)
-                msg_buf.write_len_prefixed_utf8(td)
-                assert len(tid) == 16
-                msg_buf.write_bytes(tid)  # uuid
+            for ns in namespaces:
+                user_schema = await server.introspect_user_schema(dbname, ns, pgcon)
 
-            msg_buf.write_int32(len(blocks))
-            for block in blocks:
-                assert len(block.schema_object_id.bytes) == 16
-                msg_buf.write_bytes(block.schema_object_id.bytes)  # uuid
-                msg_buf.write_len_prefixed_bytes(block.type_desc)
+                schema_ddl, schema_dynamic_ddl, schema_ids, blocks, external_ids = (
+                    await compiler_pool.describe_database_dump(
+                        ns,
+                        user_schema,
+                        global_schema,
+                        db_config,
+                        dump_protocol,
+                    )
+                )
 
-                msg_buf.write_int16(len(block.schema_deps))
-                for depid in block.schema_deps:
-                    assert len(depid.bytes) == 16
-                    msg_buf.write_bytes(depid.bytes)  # uuid
+                if schema_dynamic_ddl:
+                    for query in schema_dynamic_ddl:
+                        result = await pgcon.sql_fetch_val(query.encode('utf-8'))
+                        if result:
+                            schema_ddl += '\n' + result.decode('utf-8')
+
+                all_blocks.extend(blocks)
+
+                msg_buf.write_len_prefixed_utf8(ns)
+
+                external_views = await self.external_views(external_ids, pgcon)
+                msg_buf.write_int32(len(external_views))
+                for name, view_sql in external_views:
+                    if isinstance(name, tuple):
+                        msg_buf.write_int16(DUMP_EXTERNAL_KEY_LINK)
+                        msg_buf.write_len_prefixed_utf8(name[0])
+                        msg_buf.write_len_prefixed_utf8(name[1])
+                    else:
+                        msg_buf.write_int16(DUMP_EXTERNAL_KEY_OBJ)
+                        msg_buf.write_len_prefixed_utf8(name)
+                    msg_buf.write_len_prefixed_utf8(view_sql)
+
+                msg_buf.write_len_prefixed_utf8(schema_ddl)
+
+                msg_buf.write_int32(len(schema_ids))
+                for (tn, td, tid) in schema_ids:
+                    msg_buf.write_len_prefixed_utf8(tn)
+                    msg_buf.write_len_prefixed_utf8(td)
+                    assert len(tid) == 16
+                    msg_buf.write_bytes(tid)  # uuid
+
+                msg_buf.write_int32(len(blocks))
+                for block in blocks:
+                    assert len(block.schema_object_id.bytes) == 16
+                    msg_buf.write_bytes(block.schema_object_id.bytes)  # uuid
+                    msg_buf.write_len_prefixed_bytes(block.type_desc)
+
+                    msg_buf.write_int16(len(block.schema_deps))
+                    for depid in block.schema_deps:
+                        assert len(depid.bytes) == 16
+                        msg_buf.write_bytes(depid.bytes)  # uuid
 
             self._transport.write(memoryview(msg_buf.end_message()))
             self.flush()
 
-            blocks_queue = collections.deque(blocks)
+            blocks_queue = collections.deque(all_blocks)
             output_queue = asyncio.Queue(maxsize=2)
 
             async with taskgroup.TaskGroup() as g:
@@ -1958,15 +2006,6 @@ cdef class EdgeConnection(frontend.FrontendConnection):
             self._in_dump_restore = False
             server.release_pgcon(dbname, pgcon)
 
-        msg_buf = WriteBuffer.new_message(b'C')
-        msg_buf.write_int16(0)  # no headers
-        msg_buf.write_int64(0)  # capabilities
-        msg_buf.write_len_prefixed_bytes(b'DUMP')
-        msg_buf.write_bytes(sertypes.NULL_TYPE_ID.bytes)
-        msg_buf.write_len_prefixed_bytes(b'')
-        self.write(msg_buf.end_message())
-        self.flush()
-
     async def external_views(self, external_ids: List[Tuple[str, str]], pgcon):
         views = []
         for ext_name, ext_id in external_ids:
@@ -2007,7 +2046,75 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         else:
             _dbview.on_success(query_unit, {})
 
+    def restore_external_views(self):
+        external_views = []
+        external_view_num = self.buffer.read_int32()
+        for _ in range(external_view_num):
+            key_flag = self.buffer.read_int16()
+            if key_flag == DUMP_EXTERNAL_KEY_LINK:
+                obj_name = self.buffer.read_len_prefixed_utf8()
+                link_name = self.buffer.read_len_prefixed_utf8()
+                sql = self.buffer.read_len_prefixed_utf8()
+                external_views.append(((obj_name, link_name), sql))
+            else:
+                name = self.buffer.read_len_prefixed_utf8()
+                sql = self.buffer.read_len_prefixed_utf8()
+                external_views.append((name, sql))
+        return external_views
+
+    def restore_schema_info(self, external_views=None):
+        if external_views is not None:
+            external_views = external_views
+        else:
+            external_views = self.restore_external_views()
+
+        schema_ddl = self.buffer.read_len_prefixed_bytes()
+
+        ids_num = self.buffer.read_int32()
+        schema_ids = []
+        for _ in range(ids_num):
+            schema_ids.append(
+                (
+                    self.buffer.read_len_prefixed_utf8(),
+                    self.buffer.read_len_prefixed_utf8(),
+                    self.buffer.read_bytes(16),
+                )
+            )
+
+        block_num = <uint32_t> self.buffer.read_int32()
+        blocks = []
+        for _ in range(block_num):
+            blocks.append(
+                (
+                    self.buffer.read_bytes(16),
+                    self.buffer.read_len_prefixed_bytes(),
+                )
+            )
+
+            # Ignore deps info
+            for _ in range(self.buffer.read_int16()):
+                self.buffer.read_bytes(16)
+
+        return RestoreSchemaInfo(
+            schema_ddl=schema_ddl, schema_ids=schema_ids, blocks=blocks, external_views=external_views
+        )
+
+
     async def restore(self):
+        await self._restore()
+
+        state_tid, state_data = self.get_dbview().encode_state()
+
+        msg = WriteBuffer.new_message(b'C')
+        msg.write_int16(0)  # no headers
+        msg.write_int64(0)  # capabilities
+        msg.write_len_prefixed_bytes(b'RESTORE')
+        msg.write_bytes(state_tid.bytes)
+        msg.write_len_prefixed_bytes(state_data)
+        self.write(msg.end_message())
+        self.flush()
+
+    async def _restore(self):
         cdef:
             WriteBuffer msg_buf
             char mtype
@@ -2026,33 +2133,26 @@ cdef class EdgeConnection(frontend.FrontendConnection):
 
         server = self.server
         compiler_pool = server.get_compiler_pool()
-
         global_schema = _dbview.get_global_schema()
-        user_schema = _dbview.get_user_schema()
 
         dump_server_ver_str = None
         headers_num = self.buffer.read_int16()
-        external_views = []
+        ns_count = 0
+        schema_info_by_ns: Dict[str,  RestoreSchemaInfo] = {}
+        external_views=[]
+        default_ns = edbdef.DEFAULT_NS
+
         for _ in range(headers_num):
             hdrname = self.buffer.read_int16()
-            if hdrname != DUMP_EXTERNAL_VIEW:
+
+            if hdrname not in [DUMP_EXTERNAL_VIEW, DUMP_NAMESPACE_COUNT]:
                 hdrval = self.buffer.read_len_prefixed_bytes()
             if hdrname == DUMP_HEADER_SERVER_VER:
                 dump_server_ver_str = hdrval.decode('utf-8')
-            # getting external ddl & external ids
-            if hdrname == DUMP_EXTERNAL_VIEW:
-                external_view_num = self.buffer.read_int32()
-                for _ in range(external_view_num):
-                    key_flag = self.buffer.read_int16()
-                    if key_flag == DUMP_EXTERNAL_KEY_LINK:
-                        obj_name = self.buffer.read_len_prefixed_utf8()
-                        link_name = self.buffer.read_len_prefixed_utf8()
-                        sql = self.buffer.read_len_prefixed_utf8()
-                        external_views.append(((obj_name, link_name), sql))
-                    else:
-                        name = self.buffer.read_len_prefixed_utf8()
-                        sql = self.buffer.read_len_prefixed_utf8()
-                        external_views.append((name, sql))
+            elif hdrname == DUMP_EXTERNAL_VIEW:
+                external_views = self.restore_external_views()
+            elif hdrname == DUMP_NAMESPACE_COUNT:
+                ns_count = self.buffer.read_int32()
 
         proto_major = self.buffer.read_int16()
         proto_minor = self.buffer.read_int16()
@@ -2061,36 +2161,30 @@ cdef class EdgeConnection(frontend.FrontendConnection):
             raise errors.ProtocolError(
                 f'unsupported dump version {proto_major}.{proto_minor}')
 
-        schema_ddl = self.buffer.read_len_prefixed_bytes()
-
-        ids_num = self.buffer.read_int32()
-        schema_ids = []
-        for _ in range(ids_num):
-            schema_ids.append((
-                self.buffer.read_len_prefixed_utf8(),
-                self.buffer.read_len_prefixed_utf8(),
-                self.buffer.read_bytes(16),
-            ))
-
-        block_num = <uint32_t>self.buffer.read_int32()
-        blocks = []
-        for _ in range(block_num):
-            blocks.append((
-                self.buffer.read_bytes(16),
-                self.buffer.read_len_prefixed_bytes(),
-            ))
-
-            # Ignore deps info
-            for _ in range(self.buffer.read_int16()):
-                self.buffer.read_bytes(16)
+        if ns_count > 0:
+            for _ in range(ns_count):
+                ns = self.buffer.read_len_prefixed_utf8()
+                schema_info_by_ns[ns] = self.restore_schema_info()
+        else:
+            schema_info_by_ns[default_ns] = self.restore_schema_info(external_views=external_views)
 
         self.buffer.finish_message()
         dbname = _dbview.dbname
         pgcon = await server.acquire_pgcon(dbname)
 
         self._in_dump_restore = True
+
+        for ns in schema_info_by_ns:
+            if ns == edbdef.DEFAULT_NS:
+                continue
+            await server.create_namespace(pgcon, ns)
+            await self._execute_utility_stmt(f'CREATE NAMESPACE {ns}', pgcon)
+            await server.introspect(dbname, ns)
+
         try:
-            _dbview.decode_state(sertypes.NULL_TYPE_ID.bytes, b'')
+            all_restore_blocks = []
+            all_tables = []
+
             await self._execute_utility_stmt(
                 'START TRANSACTION ISOLATION SERIALIZABLE',
                 pgcon,
@@ -2105,56 +2199,63 @@ cdef class EdgeConnection(frontend.FrontendConnection):
                     SET statement_timeout = 0;
                 ''',
             )
+            for ns, (schema_ddl, schema_ids, blocks, external_views) in schema_info_by_ns.items():
+                logger.info(f"Restoring namespace: {ns}...")
+                user_schema = _dbview.get_user_schema(ns)
+                _dbview.decode_state(sertypes.NULL_TYPE_ID.bytes, b'', ns)
 
-            schema_sql_units, restore_blocks, tables = \
-                await compiler_pool.describe_database_restore(
-                    user_schema,
-                    global_schema,
-                    dump_server_ver_str,
-                    schema_ddl,
-                    schema_ids,
-                    blocks,
-                    proto,
-                    dict(external_views)
-                )
+                schema_sql_units, restore_blocks, tables = \
+                    await compiler_pool.describe_database_restore(
+                        ns,
+                        user_schema,
+                        global_schema,
+                        dump_server_ver_str,
+                        schema_ddl,
+                        schema_ids,
+                        blocks,
+                        proto,
+                        dict(external_views)
+                    )
+                all_restore_blocks.extend(restore_blocks)
+                all_tables.extend(tables)
 
-            for query_unit in schema_sql_units:
-                new_types = None
-                _dbview.start(query_unit)
+                for query_unit in schema_sql_units:
+                    new_types = None
+                    _dbview.start(query_unit)
 
-                try:
-                    if query_unit.config_ops:
-                        for op in query_unit.config_ops:
-                            if op.scope is config.ConfigScope.INSTANCE:
-                                raise errors.ProtocolError(
-                                    'CONFIGURE INSTANCE cannot be executed'
-                                    ' in dump restore'
-                                )
+                    try:
+                        if query_unit.config_ops:
+                            for op in query_unit.config_ops:
+                                if op.scope is config.ConfigScope.INSTANCE:
+                                    raise errors.ProtocolError(
+                                        'CONFIGURE INSTANCE cannot be executed'
+                                        ' in dump restore'
+                                    )
 
-                    if query_unit.sql:
-                        if query_unit.ddl_stmt_id:
-                            ddl_ret = await pgcon.run_ddl(query_unit)
-                            if ddl_ret and ddl_ret['new_types']:
-                                new_types = ddl_ret['new_types']
-                            if query_unit.schema_refl_sqls:
-                                # no performance optimization
-                                await pgcon.sql_execute(query_unit.schema_refl_sqls)
-                        else:
-                            await pgcon.sql_execute(query_unit.sql)
-                except Exception:
-                    _dbview.on_error()
-                    raise
-                else:
-                    _dbview.on_success(query_unit, new_types)
+                        if query_unit.sql:
+                            if query_unit.ddl_stmt_id:
+                                ddl_ret = await pgcon.run_ddl(query_unit)
+                                if ddl_ret and ddl_ret['new_types']:
+                                    new_types = ddl_ret['new_types']
+                                if query_unit.schema_refl_sqls:
+                                    # no performance optimization
+                                    await pgcon.sql_execute(query_unit.schema_refl_sqls)
+                            else:
+                                await pgcon.sql_execute(query_unit.sql)
+                    except Exception:
+                        _dbview.on_error()
+                        raise
+                    else:
+                        _dbview.on_success(query_unit, new_types)
 
             restore_blocks = {
                 b.schema_object_id: b
-                for b in restore_blocks
+                for b in all_restore_blocks
             }
 
             disable_trigger_q = ''
             enable_trigger_q = ''
-            for table in tables:
+            for table in all_tables:
                 disable_trigger_q += (
                     f'ALTER TABLE {table} DISABLE TRIGGER ALL;'
                 )
@@ -2230,21 +2331,11 @@ cdef class EdgeConnection(frontend.FrontendConnection):
             self._in_dump_restore = False
             server.release_pgcon(dbname, pgcon)
 
-        await server.introspect_db(dbname)
+        await server.introspect(dbname)
 
-        if _dbview.is_state_desc_changed():
-            self.write(self.make_state_data_description_msg())
-
-        state_tid, state_data = _dbview.encode_state()
-
-        msg = WriteBuffer.new_message(b'C')
-        msg.write_int16(0)  # no headers
-        msg.write_int64(0)  # capabilities
-        msg.write_len_prefixed_bytes(b'RESTORE')
-        msg.write_bytes(state_tid.bytes)
-        msg.write_len_prefixed_bytes(state_data)
-        self.write(msg.end_message())
-        self.flush()
+        for ns in schema_info_by_ns:
+            if _dbview.is_state_desc_changed(ns):
+                self.write(self.make_state_data_description_msg())
 
     def _build_type_id_map_for_restore_mending(self, restore_block):
         type_map = {}
@@ -2261,6 +2352,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
                     type_map[desc.schema_type_id] = (
                         self.get_dbview().resolve_backend_type_id(
                             desc.schema_type_id,
+                            self.namespace
                         )
                     )
 
@@ -2368,7 +2460,7 @@ async def run_script(
         EdgeConnection conn
         dbview.CompiledQuery compiled
     conn = new_edge_connection(server)
-    await conn._start_connection(database)
+    await conn._start_connection(database, edbdef.DEFAULT_NS)
     try:
         compiled = await conn.get_dbview().parse(
             dbview.QueryRequestInfo(

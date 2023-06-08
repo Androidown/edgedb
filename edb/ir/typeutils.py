@@ -322,6 +322,11 @@ def type_to_typeref(
         else:
             ancestors = None
 
+        if isinstance(t, s_scalars.ScalarType):
+            has_enum = (t.get_enum_values(schema) is not None)
+        else:
+            has_enum = False
+
         result = irast.TypeRef(
             id=t.id,
             name_hint=name,
@@ -338,6 +343,7 @@ def type_to_typeref(
             is_abstract=t.get_abstract(schema),
             is_view=t.is_view(schema),
             is_opaque_union=t.get_is_opaque_union(schema),
+            has_enum=has_enum,
         )
     elif isinstance(t, s_types.Tuple) and t.is_named(schema):
         schema, material_type = t.material_type(schema)

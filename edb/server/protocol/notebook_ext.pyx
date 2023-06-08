@@ -175,7 +175,7 @@ async def execute(db, server, queries: list):
     dbv = await server.new_dbview(
         dbname=db.name,
         query_cache=False,
-        protocol_version=edbdef.CURRENT_PROTOCOL,
+        protocol_version=edbdef.CURRENT_PROTOCOL
     )
 
     bind_data = None

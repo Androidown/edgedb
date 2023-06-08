@@ -26,7 +26,7 @@ import base64
 import re
 
 from edb.common import uuidgen
-from edb.schema import abc as s_abc
+from edb.schema import abc as s_abc, defines
 from edb.schema import casts as s_casts
 from edb.schema import constraints as s_constr
 from edb.schema import defines as s_def
@@ -45,6 +45,7 @@ from . import keywords as pg_keywords
 
 RE_LINK_TRIGGER = re.compile(r'(source|target)-del-(def|imm)-(inl|otl)-(f|t)')
 RE_DUNDER_TYPE_LINK_TRIGGER = re.compile(r'dunder-type-link-[ft]')
+NAMESPACE = defines.DEFAULT_NS
 
 
 def quote_e_literal(string):
@@ -127,9 +128,23 @@ def quote_type(type_):
     return first + last
 
 
-def get_module_backend_name(module: s_name.Name) -> str:
+def get_module_backend_name(module: s_name.Name, ignore_ns=False) -> str:
     # standard modules go into "edgedbstd", user ones into "edgedbpub"
-    return "edgedbstd" if module in s_schema.STD_MODULES else "edgedbpub"
+    if ignore_ns:
+        return "edgedbstd" if module in s_schema.STD_MODULES else "edgedbpub"
+    return actual_schemaname("edgedbstd") if module in s_schema.STD_MODULES else actual_schemaname("edgedbpub")
+
+
+def actual_schemaname(name: str) -> str:
+    global NAMESPACE
+    if name not in defines.EDGEDB_OWNED_DBS:
+        return name
+
+    if NAMESPACE == defines.DEFAULT_NS:
+        ns_prefix = ''
+    else:
+        ns_prefix = NAMESPACE + '_'
+    return f"{ns_prefix}{name}"
 
 
 def get_unique_random_name() -> str:
@@ -175,8 +190,8 @@ def edgedb_name_to_pg_name(name: str, prefix_length: int = 0) -> str:
     return _edgedb_name_to_pg_name(name, prefix_length)
 
 
-def convert_name(name, suffix='', catenate=True):
-    schema = get_module_backend_name(name.get_module_name())
+def convert_name(name, suffix='', catenate=True, ignore_ns=False):
+    schema = get_module_backend_name(name.get_module_name(), ignore_ns)
     if suffix:
         sname = f'{name.name}_{suffix}'
     else:
@@ -210,7 +225,7 @@ def update_aspect(name, aspect):
         return (name[0], stripped)
 
 
-def get_scalar_backend_name(id, module_name, catenate=True, *, aspect=None):
+def get_scalar_backend_name(id, module_name, catenate=True, *, aspect=None, ignore_ns=False):
     if aspect is None:
         aspect = 'domain'
     if aspect not in (
@@ -220,7 +235,7 @@ def get_scalar_backend_name(id, module_name, catenate=True, *, aspect=None):
         raise ValueError(
             f'unexpected aspect for scalar backend name: {aspect!r}')
     name = s_name.QualName(module=module_name, name=str(id))
-    return convert_name(name, aspect, catenate)
+    return convert_name(name, aspect, catenate, ignore_ns)
 
 
 def get_aspect_suffix(aspect):
@@ -355,7 +370,7 @@ def get_index_backend_name(id, module_name, catenate=True, *, aspect=None):
 def get_tuple_backend_name(id, catenate=True, *, aspect=None):
 
     name = s_name.QualName(module='edgedb', name=f'{id}_t')
-    return convert_name(name, aspect, catenate)
+    return convert_name(name, aspect, catenate, ignore_ns=True)
 
 
 def get_backend_name(schema, obj, catenate=True, *, aspect=None):

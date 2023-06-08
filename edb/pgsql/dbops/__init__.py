@@ -40,3 +40,4 @@ from .tables import *  # NOQA
 from .triggers import *  # NOQA
 from .types import *  # NOQA
 from .views import *  # NOQA
+from .namespace import *  # NOQA

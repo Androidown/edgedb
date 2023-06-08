@@ -81,8 +81,10 @@ directly_mappable = {
     pgerrors.ERROR_SERIALIZATION_FAILURE: errors.TransactionSerializationError,
     pgerrors.ERROR_DEADLOCK_DETECTED: errors.TransactionDeadlockError,
     pgerrors.ERROR_INVALID_CATALOG_NAME: errors.UnknownDatabaseError,
+    pgerrors.ERROR_INVALID_SCHEMA_NAME: errors.UnknownSchemaError,
     pgerrors.ERROR_OBJECT_IN_USE: errors.ExecutionError,
     pgerrors.ERROR_DUPLICATE_DATABASE: errors.DuplicateDatabaseDefinitionError,
+    pgerrors.ERROR_DUPLICATE_SCHEMA: errors.DuplicateNameSpaceDefinitionError,
     pgerrors.ERROR_IDLE_IN_TRANSACTION_TIMEOUT:
         errors.IdleTransactionTimeoutError,
     pgerrors.ERROR_QUERY_CANCELLED: errors.QueryTimeoutError,
@@ -120,7 +122,7 @@ range_constraints = frozenset({
 pgtype_re = re.compile(
     '|'.join(fr'\b{key}\b' for key in types.base_type_name_map_r))
 enum_re = re.compile(
-    r'(?P<p>enum) (?P<v>edgedb([\w-]+)."(?P<id>[\w-]+)_domain")')
+    r'(?P<p>enum) (?P<v>(?:(.*)_)?edgedb([\w-]+)."(?P<id>[\w-]+)_domain")')
 
 
 def translate_pgtype(schema, msg):

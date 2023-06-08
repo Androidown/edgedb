@@ -26,7 +26,7 @@ from typing import *
 
 from edb.ir import typeutils as irtyputils
 
-from edb.pgsql import ast as pgast
+from edb.pgsql import ast as pgast, common
 from edb.pgsql import types as pg_types
 
 if TYPE_CHECKING:
@@ -234,7 +234,7 @@ def safe_array_expr(
     )
     if any(el.nullable for el in elements):
         result = pgast.FuncCall(
-            name=('edgedb', '_nullif_array_nulls'),
+            name=(common.actual_schemaname('edgedb'), '_nullif_array_nulls'),
             args=[result],
             ser_safe=ser_safe,
         )

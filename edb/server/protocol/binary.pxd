@@ -64,6 +64,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
         object loop
         readonly dbview.DatabaseConnectionView _dbview
         str dbname
+        str namespace
 
         ReadBuffer buffer
 
@@ -132,7 +133,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
     cdef WriteBuffer make_command_data_description_msg(
         self, dbview.CompiledQuery query
     )
-    cdef WriteBuffer make_state_data_description_msg(self)
+    cdef WriteBuffer make_state_data_description_msg(self, namespace=?)
     cdef WriteBuffer make_command_complete_msg(self, capabilities, status)
 
     cdef inline reject_headers(self)

@@ -226,6 +226,10 @@ class SessionResetAllAliases(BaseSessionReset):
     pass
 
 
+class UseNameSpaceCommand(BaseSessionCommand):
+    name: str
+
+
 class BaseObjectRef(Base):
     __abstract_node__ = True
 
@@ -833,6 +837,20 @@ class AlterDatabase(AlterObject, DatabaseCommand):
 
 
 class DropDatabase(DropObject, DatabaseCommand):
+    pass
+
+
+class NameSpaceCommand(ExternalObjectCommand):
+    __abstract_node__ = True
+    object_class: qltypes.SchemaObjectClass = (
+        qltypes.SchemaObjectClass.NAMESPACE)
+
+
+class CreateNameSpace(CreateObject, NameSpaceCommand):
+    pass
+
+
+class DropNameSpace(DropObject, NameSpaceCommand):
     pass
 
 

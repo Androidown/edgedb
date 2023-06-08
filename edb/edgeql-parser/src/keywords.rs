@@ -20,6 +20,7 @@ pub const UNRESERVED_KEYWORDS: &[&str] = &[
     "cube",
     "current",
     "database",
+    "namespace",
     "ddl",
     "declare",
     "default",
@@ -99,6 +100,8 @@ pub const UNRESERVED_KEYWORDS: &[&str] = &[
     "version",
     "view",
     "write",
+    "use",
+    "show",
 ];
 
 

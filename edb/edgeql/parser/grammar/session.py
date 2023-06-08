@@ -18,9 +18,7 @@
 
 from __future__ import annotations
 
-from edb.edgeql import ast as qlast
-
-from .expressions import Nonterm
+from edb.pgsql import common as pg_common
 from .tokens import *  # NOQA
 from .expressions import *  # NOQA
 
@@ -30,6 +28,12 @@ class SessionStmt(Nonterm):
         self.val = kids[0].val
 
     def reduce_ResetStmt(self, *kids):
+        self.val = kids[0].val
+
+    def reduce_UseNameSpaceStmt(self, *kids):
+        self.val = kids[0].val
+
+    def reduce_ShowNameSpaceStmt(self, *kids):
         self.val = kids[0].val
 
 
@@ -54,3 +58,15 @@ class ResetStmt(Nonterm):
 
     def reduce_RESET_ALIAS_STAR(self, *kids):
         self.val = qlast.SessionResetAllAliases()
+
+
+class UseNameSpaceStmt(Nonterm):
+    def reduce_USE_NAMESPACE_Identifier(self, *kids):
+        self.val = qlast.UseNameSpaceCommand(name=kids[2].val)
+
+
+class ShowNameSpaceStmt(Nonterm):
+    def reduce_SHOW_NAMESPACE(self, *kids):
+        self.val = qlast.SelectQuery(
+            result=qlast.StringConstant(value=pg_common.NAMESPACE)
+        )

@@ -23,6 +23,7 @@ from typing import List
 from edb import errors
 from edb.common import debug
 from edb.common import markup
+from edb.server import defines
 
 
 async def handle_request(
@@ -52,6 +53,7 @@ async def handle_request(
                     'the body of the request must be a JSON object'
                 )
             module = body.get('module')
+            namespace = body.get('namespace', defines.DEFAULT_NS)
             objname = body.get('object')
             expr = body.get('expression')
         else:
@@ -68,6 +70,8 @@ async def handle_request(
 
         if not isinstance(module, str):
             raise TypeError("Field 'module' must be a string.")
+        if not isinstance(namespace, str):
+            raise TypeError("Field 'namespace' must be a string.")
         if not isinstance(objname, str):
             raise TypeError("Field 'object' must be a string.")
         if not isinstance(expr, str):
@@ -88,7 +92,7 @@ async def handle_request(
     await db.introspection()
 
     try:
-        result = await execute(db, server, module, objname, expr)
+        result = await execute(db, server, namespace, module, objname, expr)
     except Exception as ex:
         if debug.flags.server:
             markup.dump(ex)
@@ -108,13 +112,18 @@ async def handle_request(
         response.body = json.dumps(result).encode()
 
 
-async def execute(db, server, module: str, objname: str, expression: str):
+async def execute(db, server, namespace: str, module: str, objname: str, expression: str):
+    if namespace not in db.ns_map:
+        raise errors.InternalServerError(
+            f'NameSpace: [{namespace}] not in current db [{db.name}](ver:{db.dbver})'
+        )
+    ns = db.ns_map[namespace]
     dbver = db.dbver
     query_cache = server._http_query_cache
 
     name_str = f"{module}::{objname}"
 
-    cache_key = ('infer_expr', name_str, expression, dbver, module)
+    cache_key = ('infer_expr', name_str, expression, dbver, module, namespace)
 
     entry = query_cache.get(cache_key, None)
 
@@ -124,9 +133,10 @@ async def execute(db, server, module: str, objname: str, expression: str):
     compiler_pool = server.get_compiler_pool()
     result = await compiler_pool.infer_expr(
         db.name,
-        db.user_schema,
+        namespace,
+        ns.user_schema,
         server.get_global_schema(),
-        db.reflection_cache,
+        ns.reflection_cache,
         db.db_config,
         server.get_compilation_system_config(),
         name_str,

@@ -56,6 +56,9 @@ class DDLStmt(Nonterm):
     def reduce_DatabaseStmt(self, *kids):
         self.val = kids[0].val
 
+    def reduce_NameSpaceStmt(self, *kids):
+        self.val = kids[0].val
+
     def reduce_RoleStmt(self, *kids):
         self.val = kids[0].val
 
@@ -663,6 +666,38 @@ class CreateDatabaseStmt(Nonterm):
 class DropDatabaseStmt(Nonterm):
     def reduce_DROP_DATABASE_DatabaseName(self, *kids):
         self.val = qlast.DropDatabase(name=kids[2].val)
+
+
+#
+# NAMESPACE
+#
+class NameSpaceStmt(Nonterm):
+
+    def reduce_CreateNameSpaceStmt(self, *kids):
+        self.val = kids[0].val
+
+    def reduce_DropNameSpaceStmt(self, *kids):
+        self.val = kids[0].val
+
+
+class CreateNameSpaceStmt(Nonterm):
+    def reduce_CREATE_NAMESPACE_Identifier(self, *kids):
+        self.val = qlast.CreateNameSpace(
+            name=qlast.ObjectRef(
+                module=None,
+                name=kids[2].val
+            )
+        )
+
+
+class DropNameSpaceStmt(Nonterm):
+    def reduce_DROP_NAMESPACE_Identifier(self, *kids):
+        self.val = qlast.DropNameSpace(
+            name=qlast.ObjectRef(
+                module=None,
+                name=kids[2].val
+            )
+        )
 
 
 #

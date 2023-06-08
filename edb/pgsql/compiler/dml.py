@@ -1564,7 +1564,7 @@ def check_update_type(
     # also the (dynamic) type of the argument, so that we can produce
     # a good error message.
     check_result = pgast.FuncCall(
-        name=('edgedb', 'issubclass'),
+        name=(common.actual_schemaname('edgedb'), 'issubclass'),
         args=[typ, typeref_val],
     )
     maybe_null = pgast.CaseExpr(
@@ -2372,7 +2372,7 @@ def process_link_values(
     ):
         if src_prop.out_target.is_sequence:
             seq_backend_name = pgast.StringConstant(
-                val=f'"edgedbpub"."{src_prop.out_target.id}_sequence"'
+                val=f'"{common.actual_schemaname("edgedbpub")}"."{src_prop.out_target.id}_sequence"'
             )
             source_val = pgast.FuncCall(
                 name=('currval', ),

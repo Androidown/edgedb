@@ -998,6 +998,81 @@ async def _init_stdlib(
     return stdlib, config_spec, compiler
 
 
+async def store_tpl_sql(tpldbdump: bytes, conn: pgcon.PGConnection):
+    text = f"""\
+            INSERT INTO edgedbinstdata.instdata (key, text)
+            VALUES(
+                {pg_common.quote_literal('tpl_sql')},
+                {pg_common.quote_literal(tpldbdump.decode('utf-8'))}::text
+            )
+        """
+
+    await _execute(conn, text)
+
+
+async def gen_tpl_dump(cluster: pgcluster.BaseCluster):
+    tpl_db_name = edbdef.EDGEDB_TEMPLATE_DB
+    tpl_pg_db_name = cluster.get_db_name(tpl_db_name)
+    tpldbdump = await cluster.dump_database(
+        tpl_pg_db_name,
+        exclude_schemas=['edgedbext'],
+        dump_object_owners=False,
+    )
+    # exclude create type & domain
+    tpldbdump = re.sub(
+        rb'CREATE (?:(TYPE|DOMAIN))[^;]*;',
+        rb'',
+        tpldbdump,
+        flags=re.DOTALL
+    )
+
+    commands = [dbops.CreateSchema(name='{ns_prefix}edgedbext')]
+    for uuid_func in [
+        'uuid_generate_v1',
+        'uuid_generate_v1mc',
+        'uuid_generate_v4',
+        'uuid_nil',
+        'uuid_ns_dns',
+        'uuid_ns_oid',
+        'uuid_ns_url',
+        'uuid_ns_x500',
+    ]:
+        commands.append(
+            dbops.CreateOrReplaceFunction(
+                dbops.Function(
+                    name=('{ns_prefix}edgedbext', uuid_func),
+                    returns=('pg_catalog', 'uuid'), language='plpgsql',
+                    text=f"""
+                    BEGIN 
+                    RETURN edgedbext.{uuid_func}();
+                    END;
+                    """
+                )
+            )
+        )
+
+    for uuid_func in ['uuid_generate_v3', 'uuid_generate_v5']:
+        commands.append(
+            dbops.CreateOrReplaceFunction(
+                dbops.Function(
+                    name=('{ns_prefix}edgedbext', uuid_func),
+                    returns=('pg_catalog', 'uuid'), language='plpgsql',
+                    args=[('namespace', 'uuid'), ('name', 'text')],
+                    text=f"""
+                    BEGIN 
+                    RETURN edgedbext.{uuid_func}(namespace, text);
+                    END;
+                    """
+                )
+            )
+        )
+    command_group = dbops.CommandGroup()
+    command_group.add_commands(commands)
+    block = dbops.PLTopBlock()
+    command_group.generate(block)
+    return block.to_string().encode('utf-8') + tpldbdump
+
+
 async def _init_defaults(schema, compiler, conn):
     script = '''
         CREATE MODULE default;
@@ -1104,6 +1179,17 @@ async def _compile_sys_queries(
     )
 
     queries['listdbs'] = sql
+
+    _, sql = compile_bootstrap_script(
+        compiler,
+        schema,
+        f"""SELECT (
+            SELECT sys::NameSpace
+        ).name""",
+        expected_cardinality_one=False,
+    )
+
+    queries['listns'] = sql
 
     role_query = '''
         SELECT sys::Role {
@@ -1364,6 +1450,17 @@ async def _get_instance_data(conn: pgcon.PGConnection) -> Dict[str, Any]:
     return json.loads(data)
 
 
+async def get_tpl_sql(conn: pgcon.PGConnection) -> bytes:
+    data = await conn.sql_fetch_val(
+        b"""
+        SELECT text
+        FROM edgedbinstdata.instdata
+        WHERE key = 'tpl_sql'
+        """,
+    )
+    return data
+
+
 async def _check_catalog_compatibility(
     ctx: BootstrapContext,
 ) -> pgcon.PGConnection:
@@ -1509,6 +1606,8 @@ async def _start(ctx: BootstrapContext) -> None:
 
         # Initialize global config
         config.set_settings(config_spec)
+        if ctx.cluster._pg_bin_dir is None:
+            await ctx.cluster.lookup_postgres()
 
     finally:
         conn.terminate()

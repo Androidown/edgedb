@@ -1939,7 +1939,15 @@ cdef class PGConnection:
                 event_payload = event_data.get('args')
                 if event == 'schema-changes':
                     dbname = event_payload['dbname']
-                    self.server._on_remote_ddl(dbname)
+                    namespace = event_payload['namespace']
+                    drop_ns = event_payload['drop_ns']
+                    self.server._on_remote_ddl(dbname, namespace, drop_ns)
+                elif event == 'database-create':
+                    dbname = event_payload['dbname']
+                    self.server._on_remote_ddl(dbname, namespace=None)
+                elif event == 'database-drop':
+                    dbname = event_payload['dbname']
+                    self.server._on_after_drop_db(dbname)
                 elif event == 'database-config-changes':
                     dbname = event_payload['dbname']
                     self.server._on_remote_database_config_change(dbname)

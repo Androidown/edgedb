@@ -97,6 +97,7 @@ async def handle_request(
     globals = None
     query = None
     module = None
+    namespace = edbdef.DEFAULT_NS
     limit = 0
 
     try:
@@ -111,6 +112,7 @@ async def handle_request(
                 variables = body.get('variables')
                 module = body.get('module')
                 limit = body.get('limit', 0)
+                namespace = body.get('namespace', edbdef.DEFAULT_NS)
                 globals = body.get('globals')
             elif request.content_type == 'application/graphql':
                 query = request.body.decode('utf-8')
@@ -157,6 +159,12 @@ async def handle_request(
                 else:
                     limit = 0
 
+                namespace = qs.get('namespace')
+                if namespace is not None:
+                    namespace = namespace[0]
+                else:
+                    namespace = edbdef.DEFAULT_NS
+
         else:
             raise TypeError('expected a GET or a POST request')
 
@@ -186,7 +194,7 @@ async def handle_request(
     response.content_type = b'application/json'
     try:
         result = await _execute(
-            db, server, query,
+            db, namespace, server, query,
             operation_name, variables, globals,
             query_only, module or None, limit
         )
@@ -216,6 +224,7 @@ async def handle_request(
 
 async def compile(
     db,
+    ns,
     server,
     query: str,
     tokens: Optional[List[Tuple[int, int, int, str]]],
@@ -229,9 +238,10 @@ async def compile(
     compiler_pool = server.get_compiler_pool()
     return await compiler_pool.compile_graphql(
         db.name,
-        db.user_schema,
+        ns.name,
+        ns.user_schema,
         server.get_global_schema(),
-        db.reflection_cache,
+        ns.reflection_cache,
         db.db_config,
         server.get_compilation_system_config(),
         query,
@@ -246,9 +256,17 @@ async def compile(
 
 
 async def _execute(
-    db, server, query, operation_name, variables,
+    db, namespace, server, query, operation_name, variables,
     globals, query_only, module, limit
 ):
+
+    if namespace not in db.ns_map:
+        raise errors.QueryError(
+            f'NameSpace: [{namespace}] not in current db [{db.name}](ver:{db.dbver}).'
+            f'Current NameSpace(s): [{", ".join(db.ns_map.keys())}]'
+        )
+    ns = db.ns_map[namespace]
+
     dbver = db.dbver
     query_cache = server._http_query_cache
 
@@ -298,7 +316,7 @@ async def _execute(
             print(f'key_vars: {key_var_names}')
             print(f'variables: {vars}')
 
-    cache_key = ('graphql', prepared_query, key_vars, operation_name, dbver, query_only, module, limit)
+    cache_key = ('graphql', prepared_query, key_vars, operation_name, dbver, query_only, namespace, module, limit)
     use_prep_stmt = False
 
     entry: CacheEntry = None
@@ -307,13 +325,14 @@ async def _execute(
 
     if isinstance(entry, CacheRedirect):
         key_vars2 = tuple(vars[k] for k in entry.key_vars)
-        cache_key2 = (prepared_query, key_vars2, operation_name, dbver, query_only, module, limit)
+        cache_key2 = (prepared_query, key_vars2, operation_name, dbver, query_only, namespace, module, limit)
         entry = query_cache.get(cache_key2, None)
 
     if entry is None:
         if rewritten is not None:
             qug, gql_op = await compile(
                 db,
+                ns,
                 server,
                 query,
                 rewritten.tokens(gql_lexer.TokenKind),
@@ -327,6 +346,7 @@ async def _execute(
         else:
             qug, gql_op = await compile(
                 db,
+                ns,
                 server,
                 query,
                 None,
@@ -349,7 +369,7 @@ async def _execute(
             query_cache[cache_key] = redir
             key_vars2 = tuple(vars[k] for k in key_var_names)
             cache_key2 = (
-                'graphql', prepared_query, key_vars2, operation_name, dbver, query_only, module, limit
+                'graphql', prepared_query, key_vars2, operation_name, dbver, query_only, namespace, module, limit
             )
             query_cache[cache_key2] = qug, gql_op
             if gql_op.is_introspection:
@@ -372,7 +392,7 @@ async def _execute(
     dbv = await server.new_dbview(
         dbname=db.name,
         query_cache=False,
-        protocol_version=edbdef.CURRENT_PROTOCOL,
+        protocol_version=edbdef.CURRENT_PROTOCOL
     )
 
     pgcon = await server.acquire_pgcon(db.name)

@@ -560,7 +560,7 @@ def compile_TypeCheckOp(
                 right = dispatch.compile(expr.right, ctx=newctx)
 
             result = pgast.FuncCall(
-                name=('edgedb', 'issubclass'),
+                name=(common.actual_schemaname('edgedb'), 'issubclass'),
                 args=[left, right])
 
             if negated:

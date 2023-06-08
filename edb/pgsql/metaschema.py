@@ -4008,8 +4008,18 @@ async def bootstrap(
     config_spec: edbconfig.Spec
 ) -> None:
     commands = dbops.CommandGroup()
+    default_ns = dbops.NameSpace(
+        defines.DEFAULT_NS,
+        metadata=dict(
+            id=str(uuidgen.uuid1mc()),
+            builtin=False,
+            name=defines.DEFAULT_NS,
+            internal=False
+        ),
+    )
     commands.add_commands([
         dbops.CreateSchema(name='edgedb'),
+        dbops.SetMetadata(default_ns, default_ns.metadata),
         dbops.CreateSchema(name='edgedbss'),
         dbops.CreateSchema(name='edgedbpub'),
         dbops.CreateSchema(name='edgedbstd'),
@@ -4803,6 +4813,102 @@ def _generate_schema_ver_views(schema: s_schema.Schema) -> List[dbops.View]:
     return views
 
 
+def _generate_namespace_views(schema: s_schema.Schema) -> List[dbops.View]:
+    NameSpace = schema.get('sys::NameSpace', type=s_objtypes.ObjectType)
+    annos = NameSpace.getptr(
+        schema, s_name.UnqualName('annotations'), type=s_links.Link
+    )
+    int_annos = NameSpace.getptr(
+        schema, s_name.UnqualName('annotations__internal'), type=s_links.Link
+    )
+
+    view_query = f'''
+            SELECT
+                (ns.description->>'id')::uuid
+                    AS {qi(ptr_col_name(schema, NameSpace, 'id'))},
+                (SELECT id FROM edgedb."_SchemaObjectType"
+                     WHERE name = 'sys::NameSpace')
+                    AS {qi(ptr_col_name(schema, NameSpace, '__type__'))},
+                (ns.description->>'name')
+                    AS {qi(ptr_col_name(schema, NameSpace, 'name'))},
+                (ns.description->>'name')
+                    AS {qi(ptr_col_name(schema, NameSpace, 'name__internal'))},
+                ARRAY[]::text[]
+                    AS {qi(ptr_col_name(schema, NameSpace, 'computed_fields'))},
+                (ns.description->>'builtin')::bool
+                    AS {qi(ptr_col_name(schema, NameSpace, 'builtin'))},
+                (ns.description->>'internal')::bool
+                    AS {qi(ptr_col_name(schema, NameSpace, 'internal'))},
+                (ns.description->>'module_name')
+                    AS {qi(ptr_col_name(schema, NameSpace, 'module_name'))},
+                ((ns.description)->>'external')::bool
+                    AS {qi(ptr_col_name(schema, NameSpace, 'external'))}
+            FROM
+                information_schema.schemata as s
+            CROSS JOIN LATERAL (
+                select edgedb.obj_metadata(s.schema_name::regnamespace, 'pg_namespace') as DESCRIPTION
+            ) as ns	
+            where ns.description ->> 'id' is not null
+        '''
+
+    annos_link_query = f'''
+            SELECT
+                (ns.value->>'id')::uuid
+                    AS {qi(ptr_col_name(schema, annos, 'source'))},
+                (annotations->>'id')::uuid
+                    AS {qi(ptr_col_name(schema, annos, 'target'))},
+                (annotations->>'value')::text
+                    AS {qi(ptr_col_name(schema, annos, 'value'))},
+                (annotations->>'is_owned')::bool
+                    AS {qi(ptr_col_name(schema, annos, 'owned'))}
+            FROM
+                jsonb_each(
+                    edgedb.get_database_metadata(
+                        current_database()
+                    ) -> 'NameSpace'
+                ) AS ns
+                CROSS JOIN LATERAL
+                    ROWS FROM (
+                        jsonb_array_elements(ns.value->'annotations')
+                    ) AS annotations
+        '''
+
+    int_annos_link_query = f'''
+            SELECT
+                (ns.value->>'id')::uuid
+                    AS {qi(ptr_col_name(schema, int_annos, 'source'))},
+                (annotations->>'id')::uuid
+                    AS {qi(ptr_col_name(schema, int_annos, 'target'))},
+                (annotations->>'is_owned')::bool
+                    AS {qi(ptr_col_name(schema, int_annos, 'owned'))}
+            FROM
+                jsonb_each(
+                    edgedb.get_database_metadata(
+                        current_database()
+                    ) -> 'NameSpace'
+                ) AS ns
+                CROSS JOIN LATERAL
+                    ROWS FROM (
+                        jsonb_array_elements(ns.value->'annotations__internal')
+                    ) AS annotations
+        '''
+
+    objects = {
+        NameSpace: view_query,
+        annos: annos_link_query,
+        int_annos: int_annos_link_query,
+    }
+
+    views = []
+    for obj, query in objects.items():
+        tabview = dbops.View(name=tabname(schema, obj), query=query)
+        inhview = dbops.View(name=inhviewname(schema, obj), query=query)
+        views.append(tabview)
+        views.append(inhview)
+
+    return views
+
+
 def _make_json_caster(
     schema: s_schema.Schema,
     stype: s_types.Type,
@@ -4975,6 +5081,9 @@ async def generate_support_views(
 
     for verview in _generate_schema_ver_views(schema):
         commands.add_command(dbops.CreateView(verview, or_replace=True))
+
+    for nsview in _generate_namespace_views(schema):
+        commands.add_command(dbops.CreateView(nsview, or_replace=True))
 
     sys_alias_views = _generate_schema_alias_views(
         schema, s_name.UnqualName('sys'))

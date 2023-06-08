@@ -213,6 +213,10 @@ class UnknownParameterError(InvalidReferenceError):
     _code = 0x_04_03_00_06
 
 
+class UnknownSchemaError(InvalidReferenceError):
+    _code = 0x_04_03_00_07
+
+
 class SchemaError(QueryError):
     _code = 0x_04_04_00_00
 
@@ -307,6 +311,10 @@ class DuplicateConstraintDefinitionError(DuplicateDefinitionError):
 
 class DuplicateCastDefinitionError(DuplicateDefinitionError):
     _code = 0x_04_05_02_0A
+
+
+class DuplicateNameSpaceDefinitionError(DuplicateDefinitionError):
+    _code = 0x_04_05_02_0B
 
 
 class SessionTimeoutError(QueryError):

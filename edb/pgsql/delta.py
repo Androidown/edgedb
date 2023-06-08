@@ -52,6 +52,7 @@ from edb.schema import policies as s_policies
 from edb.schema import properties as s_props
 from edb.schema import migrations as s_migrations
 from edb.schema import modules as s_mod
+from edb.schema import namespace as s_ns
 from edb.schema import name as sn
 from edb.schema import objects as so
 from edb.schema import operators as s_opers
@@ -361,7 +362,7 @@ class AlterSchemaVersion(
                             (SELECT
                                 version::text
                             FROM
-                                edgedb."_SchemaSchemaVersion"
+                                {common.actual_schemaname('edgedb')}."_SchemaSchemaVersion"
                             FOR UPDATE),
                             {ql(str(expected_ver))}
                         )),
@@ -369,7 +370,7 @@ class AlterSchemaVersion(
                         msg => (
                             'Cannot serialize DDL: '
                             || (SELECT version::text FROM
-                                edgedb."_SchemaSchemaVersion")
+                                {common.actual_schemaname('edgedb')}."_SchemaSchemaVersion")
                         )
                     )
                 INTO _dummy_text
@@ -1170,7 +1171,7 @@ class FunctionCommand(MetaCommand):
                             target AS ancestor,
                             index
                         FROM
-                            edgedb."_SchemaObjectType__ancestors"
+                            {common.actual_schemaname('edgedb')}."_SchemaObjectType__ancestors"
                             WHERE source = {qi(type_param_name)}
                         ) a
                     WHERE ancestor IN ({impl_ids})
@@ -3540,8 +3541,9 @@ class DeleteObjectType(ObjectTypeMetaCommand,
         self.apply_scheduled_inhview_updates(schema, context)
 
         if is_external:
-            view_name = ('edgedbpub', str(objtype.id))
-            view_name_t = ('edgedbpub', str(objtype.id) + '_t')
+            schema_name = common.actual_schemaname('edgedbpub')
+            view_name = (schema_name, str(objtype.id))
+            view_name_t = (schema_name, str(objtype.id) + '_t')
             self.pgops.add(
                 dbops.DropView(
                     name=view_name,
@@ -5159,8 +5161,9 @@ class DeleteLink(LinkMetaCommand, adapts=s_links.DeleteLink):
 
         self.apply_scheduled_inhview_updates(schema, context)
         if has_extern_table:
-            view_name = ('edgedbpub', str(link.id))
-            view_name_t = ('edgedbpub', str(link.id) + '_t')
+            schema_name = common.actual_schemaname('edgedbpub')
+            view_name = (schema_name, str(link.id))
+            view_name_t = (schema_name, str(link.id) + '_t')
             self.pgops.add(
                 dbops.DropView(
                     name=view_name,
@@ -5808,41 +5811,47 @@ class UpdateEndpointDeleteActions(MetaCommand):
                 target, links, disposition=disposition, schema=schema)
 
     def _get_dunder_type_trigger_proc_text(self, target, *, schema):
-        body = textwrap.dedent('''\
-            SELECT
-                CASE WHEN tp.builtin
-                    THEN 'edgedbstd'
-                    ELSE 'edgedbpub'
-                END AS sname
-                INTO schema_name
-            FROM edgedb."_SchemaType" as tp
-            WHERE tp.id = OLD.id;
-
-            SELECT EXISTS (
-                SELECT FROM pg_tables
-                WHERE  schemaname = "schema_name"
-                AND    tablename  = OLD.id::text
-            ) INTO table_exists;
-
-            IF table_exists THEN
-                target_sql = format('SELECT EXISTS (SELECT FROM %I.%I LIMIT 1)', "schema_name", OLD.id::text);
-                EXECUTE target_sql into del_prohibited;
-            ELSE
-                del_prohibited = FALSE;
-            END IF;
-
-            IF del_prohibited THEN
-            RAISE foreign_key_violation
-                USING
-                    TABLE = TG_TABLE_NAME,
-                    SCHEMA = TG_TABLE_SCHEMA,
-                    MESSAGE = 'deletion of {tgtname} (' || OLD.id
-                        || ') is prohibited by link target policy',
-                    DETAIL = 'Object is still referenced in link __type__'
-                        || ' of ' || edgedb._get_schema_object_name(OLD.id) || ' ('
-                        || OLD.id || ').';
-            END IF;
-        '''.format(tgtname=target.get_displayname(schema)))
+        body = textwrap.dedent(
+            '''SELECT
+                    CASE WHEN tp.builtin
+                        THEN '{std}'
+                        ELSE '{pub}'
+                    END AS sname
+                    INTO schema_name
+                FROM {edb}."_SchemaType" as tp
+                WHERE tp.id = OLD.id;
+    
+                SELECT EXISTS (
+                    SELECT FROM pg_tables
+                    WHERE  schemaname = "schema_name"
+                    AND    tablename  = OLD.id::text
+                ) INTO table_exists;
+    
+                IF table_exists THEN
+                    target_sql = format('SELECT EXISTS (SELECT FROM %I.%I LIMIT 1)', "schema_name", OLD.id::text);
+                    EXECUTE target_sql into del_prohibited;
+                ELSE
+                    del_prohibited = FALSE;
+                END IF;
+    
+                IF del_prohibited THEN
+                RAISE foreign_key_violation
+                    USING
+                        TABLE = TG_TABLE_NAME,
+                        SCHEMA = TG_TABLE_SCHEMA,
+                        MESSAGE = 'deletion of {tgtname} (' || OLD.id
+                            || ') is prohibited by link target policy',
+                        DETAIL = 'Object is still referenced in link __type__'
+                            || ' of ' || {edb}._get_schema_object_name(OLD.id) || ' ('
+                            || OLD.id || ').';
+                END IF;
+            '''.format(
+                tgtname=target.get_displayname(schema),
+                std=common.actual_schemaname('edgedbstd'),
+                pub=common.actual_schemaname('edgedbpub'),
+                edb=common.actual_schemaname('edgedb')
+            )
+        )
 
         text = textwrap.dedent('''\
             DECLARE
@@ -5917,11 +5926,11 @@ class UpdateEndpointDeleteActions(MetaCommand):
 
                         IF FOUND THEN
                             SELECT
-                                edgedb.shortname_from_fullname(link.name),
-                                edgedb._get_schema_object_name(link.{far_endpoint})
+                                {edb}.shortname_from_fullname(link.name),
+                                {edb}._get_schema_object_name(link.{far_endpoint})
                                 INTO linkname, endname
                             FROM
-                                edgedb."_SchemaLink" AS link
+                                {edb}."_SchemaLink" AS link
                             WHERE
                                 link.id = link_type_id;
                             RAISE foreign_key_violation
@@ -5942,6 +5951,7 @@ class UpdateEndpointDeleteActions(MetaCommand):
                         tgtname=target.get_displayname(schema),
                         near_endpoint=near_endpoint,
                         far_endpoint=far_endpoint,
+                        edb=common.actual_schemaname('edgedb')
                     )
 
                     chunks.append(text)
@@ -6237,11 +6247,11 @@ class UpdateEndpointDeleteActions(MetaCommand):
 
                         IF FOUND THEN
                             SELECT
-                                edgedb.shortname_from_fullname(link.name),
-                                edgedb._get_schema_object_name(link.{far_endpoint})
+                                {edb}.shortname_from_fullname(link.name),
+                                {edb}._get_schema_object_name(link.{far_endpoint})
                                 INTO linkname, endname
                             FROM
-                                edgedb."_SchemaLink" AS link
+                                {edb}."_SchemaLink" AS link
                             WHERE
                                 link.id = link_type_id;
                             RAISE foreign_key_violation
@@ -6262,6 +6272,7 @@ class UpdateEndpointDeleteActions(MetaCommand):
                         tgtname=target.get_displayname(schema),
                         near_endpoint=near_endpoint,
                         far_endpoint=far_endpoint,
+                        edb=common.actual_schemaname('edgedb')
                     )
 
                     chunks.append(text)
@@ -6762,8 +6773,9 @@ class CreateExternalView(MetaCommand):
 
         view_def = context.external_view[key]
         if context.restoring_external:
-            self.external_views.append(dbops.View(query=view_def, name=('edgedbpub', str(obj.id))))
-            self.external_views.append(dbops.View(query=view_def, name=('edgedbpub', str(obj.id) + '_t')))
+            schema_name = common.actual_schemaname('edgedbpub')
+            self.external_views.append(dbops.View(query=view_def, name=(schema_name, str(obj.id))))
+            self.external_views.append(dbops.View(query=view_def, name=(schema_name, str(obj.id) + '_t')))
             return
 
         columns = []
@@ -6784,7 +6796,7 @@ class CreateExternalView(MetaCommand):
             ptrname = ptr.get_shortname(schema).name
 
             if ptrname == 'id':
-                columns.append("edgedbext.uuid_generate_v1mc() AS id")
+                columns.append(f"{common.actual_schemaname('edgedbext')}.uuid_generate_v1mc() AS id")
             elif ptrname == '__type__':
                 columns.append(f"'{(str(obj.id))}'::uuid AS __type__")
             elif has_link_table:
@@ -6813,8 +6825,9 @@ class CreateExternalView(MetaCommand):
         if join_link_table is not None:
             query += f", (SELECT * FROM {join_link_table.relation}) AS INNER_T " \
                      f"where INNER_T.{join_link_table.columns['source']} = SOURCE_T.{source_identity}"
-        self.external_views.append(dbops.View(query=query, name=('edgedbpub', str(obj.id))))
-        self.external_views.append(dbops.View(query=query, name=('edgedbpub', str(obj.id) + '_t')))
+        schema_name = common.actual_schemaname('edgedbpub')
+        self.external_views.append(dbops.View(query=query, name=(schema_name, str(obj.id))))
+        self.external_views.append(dbops.View(query=query, name=(schema_name, str(obj.id) + '_t')))
 
 
     def apply(
@@ -6841,6 +6854,46 @@ class AlterModule(ModuleMetaCommand, adapts=s_mod.AlterModule):
 
 class DeleteModule(ModuleMetaCommand, adapts=s_mod.DeleteModule):
     pass
+
+
+class NameSpaceMetaCommand(MetaCommand):
+    pass
+
+
+class CreateNameSpace(NameSpaceMetaCommand, adapts=s_ns.CreateNameSpace):
+    def apply(
+        self,
+        schema: s_schema.Schema,
+        context: sd.CommandContext,
+    ) -> s_schema.Schema:
+        schema = super().apply(schema, context)
+        self.pgops.add(
+            dbops.CreateNameSpace(
+                dbops.NameSpace(
+                    str(self.classname),
+                    metadata=dict(
+                        id=str(self.scls.id),
+                        builtin=self.get_attribute_value('builtin'),
+                        name=str(self.classname),
+                        internal=False
+                    ),
+                ),
+            )
+        )
+        return schema
+
+
+class DeleteNameSpace(NameSpaceMetaCommand, adapts=s_ns.DeleteNameSpace):
+    def apply(
+        self,
+        schema: s_schema.Schema,
+        context: sd.CommandContext,
+    ) -> s_schema.Schema:
+        schema = super().apply(schema, context)
+        self.pgops.add(
+            dbops.DropNameSpace(self.classname)
+        )
+        return schema
 
 
 class DatabaseMixin:

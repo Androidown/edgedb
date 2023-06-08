@@ -25,6 +25,7 @@ from typing import List
 from edb import errors
 from edb.common import debug
 from edb.common import markup
+from edb.server import defines
 
 
 async def handle_request(
@@ -41,6 +42,7 @@ async def handle_request(
         return
 
     query_uuid = None
+    namespace = defines.DEFAULT_NS
 
     try:
         if request.method == b'POST':
@@ -50,6 +52,7 @@ async def handle_request(
                     raise TypeError(
                         'the body of the request must be a JSON object')
                 query_uuid = body.get('uuid')
+                namespace = body.get('namespace', defines.DEFAULT_NS)
             else:
                 raise TypeError(
                     'unable to interpret SchemaInfo POST request')
@@ -61,6 +64,11 @@ async def handle_request(
                 query_uuid = qs.get('uuid')
                 if query_uuid is not None:
                     query_uuid = query_uuid[0]
+                namespace = qs.get('namespace')
+                if namespace is not None:
+                    namespace = namespace[0]
+                else:
+                    namespace = defines.DEFAULT_NS
         else:
             raise TypeError('expected a GET or a POST request')
 
@@ -80,7 +88,7 @@ async def handle_request(
     response.content_type = b'application/json'
     await db.introspection()
     try:
-        result = await execute(db, server, query_uuid)
+        result = await execute(db, server, namespace, query_uuid)
     except Exception as ex:
         if debug.flags.server:
             markup.dump(ex)
@@ -101,8 +109,12 @@ async def handle_request(
         response.body = b'{"data":' + result + b'}'
 
 
-async def execute(db, server, query_uuid: str):
-    user_schema = db.user_schema
+async def execute(db, server, namespace: str, query_uuid: str):
+    if namespace not in db.ns_map:
+        raise errors.InternalServerError(
+            f'NameSpace: [{namespace}] not in current db [{db.name}](ver:{db.dbver})'
+        )
+    user_schema = db.ns_map[namespace].user_schema
     global_schema = server.get_global_schema()
 
     obj_id = uuid.UUID(query_uuid)

@@ -1174,7 +1174,7 @@ async def _start_logged_subprocess(
             asyncio.subprocess.PIPE if log_stderr or capture_stderr
             else asyncio.subprocess.DEVNULL
         ),
-        limit=2 ** 20,  # 1 MiB
+        limit=2 ** 25,  # 32 MiB
         **kwargs,
     )
 

@@ -31,13 +31,14 @@ ReflectionCache = typing.Mapping[str, typing.Tuple[str, ...]]
 
 class DatabaseState(typing.NamedTuple):
     name: str
+    namespace: str
     user_schema: typing.Optional[schema.FlatSchema]
     user_schema_version: typing.Optional[uuid.UUID]
     reflection_cache: ReflectionCache
     database_config: immutables.Map[str, config.SettingValue]
 
 
-DatabasesState = immutables.Map[str, DatabaseState]
+DatabasesState = immutables.Map[str, immutables.Map[str, DatabaseState]]
 
 
 class FailedStateSync(Exception):

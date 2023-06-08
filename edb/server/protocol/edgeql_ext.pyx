@@ -64,6 +64,7 @@ async def handle_request(
     query = None
     module = None
     limit = 0
+    namespace = edbdef.DEFAULT_NS
 
     try:
         if request.method == b'POST':
@@ -76,6 +77,7 @@ async def handle_request(
                 variables = body.get('variables')
                 globals_ = body.get('globals')
                 module = body.get('module')
+                namespace = body.get('namespace', edbdef.DEFAULT_NS)
                 limit = body.get('limit', 0)
             else:
                 raise TypeError(
@@ -110,6 +112,12 @@ async def handle_request(
                 if module is not None:
                     module = module[0]
 
+                namespace = qs.get('namespace')
+                if namespace is not None:
+                    namespace = namespace[0]
+                else:
+                    namespace = edbdef.DEFAULT_NS
+
                 limit = qs.get('limit')
                 if limit is not None:
                     limit = int(limit[0])
@@ -130,6 +138,9 @@ async def handle_request(
         if module is not None and not isinstance(module, str):
             raise TypeError('"module" must be a str object')
 
+        if namespace is not None and not isinstance(namespace, str):
+            raise TypeError('"namespace" must be a str object')
+
         if limit is not None and not isinstance(limit, int):
             raise TypeError('"limit" must be an integer object')
 
@@ -147,6 +158,7 @@ async def handle_request(
     try:
         result = await execute.parse_execute_json(
             db,
+            namespace,
             query,
             variables=variables or {},
             globals_=globals_ or {},

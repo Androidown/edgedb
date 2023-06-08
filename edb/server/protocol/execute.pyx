@@ -82,6 +82,10 @@ async def execute(
             )
         if query_unit.drop_db:
             await server._on_before_drop_db(query_unit.drop_db, dbv.dbname)
+        if query_unit.create_ns:
+            await server.create_namespace(be_conn, query_unit.create_ns)
+        if query_unit.drop_ns:
+            await server._on_before_drop_ns(query_unit.drop_ns, query_unit.namespace)
         if query_unit.system_config:
             await execute_system_config(be_conn, dbv, query_unit)
         else:
@@ -127,13 +131,20 @@ async def execute(
 
             if query_unit.tx_savepoint_declare:
                 dbv.declare_savepoint(
-                    query_unit.sp_name, query_unit.sp_id)
+                    query_unit.namespace, query_unit.sp_name, query_unit.sp_id
+                )
 
             if query_unit.create_db:
-                await server.introspect_db(query_unit.create_db)
+                await server.introspect(query_unit.create_db)
+
+            if query_unit.create_ns:
+                await server.introspect(dbv.dbname, query_unit.create_ns)
 
             if query_unit.drop_db:
                 server._on_after_drop_db(query_unit.drop_db)
+
+            if query_unit.drop_ns:
+                server._on_after_drop_ns(dbv.dbname, query_unit.drop_ns)
 
             if config_ops:
                 await dbv.apply_config_ops(be_conn, config_ops)
@@ -150,7 +161,7 @@ async def execute(
     else:
         side_effects = dbv.on_success(query_unit, new_types)
         if side_effects:
-            signal_side_effects(dbv, side_effects)
+            signal_side_effects(dbv, query_unit, side_effects)
         if not dbv.in_tx():
             state = dbv.serialize_state()
             if state is not orig_state:
@@ -277,7 +288,7 @@ async def execute_script(
                     and query_unit.user_schema_mutation
                 ):
                     if user_schema_unpacked is None:
-                        base_user_schema = user_schema or dbv.get_user_schema()
+                        base_user_schema = user_schema or dbv.get_user_schema(query_unit.namespace)
                     else:
                         base_user_schema = user_schema_unpacked
 
@@ -312,16 +323,16 @@ async def execute_script(
                 gmut_unpickled = pickle.loads(group_mutation)
 
             side_effects = dbv.commit_implicit_tx(
-                user_schema, user_schema_unpacked, gmut_unpickled,
+                unit_group.namespace, user_schema, user_schema_unpacked, gmut_unpickled,
                 global_schema, cached_reflection, unit_group.affected_obj_ids
             )
             if side_effects:
-                signal_side_effects(dbv, side_effects)
+                signal_side_effects(dbv, query_unit, side_effects)
                 if (
                     side_effects & dbview.SideEffects.SchemaChanges
                     and group_mutation is not None
                 ):
-                    dbv.save_schema_mutation(gmut_unpickled, group_mutation)
+                    dbv.save_schema_mutation(query_unit.namespace, gmut_unpickled, group_mutation)
 
             state = dbv.serialize_state()
             if state is not orig_state:
@@ -368,16 +379,38 @@ async def execute_system_config(
         await conn.sql_execute(b'SELECT pg_reload_conf()')
 
 
-def signal_side_effects(dbv, side_effects):
+def signal_side_effects(dbv, query_unit, side_effects):
     server = dbv.server
     if not server._accept_new_tasks:
         return
 
     if side_effects & dbview.SideEffects.SchemaChanges:
+        if query_unit.create_ns:
+            namespace = query_unit.create_ns
+        else:
+            namespace = query_unit.namespace
         server.create_task(
             server._signal_sysevent(
                 'schema-changes',
                 dbname=dbv.dbname,
+                namespace=namespace,
+                drop_ns=query_unit.drop_ns
+            ),
+            interruptable=False,
+        )
+    if side_effects & dbview.SideEffects.DatabaseCreate:
+        server.create_task(
+            server._signal_sysevent(
+                'database-create',
+                dbname=query_unit.create_db,
+            ),
+            interruptable=False,
+        )
+    if side_effects & dbview.SideEffects.DatabaseDrop:
+        server.create_task(
+            server._signal_sysevent(
+                'database-drop',
+                dbname=query_unit.drop_db,
             ),
             interruptable=False,
         )
@@ -410,6 +443,7 @@ def signal_side_effects(dbv, side_effects):
 
 async def parse_execute(
     db: dbview.Database,
+    namespace: str,
     query: str,
     *,
     external_view: Mapping = immutables.Map(),
@@ -429,7 +463,8 @@ async def parse_execute(
         output_format=compiler.OutputFormat.NONE,
         allow_capabilities=compiler.Capability.MODIFICATIONS | compiler.Capability.DDL,
         external_view=external_view,
-        testmode=testmode
+        testmode=testmode,
+        namespace=namespace
     )
 
     compiled = await dbv.parse(query_req)
@@ -448,6 +483,7 @@ async def parse_execute(
 
 async def parse_execute_json(
     db: dbview.Database,
+    namespace: str,
     query: str,
     *,
     variables: Mapping[str, Any] = immutables.Map(),
@@ -479,6 +515,7 @@ async def parse_execute_json(
         allow_capabilities=allow_cap,
         read_only=read_only,
         module=module,
+        namespace=namespace,
         force_limit=limit
     )
 

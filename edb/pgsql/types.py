@@ -307,9 +307,15 @@ def pg_type_from_ir_typeref(
         else:
             pg_type = base_type_name_map.get(material.id)
             if pg_type is None:
+                builtin_extending_enum = (
+                    material.has_enum
+                    and str(material.name_hint.module) in s_schema.STD_MODULES_STR
+                )
                 # User-defined scalar type
                 pg_type = common.get_scalar_backend_name(
-                    material.id, material.name_hint.module, catenate=False)
+                    material.id, material.name_hint.module, catenate=False,
+                    ignore_ns=builtin_extending_enum
+                )
 
             return pg_type
 

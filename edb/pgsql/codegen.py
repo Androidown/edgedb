@@ -26,6 +26,7 @@ from edb.pgsql import ast as pgast
 from edb.common.ast import codegen
 from edb.common import exceptions
 from edb.common import markup
+from edb.schema import defines
 
 
 class SQLSourceGeneratorContext(markup.MarkupExceptionContext):
@@ -118,7 +119,7 @@ class SQLSourceGenerator(codegen.SourceGenerator):
         if node.schemaname is None:
             self.write(common.qname(node.name))
         else:
-            self.write(common.qname(node.schemaname, node.name))
+            self.write(common.qname(common.actual_schemaname(node.schemaname), node.name))
 
     def _visit_values_expr(self, node):
         self.new_lines = 1

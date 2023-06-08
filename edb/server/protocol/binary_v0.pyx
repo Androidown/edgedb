@@ -20,7 +20,7 @@ import asyncio
 cdef tuple MIN_LEGACY_PROTOCOL = edbdef.MIN_LEGACY_PROTOCOL
 
 
-from edb.server import args as srvargs
+from edb.server import args as srvargs, defines
 from edb.server.protocol cimport args_ser
 from edb.server.protocol import execute
 
@@ -197,7 +197,9 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
                 f'accept connections'
             )
 
-        await self._start_connection(database)
+        namespace = params.get('namespace', edbdef.DEFAULT_NS)
+
+        await self._start_connection(database, namespace)
 
         # The user has already been authenticated by other means
         # (such as the ability to write to a protected socket).
@@ -265,170 +267,7 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
         self.flush()
 
     async def legacy_dump(self):
-        cdef:
-            WriteBuffer msg_buf
-            dbview.DatabaseConnectionView _dbview
-
-        self.reject_headers()
-        self.buffer.finish_message()
-
-        _dbview = self.get_dbview()
-        if _dbview.txid:
-            raise errors.ProtocolError(
-                'DUMP must not be executed while in transaction'
-            )
-
-        server = self.server
-        compiler_pool = server.get_compiler_pool()
-
-        dbname = _dbview.dbname
-        pgcon = await server.acquire_pgcon(dbname)
-        self._in_dump_restore = True
-        try:
-            # To avoid having races, we want to:
-            #
-            #   1. start a transaction;
-            #
-            #   2. in the compiler process we connect to that transaction
-            #      and re-introspect the schema in it.
-            #
-            #   3. all dump worker pg connection would work on the same
-            #      connection.
-            #
-            # This guarantees that every pg connection and the compiler work
-            # with the same DB state.
-
-            await pgcon.sql_execute(
-                b'''START TRANSACTION
-                        ISOLATION LEVEL SERIALIZABLE
-                        READ ONLY
-                        DEFERRABLE;
-
-                    -- Disable transaction or query execution timeout
-                    -- limits. Both clients and the server can be slow
-                    -- during the dump/restore process.
-                    SET idle_in_transaction_session_timeout = 0;
-                    SET statement_timeout = 0;
-                ''',
-            )
-
-            user_schema = await server.introspect_user_schema(dbname, pgcon)
-            global_schema = await server.introspect_global_schema(pgcon)
-            db_config = await server.introspect_db_config(pgcon)
-            dump_protocol = self.max_protocol
-
-            schema_ddl, schema_dynamic_ddl, schema_ids, blocks, external_ids = (
-                await compiler_pool.describe_database_dump(
-                    user_schema,
-                    global_schema,
-                    db_config,
-                    dump_protocol,
-                )
-            )
-
-            if schema_dynamic_ddl:
-                for query in schema_dynamic_ddl:
-                    result = await pgcon.sql_fetch_val(query.encode('utf-8'))
-                    if result:
-                        schema_ddl += '\n' + result.decode('utf-8')
-
-            msg_buf = WriteBuffer.new_message(b'@')
-
-            msg_buf.write_int16(4)  # number of headers
-            msg_buf.write_int16(DUMP_HEADER_BLOCK_TYPE)
-            msg_buf.write_len_prefixed_bytes(DUMP_HEADER_BLOCK_TYPE_INFO)
-            msg_buf.write_int16(DUMP_HEADER_SERVER_VER)
-            msg_buf.write_len_prefixed_utf8(str(buildmeta.get_version()))
-            msg_buf.write_int16(DUMP_HEADER_SERVER_TIME)
-            msg_buf.write_len_prefixed_utf8(str(int(time.time())))
-
-            # adding external ddl & external ids
-            msg_buf.write_int16(DUMP_EXTERNAL_VIEW)
-            external_views = await self.external_views(external_ids, pgcon)
-            msg_buf.write_int32(len(external_views))
-            for name, view_sql in external_views:
-                if isinstance(name, tuple):
-                    msg_buf.write_int16(DUMP_EXTERNAL_KEY_LINK)
-                    msg_buf.write_len_prefixed_utf8(name[0])
-                    msg_buf.write_len_prefixed_utf8(name[1])
-                else:
-                    msg_buf.write_int16(DUMP_EXTERNAL_KEY_OBJ)
-                    msg_buf.write_len_prefixed_utf8(name)
-                msg_buf.write_len_prefixed_utf8(view_sql)
-
-            msg_buf.write_int16(dump_protocol[0])
-            msg_buf.write_int16(dump_protocol[1])
-            msg_buf.write_len_prefixed_utf8(schema_ddl)
-
-            msg_buf.write_int32(len(schema_ids))
-            for (tn, td, tid) in schema_ids:
-                msg_buf.write_len_prefixed_utf8(tn)
-                msg_buf.write_len_prefixed_utf8(td)
-                assert len(tid) == 16
-                msg_buf.write_bytes(tid)  # uuid
-
-            msg_buf.write_int32(len(blocks))
-            for block in blocks:
-                assert len(block.schema_object_id.bytes) == 16
-                msg_buf.write_bytes(block.schema_object_id.bytes)  # uuid
-                msg_buf.write_len_prefixed_bytes(block.type_desc)
-
-                msg_buf.write_int16(len(block.schema_deps))
-                for depid in block.schema_deps:
-                    assert len(depid.bytes) == 16
-                    msg_buf.write_bytes(depid.bytes)  # uuid
-
-            self._transport.write(memoryview(msg_buf.end_message()))
-            self.flush()
-
-            blocks_queue = collections.deque(blocks)
-            output_queue = asyncio.Queue(maxsize=2)
-
-            async with taskgroup.TaskGroup() as g:
-                g.create_task(pgcon.dump(
-                    blocks_queue,
-                    output_queue,
-                    DUMP_BLOCK_SIZE,
-                ))
-
-                nstops = 0
-                while True:
-                    if self._cancelled:
-                        raise ConnectionAbortedError
-
-                    out = await output_queue.get()
-                    if out is None:
-                        nstops += 1
-                        if nstops == 1:
-                            # we only have one worker right now
-                            break
-                    else:
-                        block, block_num, data = out
-
-                        msg_buf = WriteBuffer.new_message(b'=')
-                        msg_buf.write_int16(4)  # number of headers
-
-                        msg_buf.write_int16(DUMP_HEADER_BLOCK_TYPE)
-                        msg_buf.write_len_prefixed_bytes(
-                            DUMP_HEADER_BLOCK_TYPE_DATA)
-                        msg_buf.write_int16(DUMP_HEADER_BLOCK_ID)
-                        msg_buf.write_len_prefixed_bytes(
-                            block.schema_object_id.bytes)
-                        msg_buf.write_int16(DUMP_HEADER_BLOCK_NUM)
-                        msg_buf.write_len_prefixed_bytes(
-                            str(block_num).encode())
-                        msg_buf.write_int16(DUMP_HEADER_BLOCK_DATA)
-                        msg_buf.write_len_prefixed_buffer(data)
-
-                        self._transport.write(memoryview(msg_buf.end_message()))
-                        if self._write_waiter:
-                            await self._write_waiter
-
-            await pgcon.sql_execute(b"ROLLBACK;")
-
-        finally:
-            self._in_dump_restore = False
-            server.release_pgcon(dbname, pgcon)
+        await self._dump()
 
         msg_buf = WriteBuffer.new_message(b'C')
         msg_buf.write_int16(0)  # no headers
@@ -437,229 +276,7 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
         self.flush()
 
     async def legacy_restore(self):
-        cdef:
-            WriteBuffer msg_buf
-            char mtype
-            dbview.DatabaseConnectionView _dbview
-
-        _dbview = self.get_dbview()
-        if _dbview.txid:
-            raise errors.ProtocolError(
-                'RESTORE must not be executed while in transaction'
-            )
-
-        self.reject_headers()
-        self.buffer.read_int16()  # discard -j level
-
-        # Now parse the embedded dump header message:
-
-        server = self.server
-        compiler_pool = server.get_compiler_pool()
-
-        global_schema = _dbview.get_global_schema()
-        user_schema = _dbview.get_user_schema()
-
-        dump_server_ver_str = None
-        headers_num = self.buffer.read_int16()
-        external_views = []
-        for _ in range(headers_num):
-            hdrname = self.buffer.read_int16()
-            if hdrname != DUMP_EXTERNAL_VIEW:
-                hdrval = self.buffer.read_len_prefixed_bytes()
-            if hdrname == DUMP_HEADER_SERVER_VER:
-                dump_server_ver_str = hdrval.decode('utf-8')
-            # getting external ddl & external ids
-            if hdrname == DUMP_EXTERNAL_VIEW:
-                external_view_num = self.buffer.read_int32()
-                for _ in range(external_view_num):
-                    key_flag = self.buffer.read_int16()
-                    if key_flag == DUMP_EXTERNAL_KEY_LINK:
-                        obj_name = self.buffer.read_len_prefixed_utf8()
-                        link_name = self.buffer.read_len_prefixed_utf8()
-                        sql = self.buffer.read_len_prefixed_utf8()
-                        external_views.append(((obj_name, link_name), sql))
-                    else:
-                        name = self.buffer.read_len_prefixed_utf8()
-                        sql = self.buffer.read_len_prefixed_utf8()
-                        external_views.append((name, sql))
-
-        proto_major = self.buffer.read_int16()
-        proto_minor = self.buffer.read_int16()
-        proto = (proto_major, proto_minor)
-        if proto > DUMP_VER_MAX or proto < DUMP_VER_MIN:
-            raise errors.ProtocolError(
-                f'unsupported dump version {proto_major}.{proto_minor}')
-
-        schema_ddl = self.buffer.read_len_prefixed_bytes()
-
-        ids_num = self.buffer.read_int32()
-        schema_ids = []
-        for _ in range(ids_num):
-            schema_ids.append((
-                self.buffer.read_len_prefixed_utf8(),
-                self.buffer.read_len_prefixed_utf8(),
-                self.buffer.read_bytes(16),
-            ))
-
-        block_num = <uint32_t>self.buffer.read_int32()
-        blocks = []
-        for _ in range(block_num):
-            blocks.append((
-                self.buffer.read_bytes(16),
-                self.buffer.read_len_prefixed_bytes(),
-            ))
-
-            # Ignore deps info
-            for _ in range(self.buffer.read_int16()):
-                self.buffer.read_bytes(16)
-
-        self.buffer.finish_message()
-        dbname = _dbview.dbname
-        pgcon = await server.acquire_pgcon(dbname)
-
-        self._in_dump_restore = True
-        try:
-            _dbview.decode_state(sertypes.NULL_TYPE_ID.bytes, b'')
-            await self._execute_utility_stmt(
-                'START TRANSACTION ISOLATION SERIALIZABLE',
-                pgcon,
-            )
-
-            await pgcon.sql_execute(
-                b'''
-                    -- Disable transaction or query execution timeout
-                    -- limits. Both clients and the server can be slow
-                    -- during the dump/restore process.
-                    SET idle_in_transaction_session_timeout = 0;
-                    SET statement_timeout = 0;
-                ''',
-            )
-
-            schema_sql_units, restore_blocks, tables = \
-                await compiler_pool.describe_database_restore(
-                    user_schema,
-                    global_schema,
-                    dump_server_ver_str,
-                    schema_ddl,
-                    schema_ids,
-                    blocks,
-                    proto,
-                    dict(external_views)
-                )
-
-            for query_unit in schema_sql_units:
-                new_types = None
-                _dbview.start(query_unit)
-
-                try:
-                    if query_unit.config_ops:
-                        for op in query_unit.config_ops:
-                            if op.scope is config.ConfigScope.INSTANCE:
-                                raise errors.ProtocolError(
-                                    'CONFIGURE INSTANCE cannot be executed'
-                                    ' in dump restore'
-                                )
-
-                    if query_unit.sql:
-                        if query_unit.ddl_stmt_id:
-                            ddl_ret = await pgcon.run_ddl(query_unit)
-                            if ddl_ret and ddl_ret['new_types']:
-                                new_types = ddl_ret['new_types']
-                            if query_unit.schema_refl_sqls:
-                                # no performance optimization
-                                await pgcon.sql_execute(query_unit.schema_refl_sqls)
-                        else:
-                            await pgcon.sql_execute(query_unit.sql)
-                except Exception:
-                    _dbview.on_error()
-                    raise
-                else:
-                    _dbview.on_success(query_unit, new_types)
-
-            restore_blocks = {
-                b.schema_object_id: b
-                for b in restore_blocks
-            }
-
-            disable_trigger_q = ''
-            enable_trigger_q = ''
-            for table in tables:
-                disable_trigger_q += (
-                    f'ALTER TABLE {table} DISABLE TRIGGER ALL;'
-                )
-                enable_trigger_q += (
-                    f'ALTER TABLE {table} ENABLE TRIGGER ALL;'
-                )
-
-            await pgcon.sql_execute(disable_trigger_q.encode())
-
-            # Send "RestoreReadyMessage"
-            msg = WriteBuffer.new_message(b'+')
-            msg.write_int16(0)  # no headers
-            msg.write_int16(1)  # -j1
-            self.write(msg.end_message())
-            self.flush()
-
-            while True:
-                if not self.buffer.take_message():
-                    # Don't report idling when restoring a dump.
-                    # This is an edge case and the client might be
-                    # legitimately slow.
-                    await self.wait_for_message(report_idling=False)
-                mtype = self.buffer.get_message_type()
-
-                if mtype == b'=':
-                    block_type = None
-                    block_id = None
-                    block_num = None
-                    block_data = None
-
-                    num_headers = self.buffer.read_int16()
-                    for _ in range(num_headers):
-                        header = self.buffer.read_int16()
-                        if header == DUMP_HEADER_BLOCK_TYPE:
-                            block_type = self.buffer.read_len_prefixed_bytes()
-                        elif header == DUMP_HEADER_BLOCK_ID:
-                            block_id = self.buffer.read_len_prefixed_bytes()
-                            block_id = pg_UUID(block_id)
-                        elif header == DUMP_HEADER_BLOCK_NUM:
-                            block_num = self.buffer.read_len_prefixed_bytes()
-                        elif header == DUMP_HEADER_BLOCK_DATA:
-                            block_data = self.buffer.read_len_prefixed_bytes()
-
-                    self.buffer.finish_message()
-
-                    if (block_type is None or block_id is None
-                        or block_num is None or block_data is None):
-                        raise errors.ProtocolError('incomplete data block')
-
-                    restore_block = restore_blocks[block_id]
-                    type_id_map = self._build_type_id_map_for_restore_mending(
-                        restore_block)
-                    await pgcon.restore(restore_block, block_data, type_id_map)
-
-                elif mtype == b'.':
-                    self.buffer.finish_message()
-                    break
-
-                else:
-                    self.fallthrough()
-
-            await pgcon.sql_execute(enable_trigger_q.encode())
-
-        except Exception:
-            await pgcon.sql_execute(b'ROLLBACK')
-            _dbview.abort_tx()
-            raise
-
-        else:
-            await self._execute_utility_stmt('COMMIT', pgcon)
-
-        finally:
-            self._in_dump_restore = False
-            server.release_pgcon(dbname, pgcon)
-
-        await server.introspect_db(dbname)
+        await self._restore()
 
         msg = WriteBuffer.new_message(b'C')
         msg.write_int16(0)  # no headers
@@ -986,7 +603,8 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
             inline_objectids=inline_objectids,
             allow_capabilities=allow_capabilities,
             module=module,
-            read_only=read_only
+            read_only=read_only,
+            namespace=self.namespace
         )
 
         return eql, query_req, stmt_name
@@ -1085,7 +703,8 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
             protocol_version=self.protocol_version,
             output_format=FMT_NONE,
             module=module,
-            read_only=read_only
+            read_only=read_only,
+            namespace=self.namespace,
         )
 
         return await self.get_dbview()._compile(
@@ -1205,7 +824,8 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
             pgcon.PGConnection conn
 
         unit_group = await self._legacy_compile_script(
-            eql, skip_first=skip_first, module=module, read_only=read_only)
+            eql, skip_first=skip_first, module=module, read_only=read_only
+        )
 
         if self._cancelled:
             raise ConnectionAbortedError
@@ -1238,12 +858,13 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
                             query_unit.create_db_template, _dbview.dbname
                         )
                     if query_unit.drop_db:
-                        await self.server._on_before_drop_db(
-                            query_unit.drop_db, _dbview.dbname)
-
+                        await self.server._on_before_drop_db(query_unit.drop_db, _dbview.dbname)
+                    if query_unit.create_ns:
+                        await self.server.create_namespace(conn, query_unit.create_ns)
+                    if query_unit.drop_ns:
+                        await self.server._on_before_drop_ns(query_unit.drop_ns)
                     if query_unit.system_config:
-                        await execute.execute_system_config(
-                            conn, _dbview, query_unit)
+                        await execute.execute_system_config(conn, _dbview, query_unit)
                     else:
                         if query_unit.sql:
                             if query_unit.ddl_stmt_id:
@@ -1251,10 +872,7 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
                                 if ddl_ret and ddl_ret['new_types']:
                                     new_types = ddl_ret['new_types']
                             elif query_unit.is_transactional:
-                                await conn.sql_execute(
-                                    query_unit.sql,
-                                    state=state,
-                                )
+                                await conn.sql_execute(query_unit.sql, state=state)
                             else:
                                 i = 0
                                 for sql in query_unit.sql:
@@ -1270,18 +888,19 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
                                 orig_state = None
 
                         if query_unit.create_db:
-                            await self.server.introspect_db(
-                                query_unit.create_db
-                            )
+                            await self.server.introspect(query_unit.create_db)
+
+                        if query_unit.create_ns:
+                            await self.server.introspect(_dbview.dbname, query_unit.create_ns)
 
                         if query_unit.drop_db:
-                            self.server._on_after_drop_db(
-                                query_unit.drop_db)
+                            self.server._on_after_drop_db(query_unit.drop_db)
+
+                        if query_unit.drop_db:
+                            self.server._on_after_drop_ns(_dbview.dbname, query_unit.drop_ns)
 
                         if query_unit.config_ops:
-                            await _dbview.apply_config_ops(
-                                conn,
-                                query_unit.config_ops)
+                            await _dbview.apply_config_ops(conn, query_unit.config_ops)
                 except Exception:
                     _dbview.on_error()
                     if not conn.in_tx() and _dbview.in_tx():
@@ -1293,7 +912,7 @@ cdef class EdgeConnectionBackwardsCompatible(EdgeConnection):
                 else:
                     side_effects = _dbview.on_success(query_unit, new_types)
                     if side_effects:
-                        execute.signal_side_effects(_dbview, side_effects)
+                        execute.signal_side_effects(_dbview, query_unit, side_effects)
                     if not _dbview.in_tx():
                         state = _dbview.serialize_state()
                         if state is not orig_state:

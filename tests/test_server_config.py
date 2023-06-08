@@ -709,56 +709,59 @@ class TestServerConfig(tb.QueryTestCase):
         )
 
     async def test_server_proto_configure_04(self):
-        with self.assertRaisesRegex(
-                edgedb.UnsupportedFeatureError,
-                'CONFIGURE SESSION INSERT is not supported'):
-            await self.con.query('''
-                CONFIGURE SESSION INSERT TestSessionConfig {name := 'test_04'}
-            ''')
+        try:
+            with self.assertRaisesRegex(
+                    edgedb.UnsupportedFeatureError,
+                    'CONFIGURE SESSION INSERT is not supported'):
+                await self.con.query('''
+                    CONFIGURE SESSION INSERT TestSessionConfig {name := 'test_04'}
+                ''')
 
-        with self.assertRaisesRegex(
-                edgedb.ConfigurationError,
-                "unrecognized configuration object 'Unrecognized'"):
-            await self.con.query('''
-                CONFIGURE INSTANCE INSERT Unrecognized {name := 'test_04'}
-            ''')
+            with self.assertRaisesRegex(
+                    edgedb.ConfigurationError,
+                    "unrecognized configuration object 'Unrecognized'"):
+                await self.con.query('''
+                    CONFIGURE INSTANCE INSERT Unrecognized {name := 'test_04'}
+                ''')
 
-        with self.assertRaisesRegex(
-                edgedb.QueryError,
-                "must not have a FILTER clause"):
-            await self.con.query('''
-                CONFIGURE INSTANCE RESET __internal_testvalue FILTER 1 = 1;
-            ''')
+            with self.assertRaisesRegex(
+                    edgedb.QueryError,
+                    "must not have a FILTER clause"):
+                await self.con.query('''
+                    CONFIGURE INSTANCE RESET __internal_testvalue FILTER 1 = 1;
+                ''')
 
-        with self.assertRaisesRegex(
-                edgedb.QueryError,
-                "non-constant expression"):
-            await self.con.query('''
-                CONFIGURE SESSION SET __internal_testmode := (random() = 0);
-            ''')
+            with self.assertRaisesRegex(
+                    edgedb.QueryError,
+                    "non-constant expression"):
+                await self.con.query('''
+                    CONFIGURE SESSION SET __internal_testmode := (random() = 0);
+                ''')
 
-        with self.assertRaisesRegex(
-                edgedb.ConfigurationError,
-                "'Subclass1' cannot be configured directly"):
-            await self.con.query('''
-                CONFIGURE INSTANCE INSERT Subclass1 {
-                    name := 'foo'
-                };
-            ''')
-
-        await self.con.query('''
-            CONFIGURE INSTANCE INSERT TestInstanceConfig {
-                name := 'test_04',
-            }
-        ''')
-
-        with self.assertRaisesRegex(
-                edgedb.ConstraintViolationError,
-                "TestInstanceConfig.name violates exclusivity constraint"):
+            with self.assertRaisesRegex(
+                    edgedb.ConfigurationError,
+                    "'Subclass1' cannot be configured directly"):
+                await self.con.query('''
+                    CONFIGURE INSTANCE INSERT Subclass1 {
+                        name := 'foo'
+                    };
+                ''')
             await self.con.query('''
                 CONFIGURE INSTANCE INSERT TestInstanceConfig {
                     name := 'test_04',
                 }
+            ''')
+            with self.assertRaisesRegex(
+                    edgedb.ConstraintViolationError,
+                    "TestInstanceConfig.name violates exclusivity constraint"):
+                await self.con.query('''
+                    CONFIGURE INSTANCE INSERT TestInstanceConfig {
+                        name := 'test_04',
+                    }
+                ''')
+        finally:
+            await self.con.execute('''
+                CONFIGURE INSTANCE RESET TestInstanceConfig;
             ''')
 
     async def test_server_proto_configure_05(self):

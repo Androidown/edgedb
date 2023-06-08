@@ -25,7 +25,7 @@ from edb import errors
 from edb.common import debug
 from edb.common import markup
 
-from edb.server import compiler
+from edb.server import compiler, defines
 from edb.server import defines as edbdef
 
 from . import execute  # type: ignore
@@ -90,6 +90,7 @@ async def handle_status_request(
     db = server.get_db(dbname=edbdef.EDGEDB_SYSTEM_DB)
     result = await execute.parse_execute_json(
         db,
+        defines.DEFAULT_NS,
         query="SELECT 'OK'",
         output_format=compiler.OutputFormat.JSON_ELEMENTS,
         # Disable query cache because we need to ensure that the compiled

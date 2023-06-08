@@ -55,6 +55,7 @@ from edb.ir import staeval as ireval
 from edb.ir import ast as irast
 
 from edb.schema import database as s_db
+from edb.schema import namespace as s_ns
 from edb.schema import extensions as s_ext
 from edb.schema import roles as s_roles
 from edb.schema import ddl as s_ddl
@@ -143,6 +144,8 @@ class CompileContext:
     restoring_external: Optional[bool] = False
     # If is test mode from http
     testmode: Optional[bool] = False
+    # NameSpace for current compile
+    namespace: str = defines.DEFAULT_NS
 
 
 DEFAULT_MODULE_ALIASES_MAP = immutables.Map(
@@ -415,7 +418,12 @@ class Compiler:
             for c in pgdelta.get_subcommands()
         )
 
-        if db_cmd:
+        ns_cmd = any(
+            isinstance(c, s_ns.NameSpaceCommand)
+            for c in pgdelta.get_subcommands()
+        )
+
+        if db_cmd or ns_cmd:
             block = pg_dbops.SQLBlock()
             new_be_types = new_types = frozenset()
         else:
@@ -439,6 +447,7 @@ class Compiler:
         # schema persistence asynchronizable
         schema_peristence_async = (
             not db_cmd
+            and not ns_cmd
             and not new_be_types
             and not any(
                 isinstance(c, (s_ext.ExtensionCommand,
@@ -462,23 +471,23 @@ class Compiler:
             ctx, pgdelta, subblock, context=context,
             schema_persist_block=refl_block
         )
-
+        instdata_schemaname = pg_common.actual_schemaname("edgedbinstdata")
         if schema_peristence_async:
             if debug.flags.keep_schema_persistence_history:
                 invalid_persist_his = f"""\
-                    UPDATE "edgedbinstdata"."schema_persist_history"
+                    UPDATE "{instdata_schemaname}"."schema_persist_history"
                     SET active = false
                     WHERE version_id = '{str(ver_id)}'::uuid;\
                 """
             else:
                 invalid_persist_his = f"""\
-                    DELETE FROM "edgedbinstdata"."schema_persist_history"
+                    DELETE FROM "{instdata_schemaname}"."schema_persist_history"
                     WHERE version_id = '{str(ver_id)}'::uuid;\
                 """
             refl_block.add_command(textwrap.dedent(invalid_persist_his))
             main_block_sub = block.add_block()
             main_block_sub.add_command(textwrap.dedent(f"""\
-                INSERT INTO "edgedbinstdata"."schema_persist_history"
+                INSERT INTO "{instdata_schemaname}"."schema_persist_history"
                 ("version_id", "sql") values (
                     '{str(ver_id)}'::uuid,
                     {pg_common.quote_bytea_literal(refl_block.to_string().encode())}
@@ -533,7 +542,7 @@ class Compiler:
         with cache.mutate() as cache_mm:
             for eql, args in meta_blocks:
                 eql_hash = hashlib.sha1(eql.encode()).hexdigest()
-                fname = ('edgedb', f'__rh_{eql_hash}')
+                fname = (pg_common.actual_schemaname('edgedb'), f'__rh_{eql_hash}')
 
                 if eql_hash in cache_mm:
                     argnames = cache_mm[eql_hash]
@@ -570,7 +579,7 @@ class Compiler:
                     or '__script' in args
                 ):
                     # schema version and migration
-                    # update should always goes to main block
+                    # update should always go to main block
                     block.add_command(cmd)
                 else:
                     sp_block.add_command(cmd)
@@ -605,6 +614,7 @@ class Compiler:
                 expected_cardinality_one=False,
                 bootstrap_mode=ctx.bootstrap_mode,
                 protocol_version=ctx.protocol_version,
+                namespace=ctx.namespace
             )
 
             source = edgeql.Source.from_string(eql)
@@ -1096,7 +1106,7 @@ class Compiler:
                                 "backend_id"
                             )
                         FROM
-                            edgedb."_SchemaType"
+                            {pg_common.actual_schemaname('edgedb')}."_SchemaType"
                         WHERE
                                 "id" = any(ARRAY[
                                     {', '.join(new_type_ids)}
@@ -1135,11 +1145,17 @@ class Compiler:
         create_db = None
         drop_db = None
         create_db_template = None
+        create_ns = None
+        drop_ns = None
         if isinstance(stmt, qlast.DropDatabase):
             drop_db = stmt.name.name
         elif isinstance(stmt, qlast.CreateDatabase):
             create_db = stmt.name.name
             create_db_template = stmt.template.name if stmt.template else None
+        elif isinstance(stmt, qlast.CreateNameSpace):
+            create_ns = stmt.name.name
+        elif isinstance(stmt, qlast.DropNameSpace):
+            drop_ns = stmt.name.name
 
         if debug.flags.delta_execute:
             debug.header('Delta Script')
@@ -1156,6 +1172,8 @@ class Compiler:
             ),
             create_db=create_db,
             drop_db=drop_db,
+            create_ns=create_ns,
+            drop_ns=drop_ns,
             create_db_template=create_db_template,
             has_role_ddl=isinstance(stmt, qlast.RoleCommand),
             ddl_stmt_id=ddl_stmt_id,
@@ -1881,7 +1899,11 @@ class Compiler:
                 self._compile_ql_sess_state(ctx, ql),
                 enums.Capability.SESSION_CONFIG,
             )
-
+        elif isinstance(ql, qlast.UseNameSpaceCommand):
+            return (
+                dbstate.NameSpaceSwitchQuery(new_ns=ql.name, sql=()),
+                enums.Capability.SESSION_CONFIG,
+            )
         elif isinstance(ql, qlast.ConfigOp):
             if ql.scope is qltypes.ConfigScope.SESSION:
                 capability = enums.Capability.SESSION_CONFIG
@@ -1911,6 +1933,7 @@ class Compiler:
         source: edgeql.Source,
     ) -> dbstate.QueryUnitGroup:
         current_tx = ctx.state.current_tx()
+        pg_common.NAMESPACE = ctx.namespace
         if current_tx.get_migration_state() is not None:
             original = edgeql.Source.from_string(source.text())
             ctx = dataclasses.replace(
@@ -1950,6 +1973,17 @@ class Compiler:
         default_cardinality = enums.Cardinality.NO_RESULT
         statements = edgeql.parse_block(source)
         statements_len = len(statements)
+        is_script = statements_len > 1
+
+        if is_script and any(isinstance(stmt, qlast.UseNameSpaceCommand) for stmt in statements):
+            raise errors.QueryError(
+                'USE NAMESPACE statement is not allowed to be used in script.'
+            )
+
+        if isinstance(statements[0], qlast.UseNameSpaceCommand) and ctx.in_tx:
+            raise errors.QueryError(
+                'cannot execute USE NAMESPACE in a transaction'
+            )
 
         if ctx.skip_first:
             statements = statements[1:]
@@ -1964,8 +1998,7 @@ class Compiler:
             raise errors.ProtocolError('nothing to compile')
 
         rv = dbstate.QueryUnitGroup()
-
-        is_script = statements_len > 1
+        rv.namespace = ctx.namespace
         script_info = None
         if is_script:
             if ctx.expect_rollback:
@@ -2002,6 +2035,7 @@ class Compiler:
                 cardinality=default_cardinality,
                 capabilities=capabilities,
                 output_format=stmt_ctx.output_format,
+                namespace=ctx.namespace
             )
 
             if not comp.is_transactional:
@@ -2067,6 +2101,8 @@ class Compiler:
                 unit.create_db = comp.create_db
                 unit.drop_db = comp.drop_db
                 unit.create_db_template = comp.create_db_template
+                unit.create_ns = comp.create_ns
+                unit.drop_ns = comp.drop_ns
                 unit.has_role_ddl = comp.has_role_ddl
                 unit.ddl_stmt_id = comp.ddl_stmt_id
                 if comp.user_schema is not None:
@@ -2190,7 +2226,8 @@ class Compiler:
                     unit.config_ops.append(comp.config_op)
 
                 unit.has_set = True
-
+            elif isinstance(comp, dbstate.NameSpaceSwitchQuery):
+                unit.ns_to_switch = comp.new_ns
             elif isinstance(comp, dbstate.NullQuery):
                 pass
 
@@ -2424,6 +2461,7 @@ class Compiler:
 
     def compile(
         self,
+        namespace: str,
         user_schema: s_schema.Schema,
         global_schema: s_schema.Schema,
         reflection_cache: Mapping[str, Tuple[str, ...]],
@@ -2493,7 +2531,8 @@ class Compiler:
             module=module,
             external_view=external_view,
             restoring_external=restoring_external,
-            testmode=testmode
+            testmode=testmode,
+            namespace=namespace
         )
 
         unit_group = self._compile(ctx=ctx, source=source)
@@ -2511,6 +2550,7 @@ class Compiler:
     def compile_in_tx(
         self,
         state: dbstate.CompilerConnectionState,
+        namespace: str,
         txid: int,
         source: edgeql.Source,
         output_format: enums.OutputFormat,
@@ -2558,18 +2598,21 @@ class Compiler:
             module=module,
             in_tx=True,
             external_view=external_view,
-            restoring_external=restoring_external
+            restoring_external=restoring_external,
+            namespace=namespace
         )
 
         return self._compile(ctx=ctx, source=source), ctx.state
 
     def describe_database_dump(
         self,
+        namespace: str,
         user_schema: s_schema.Schema,
         global_schema: s_schema.Schema,
         database_config: immutables.Map[str, config.SettingValue],
         protocol_version: Tuple[int, int],
     ) -> DumpDescriptor:
+        pg_common.NAMESPACE = namespace
         schema = s_schema.ChainedSchema(
             self._std_schema,
             user_schema,
@@ -2830,6 +2873,7 @@ class Compiler:
 
     def describe_database_restore(
         self,
+        namespace,
         user_schema: s_schema.Schema,
         global_schema: s_schema.Schema,
         dump_server_ver_str: Optional[str],
@@ -2839,6 +2883,7 @@ class Compiler:
         protocol_version: Tuple[int, int],
         external_view: Dict[str, str]
     ) -> RestoreDescriptor:
+        pg_common.NAMESPACE = namespace
         schema_object_ids = {
             (
                 s_name.name_from_string(name),
@@ -2889,7 +2934,9 @@ class Compiler:
                 log_ddl_as_migrations=False,
                 protocol_version=protocol_version,
                 external_view=external_view,
-                restoring_external=True
+                restoring_external=True,
+                namespace=namespace,
+                bootstrap_mode=True
             )
         else:
             ctx = CompileContext(
@@ -2900,6 +2947,8 @@ class Compiler:
                 schema_object_ids=schema_object_ids,
                 log_ddl_as_migrations=False,
                 protocol_version=protocol_version,
+                namespace=namespace,
+                bootstrap_mode=True
             )
 
         ctx.state.start_tx()
@@ -3193,3 +3242,10 @@ class RestoreBlockDescriptor(NamedTuple):
     #: this will contain the recursive descriptor on which parts of
     #: each datum need mending.
     data_mending_desc: Tuple[Optional[DataMendingDescriptor], ...]
+
+
+class RestoreSchemaInfo(NamedTuple):
+    schema_ddl: bytes
+    schema_ids: List[Tuple]
+    blocks: List
+    external_views: List[Tuple]

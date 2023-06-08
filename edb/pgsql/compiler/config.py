@@ -412,7 +412,7 @@ def _rewrite_config_insert(
 
     overwrite_query = pgast.SelectStmt()
     id_expr = pgast.FuncCall(
-        name=('edgedbext', 'uuid_generate_v1mc',),
+        name=(common.actual_schemaname('edgedbext'), 'uuid_generate_v1mc',),
         args=[],
     )
     pathctx.put_path_identity_var(

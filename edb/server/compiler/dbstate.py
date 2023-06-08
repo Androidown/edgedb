@@ -39,7 +39,7 @@ from edb.schema import migrations as s_migrations
 from edb.schema import objects as s_obj
 from edb.schema import schema as s_schema
 
-from edb.server import config
+from edb.server import config, defines
 
 from . import enums
 from . import sertypes
@@ -78,6 +78,13 @@ class NullQuery(BaseQuery):
     sql: Tuple[bytes, ...] = tuple()
     is_transactional: bool = True
     has_dml: bool = False
+
+
+@dataclasses.dataclass(frozen=True)
+class NameSpaceSwitchQuery(BaseQuery):
+    new_ns: str
+    is_transactional: bool = False
+    single_unit: bool = True
 
 
 @dataclasses.dataclass(frozen=True)
@@ -135,7 +142,9 @@ class DDLQuery(BaseQuery):
     is_transactional: bool = True
     single_unit: bool = False
     create_db: Optional[str] = None
+    create_ns: Optional[str] = None
     drop_db: Optional[str] = None
+    drop_ns: Optional[str] = None
     create_db_template: Optional[str] = None
     has_role_ddl: bool = False
     ddl_stmt_id: Optional[str] = None
@@ -260,6 +269,14 @@ class QueryUnit:
     # close all inactive unused pooled connections to the template db.
     create_db_template: Optional[str] = None
 
+    # If non-None, contains a name of the NameSpace that is about to be
+    # created.
+    create_ns: Optional[str] = None
+
+    # If non-None, contains a name of the NameSpace that is about to be
+    # deleted.
+    drop_ns: Optional[str] = None
+
     # If non-None, the DDL statement will emit data packets marked
     # with the indicated ID.
     ddl_stmt_id: Optional[str] = None
@@ -306,6 +323,10 @@ class QueryUnit:
     # schema reflection sqls, only available if this is a ddl stmt.
     schema_refl_sqls: Tuple[bytes, ...] = None
     stdview_sqls: Tuple[bytes, ...] = None
+    # NameSpace to use for current compile
+    namespace: str = defines.DEFAULT_NS
+    # NameSpace to switch for connection
+    ns_to_switch: str = None
 
     @property
     def has_ddl(self) -> bool:
@@ -361,6 +382,8 @@ class QueryUnitGroup:
     ref_ids: Optional[Set[uuid.UUID]] = None
     # Record affected object ids for cache clear
     affected_obj_ids: Optional[Set[uuid.UUID]] = None
+    # NameSpace to use for current compile
+    namespace: str = defines.DEFAULT_NS
 
     def __iter__(self):
         return iter(self.units)
