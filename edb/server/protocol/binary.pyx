@@ -2200,7 +2200,7 @@ cdef class EdgeConnection(frontend.FrontendConnection):
                 ''',
             )
             for ns, (schema_ddl, schema_ids, blocks, external_views) in schema_info_by_ns.items():
-                logger.info(ns)
+                logger.info(f"Restoring namespace: {ns}...")
                 user_schema = _dbview.get_user_schema(ns)
                 _dbview.decode_state(sertypes.NULL_TYPE_ID.bytes, b'', ns)
 

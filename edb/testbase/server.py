@@ -1254,13 +1254,14 @@ class Error:
 class BaseQueryTestCase(DatabaseTestCase):
 
     BASE_TEST_CLASS = True
-    test_ns: str
+    test_ns: str = None
 
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
         class_set_up = os.environ.get('EDGEDB_TEST_CASES_SET_UP', 'run')
-        cls.test_ns = os.environ.get('EDGEDB_TEST_CASES_NAMESPACE', defines.DEFAULT_NS)
+        if cls.test_ns is None:
+            cls.test_ns = os.environ.get('EDGEDB_TEST_CASES_NAMESPACE', defines.DEFAULT_NS)
 
         if class_set_up != 'skip':
             if cls.test_ns != defines.DEFAULT_NS:

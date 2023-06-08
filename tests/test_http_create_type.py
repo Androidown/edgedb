@@ -4,6 +4,7 @@ from typing import Dict, List, NamedTuple
 
 import edgedb
 
+from edb.server import defines
 from edb.testbase import http as http_tb
 from edb.testbase import server as server_tb
 
@@ -996,6 +997,8 @@ class TestHttpCreateType(http_tb.ExternTestCase, HttpCreateTypeMixin):
 
 
 class TestHttpCreateTypeDumpRestore(TestHttpCreateType, server_tb.StableDumpTestCase):
+    test_ns = defines.DEFAULT_NS
+
     async def prepare(self):
         await self.prepare_external_db(dbname=f"{self.get_database_name()}_restored")
 

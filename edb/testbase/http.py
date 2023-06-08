@@ -378,7 +378,7 @@ class ExternTestCase(BaseHttpTest, server.QueryTestCase, PGConnMixin):
 
     def create_type(self, body):
         req_data = body.as_dict()
-        req_data['namespace'] = os.environ.get('EDGEDB_TEST_CASES_NAMESPACE', defines.DEFAULT_NS)
+        req_data['namespace'] = self.test_ns
         req = urllib.request.Request(self.http_addr, method='POST')
         req.add_header('Content-Type', 'application/json')
         req.add_header('testmode', '1')

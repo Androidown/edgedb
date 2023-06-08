@@ -579,7 +579,7 @@ class Compiler:
                     or '__script' in args
                 ):
                     # schema version and migration
-                    # update should always goes to main block
+                    # update should always go to main block
                     block.add_command(cmd)
                 else:
                     sp_block.add_command(cmd)
@@ -2883,6 +2883,7 @@ class Compiler:
         protocol_version: Tuple[int, int],
         external_view: Dict[str, str]
     ) -> RestoreDescriptor:
+        pg_common.NAMESPACE = namespace
         schema_object_ids = {
             (
                 s_name.name_from_string(name),
