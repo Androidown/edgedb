@@ -55,6 +55,7 @@ from . import ui_ext
 from . import schema_info
 from . import extern_obj
 from . import infer_expr
+from . import format_query
 
 
 HTTPStatus = http.HTTPStatus
@@ -641,6 +642,12 @@ cdef class HttpProtocol:
             response.body = db.view_caches().encode()
             response.status = http.HTTPStatus.OK
             response.close_connection = True
+
+        elif path_parts[0] == 'format-query':
+            if path_parts_len > 1:
+                return self._not_found(request, response)
+
+            await format_query.handle_request(request, response)
 
         else:
             return self._not_found(request, response)
