@@ -851,7 +851,7 @@ class TestHttpCreateType(http_tb.ExternTestCase, HttpCreateTypeMixin):
         try:
             while len(self.new_outter_type):
                 t = self.new_outter_type.pop()
-                # self.loop.run_until_complete(self.con.execute(f'Drop type {t};'))
+                self.loop.run_until_complete(self.con.execute(f'Drop type {t};'))
         finally:
             super().tearDown()
 
