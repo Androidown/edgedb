@@ -36,8 +36,9 @@ class PropertyDetail(NamedTuple):
 
 class LinkDetail(NamedTuple):
     name: str
-    to: str
+    to: str = None
     type: str = None
+    expr: str = None
     alias: str = None
     cardinality: str = None
     required: bool = None
@@ -91,12 +92,17 @@ class HttpCreateTypeMixin:
                         mid,
                         fullname := .surname ++ '.' ++ .firstname
                     } ORDER BY .mid,
+                    comp_booked_by: {
+                        mid,
+                        fullname := .surname ++ '.' ++ .firstname
+                    } ORDER BY .mid,
                 } FILTER .fid=1;
             ''',
             [{
                 'fid': 1,
                 'name': 'Tennis Court 2',
-                'booked_by': {'mid': 3, 'fullname': 'Rownam.Tim'}
+                'booked_by': {'mid': 3, 'fullname': 'Rownam.Tim'},
+                'comp_booked_by': {'mid': 1, 'fullname': 'Smith.Darren'},
             }]
         )
         with self.assertRaisesRegex(
@@ -117,7 +123,7 @@ class HttpCreateTypeMixin:
                 select Facility FILTER .booked_by.mid = '1';
                 '''
             )
-        
+
     async def link_outer_outer_single_link_with_prop(self):
         # query object without link
         await self.assert_query_result(
@@ -168,7 +174,7 @@ class HttpCreateTypeMixin:
                 select Facility FILTER .bookedby.mid = '1';
                 '''
             )
-        
+
     async def link_outer_outer_multi_link_with_prop(self):
         # query object without link
         await self.assert_query_result(
@@ -243,7 +249,7 @@ class HttpCreateTypeMixin:
                 select Facility FILTER .bookedby.mid = '1';
                 '''
             )
-        
+
     async def link_outer_inner_single_link(self):
         link_to = "Person"
         # query object without link
@@ -270,12 +276,17 @@ class HttpCreateTypeMixin:
                         mid,
                         fullname := .surname ++ '.' ++ .firstname
                     } ORDER BY .mid,
+                    comp_booked_by: {
+                        mid,
+                        fullname := .surname ++ '.' ++ .firstname
+                    } ORDER BY .mid,
                 } FILTER .fid=1;
             ''',
             [{
                 'fid': 1,
                 'name': 'Tennis Court 2',
-                'booked_by': {'mid': 3, 'fullname': 'Rownam.Tim'}
+                'booked_by': {'mid': 3, 'fullname': 'Rownam.Tim'},
+                'comp_booked_by': {'mid': 1, 'fullname': 'Smith.Darren'}
             }]
         )
         with self.assertRaisesRegex(
@@ -305,7 +316,7 @@ class HttpCreateTypeMixin:
                 select Facility FILTER .booked_by.mid = '1';
                 '''
             )
-        
+
     async def link_outer_inner_single_link_with_prop(self):
         link_to = "Person"
         # query object without link
@@ -367,7 +378,7 @@ class HttpCreateTypeMixin:
                 select Facility FILTER .bookedby.mid = '1';
                 '''
             )
-        
+
     async def link_outer_inner_multi_link_with_prop(self):
         link_to = "Person"
         # query object without link
@@ -453,7 +464,7 @@ class HttpCreateTypeMixin:
                 select Facility FILTER .bookedby.mid = '1';
                 '''
             )
-        
+
     async def link_inner_outer(self):
         with self.assertRaisesRegex(
                 edgedb.SchemaDefinitionError,
@@ -542,7 +553,7 @@ class HttpCreateTypeMixin:
                 select NameList FILTER .member.mid = '1';
                 '''
             )
-        
+
     async def link_inner_outer_on_source_delete(self):
         await self.con.execute(
             '''
@@ -633,7 +644,7 @@ class HttpCreateTypeMixin:
             ]
         )
         self.new_outter_type.append("NameList")
-        
+
     async def link_inner_outer_multi_link_on_source_delete(self):
         await self.con.execute(
             '''
@@ -734,7 +745,7 @@ class HttpCreateTypeMixin:
             )
 
         self.new_outter_type.append("NameList")
-        
+
     async def dml_reject(self):
         with self.assertRaisesRegex(
                 edgedb.QueryError,
@@ -840,7 +851,7 @@ class TestHttpCreateType(http_tb.ExternTestCase, HttpCreateTypeMixin):
         try:
             while len(self.new_outter_type):
                 t = self.new_outter_type.pop()
-                self.loop.run_until_complete(self.con.execute(f'Drop type {t};'))
+                # self.loop.run_until_complete(self.con.execute(f'Drop type {t};'))
         finally:
             super().tearDown()
 
@@ -878,8 +889,11 @@ class TestHttpCreateType(http_tb.ExternTestCase, HttpCreateTypeMixin):
                 LinkDetail(
                     name="booked_by",
                     type=link_to,
-                    from_="fid",
                     to="mid",
+                ),
+                LinkDetail(
+                    name="comp_booked_by",
+                    expr=f"SELECT {link_to} filter .mid = __source__.fid",
                 )
             ]
 

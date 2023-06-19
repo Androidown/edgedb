@@ -58,7 +58,7 @@ class Cardinality(str, enum.Enum):
 
 class ViewDef(NamedTuple):
     relation: str
-    columns: Dict[str, Dict[str, str]]
+    columns: Dict[str, str]
 
 
 class _Request(struct.RTStruct, use_slots=False):
@@ -78,6 +78,8 @@ class _Pointer(_Request):
     name: str = struct.Field(type_=str)
     #: 属性在edge中的类型
     type: str = struct.Field(type_=str, default=None)
+    #: 计算表达式，表达式中的字段必须使用edge属性名，不可使用外部表列名
+    expr: str = struct.Field(type_=str, default=None)
     #: 作为edge对象的属性名，可选，为空时使用name
     alias: str = struct.Field(type_=str, default=None)
     #: 属性基数，single/multi 大小写不敏感
@@ -95,8 +97,6 @@ class _Pointer(_Request):
 
 
 class CreateProperty(_Pointer):
-    #: 计算属性的表达式，表达式中的字段必须使用edge属性名，不可使用外部表列名
-    expr: str = struct.Field(type_=str, default=None)
     #: 是否排他（edge不会给外部表增加排他约束，需要依靠外部表自身保证排他性）
     exclusive: bool = struct.Field(type_=bool, default=False)
 
@@ -132,14 +132,14 @@ class CreateProperty(_Pointer):
 
 class CreateLink(_Pointer):
     #: link目标表的关联字段
-    to = struct.Field(type_=str)
+    to = struct.Field(type_=str, default=None)
     #: link源表的关联字段，如果link没有独立表，本字段值将被忽略
     from_ = struct.Field(type_=str, default='id')
 
-    relation = struct.Field(type_=str, default=None)
-    source = struct.Field(type_=str, default=None)
-    target = struct.Field(type_=str, default=None)
-    properties = struct.Field(type_=checked.CheckedList[CreateProperty], default=None)
+    relation: str = struct.Field(type_=str, default=None)
+    source: str = struct.Field(type_=str, default=None)
+    target: str = struct.Field(type_=str, default=None)
+    properties: Sequence[CreateProperty] = struct.Field(type_=checked.CheckedList[CreateProperty], default=None)
 
     def check_kwargs(self, kwargs):
         if props := kwargs.get('properties'):
@@ -154,8 +154,13 @@ class CreateLink(_Pointer):
         return kwargs
 
     def validate_fields(self):
-        if self.type is None:
-            raise ValueError(f"Missing type for link '{self.realname}'.")
+        if self.type is None and self.expr is None:
+            raise ValueError(
+                f'Either type or expr must be specified '
+                f'for link {self.realname!r}.')
+
+        if self.expr is None and self.to is None:
+            raise ValueError("Field 'to' is required for non-computable link.")
 
         if self.has_table:
             missing = []
@@ -181,21 +186,24 @@ class CreateLink(_Pointer):
         return [p.to_ddl() for p in self.properties]
 
     def to_ddl(self, pretty=False):
-        create_link = f"CREATE {self.cardinality.value} LINK {self.realname} -> {self.type}"
-        body = ";\n".join([f"ON {self.from_} TO {self.to}"] + self.lprops)
+        if self.expr is None:
+            create_link = f"CREATE {self.cardinality.value} LINK {self.realname} -> {self.type}"
+            body = ";\n".join([f"ON {self.from_} TO {self.to}"] + self.lprops)
 
-        if pretty:
-            stmt = f"{create_link} {{\n{textwrap.indent(body, '  ')}\n}}"
+            if pretty:
+                stmt = f"{create_link} {{\n{textwrap.indent(body, '  ')}\n}}"
+            else:
+                stmt = f"{create_link} {{{body}}}"
         else:
-            stmt = f"{create_link} {{{body}}}"
+            stmt = f"CREATE LINK {self.realname} := ({self.expr})"
 
         return stmt
 
     @functools.cached_property
     def has_table(self):
         return (
-            self.cardinality.is_multi()
-            or self.properties
+            self.expr is None
+            and (self.cardinality.is_multi() or self.properties)
         )
 
     @functools.cached_property
@@ -227,9 +235,9 @@ class BaseObjectType(_Request):
 
 
 class CreateObjectType(BaseObjectType):
-    relation = struct.Field(type_=str)
-    properties = struct.Field(type_=checked.CheckedList[CreateProperty], default=None)
-    links = struct.Field(type_=checked.CheckedList[CreateLink], default=None)
+    relation: str = struct.Field(type_=str)
+    properties: Sequence[CreateProperty] = struct.Field(type_=checked.CheckedList[CreateProperty], default=None)
+    links: Sequence[CreateLink] = struct.Field(type_=checked.CheckedList[CreateLink], default=None)
 
     @classmethod
     def from_dict(cls, query: Dict):
@@ -247,7 +255,10 @@ class CreateObjectType(BaseObjectType):
         return cls(**upd_query)
 
     def pointers(self):
-        yield from itertools.chain(self.properties, self.links)
+        yield from itertools.chain(
+            sorted(self.properties, key=lambda p: p.expr is not None),
+            sorted(self.links, key=lambda p: p.expr is not None),
+        )
 
     @functools.cached_property
     def view_def(self):
@@ -255,7 +266,6 @@ class CreateObjectType(BaseObjectType):
         return ViewDef(relation=self.relation, columns=columns)
 
     def to_ddl(self, pretty=False):
-        sorted_props = sorted(self.properties, key=lambda p: p.expr is not None)
         body = ';\n'.join(ptr.to_ddl(pretty=pretty) for ptr in self.pointers())
         if pretty:
             stmt = f"CREATE TYPE {self.qualname} {{\n{textwrap.indent(body, '  ')}\n}}"
