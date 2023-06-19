@@ -1273,8 +1273,10 @@ def __infer_group_stmt(
 ) -> qltypes.Cardinality:
     infer_cardinality(ir.subject, scope_tree=scope_tree, ctx=ctx)
     for key, (binding, _) in ir.using.items():
-        binding_card = _infer_singleton_only(
-            binding, scope_tree=scope_tree, ctx=ctx)
+        new_scope = inf_utils.get_set_scope(binding, scope_tree, ctx=ctx)
+        binding_card = infer_cardinality(binding, scope_tree=new_scope, ctx=ctx)
+        # binding_card = _infer_singleton_only(
+        #     binding, scope_tree=scope_tree, ctx=ctx)
         ir.using[key] = binding, binding_card
 
     infer_cardinality(ir.group_binding, scope_tree=scope_tree, ctx=ctx)

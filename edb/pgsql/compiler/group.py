@@ -24,6 +24,7 @@ from typing import *
 from edb.edgeql import ast as qlast
 from edb.edgeql import desugar_group
 from edb.ir import ast as irast
+from edb.ir import typeutils
 from edb.pgsql import ast as pgast
 
 from . import astutils
@@ -256,6 +257,7 @@ def _compile_group(
                 mat_qry = relctx.set_to_array(
                     path_id=stmt.group_binding.path_id,
                     for_group_by=True,
+                    agg_distinct=typeutils.is_object(stmt.group_binding.typeref),
                     query=mat_qry,
                     ctx=matctx)
                 if not mat_qry.target_list[0].name:

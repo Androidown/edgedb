@@ -884,7 +884,8 @@ def maybe_get_scope_stmt(
 
 def set_to_array(
         path_id: irast.PathId, query: pgast.Query, *,
-        for_group_by: bool=False,
+        for_group_by: bool = False,
+        agg_distinct: bool = False,
         ctx: context.CompilerContextLevel) -> pgast.Query:
     """Collapse a set into an array."""
     subrvar = pgast.RangeSubselect(
@@ -950,6 +951,7 @@ def set_to_array(
                                'IS DISTINCT FROM')
             if orig_val.nullable and agg_filter_safe else None
         ),
+        agg_distinct=agg_distinct,
         ser_safe=val.ser_safe,
     )
 
