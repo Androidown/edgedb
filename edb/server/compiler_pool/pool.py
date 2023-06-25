@@ -1133,10 +1133,18 @@ class DebugWorker:
         from . import worker
 
         method = getattr(worker, method_name)
-        r = method(*args)
-        if sync_state is not None:
-            sync_state()
-        return r
+
+        try:
+            r = method(*args)
+            if sync_state is not None:
+                sync_state()
+            return r
+        except state.FailedStateSync:
+            raise
+        except Exception:
+            if sync_state is not None:
+                sync_state()
+            raise
 
     @functools.cached_property
     def identifier(self):
