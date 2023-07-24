@@ -3294,8 +3294,8 @@ class RenameObject(AlterObjectFragment[so.Object_T]):
         context: CommandContext,
     ) -> s_schema.Schema:
         scls = self.scls
-        context.renames[self.classname] = self.new_name
-        context.renamed_objs.add(scls)
+        classname = self.classname
+        new_name = self.new_name
 
         vn = scls.get_verbosename(schema)
         schema = self._propagate_if_expr_refs(
@@ -3305,11 +3305,32 @@ class RenameObject(AlterObjectFragment[so.Object_T]):
             fixer=self._fix_referencing_expr,
         )
 
+        context.renames[classname] = new_name
+        context.renamed_objs.add(scls)
+
+        for root_cmd, cmd, _ in context.affected_finalization.get(self, []):
+            need_fix = False
+
+            for op in root_cmd.ops:
+                if op.classname != classname:
+                    continue
+                need_fix = True
+                op.classname = new_name
+
+            if need_fix:
+                obj = schema.get(cmd.classname)
+                cmd.classname = sn.QualName(
+                    module=new_name.module,
+                    name=sn.get_specialized_name(
+                        obj.get_shortname(schema),
+                        str(new_name))
+                )
+
         if not context.canonical:
             self.set_attribute_value(
                 'name',
-                value=self.new_name,
-                orig_value=self.classname,
+                value=new_name,
+                orig_value=classname,
             )
 
         return super()._alter_begin(schema, context)
