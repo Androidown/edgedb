@@ -3593,10 +3593,14 @@ def _get_cte_source_table(
     *,
     ctx: context.CompilerContextLevel,
     append_parent: bool = True,
-) -> Tuple[pgast.BaseRangeVar, pgast.ColumnRef, pgast.ColumnRef]:
+) -> Tuple[
+    pgast.BaseRangeVar, pgast.ColumnRef,
+    pgast.ColumnRef, Optional[irast.PathId]
+]:
     ptrref = parent_link.rptr.ptrref.real_material_ptr
     stor_info = pg_types.get_ptrref_storage_info(ptrref)
     stmt = ctx.rel
+    ppid = None
 
     if stor_info.table_type == 'ObjectType':
         # store in source
@@ -3609,7 +3613,7 @@ def _get_cte_source_table(
             src_table, source.path_id.extend(ptrref=ptrref), env=ctx.env)
 
         if tgt_ref := ptrref.target_property:
-            pid = source.path_id.extend(ptrref=tgt_ref)
+            ppid = pid = source.path_id.extend(ptrref=tgt_ref)
             id_ref = pathctx.get_rvar_path_value_var(src_table, pid, env=ctx.env)
             stmt.target_list.append(pgast.ResTarget(val=id_ref))
     else:
@@ -3631,7 +3635,7 @@ def _get_cte_source_table(
             pathctx.put_path_value_var(ctx.rel, pid, sp_ref, force=True, env=ctx.env)
 
         if tgt_ref := ptrref.target_property:
-            pid = source.path_id.extend(ptrref=tgt_ref)
+            ppid = pid = source.path_id.extend(ptrref=tgt_ref)
             id_ref = pathctx.get_rvar_path_value_var(main_table, pid, env=ctx.env)
             if pid not in seen:
                 stmt.target_list.append(pgast.ResTarget(val=id_ref))
@@ -3651,7 +3655,10 @@ def _get_cte_source_table(
     stmt.target_list.append(pgast.ResTarget(val=main_id_ref))
     if append_parent:
         stmt.target_list.append(pgast.ResTarget(val=parent_colref, name="parent"))
-    return src_table, cast(pgast.ColumnRef, parent_colref), cast(pgast.ColumnRef, id_ref)
+    return (
+        src_table, cast(pgast.ColumnRef, parent_colref),
+        cast(pgast.ColumnRef, id_ref), ppid
+    )
 
 
 def _process_set_as_root_traverse_function(
@@ -3667,7 +3674,7 @@ def _process_set_as_root_traverse_function(
     inner_id = expr.args[0].expr.path_id
     pathctx.put_path_id_map(ctx.rel, outer_id, inner_id)
 
-    src_table, parent_col, id_col = _get_cte_source_table(
+    src_table, parent_col, id_col, _ = _get_cte_source_table(
         source=expr.args[0].expr,
         parent_link=expr.args[1].expr,
         ctx=ctx, append_parent=False
@@ -3676,7 +3683,7 @@ def _process_set_as_root_traverse_function(
 
     if function_name in ('cal::base', 'cal::ibase'):
         with ctx.subrel() as subctx:
-            sub_src_table, sub_parent_col, sub_id_col = _get_cte_source_table(
+            sub_src_table, sub_parent_col, sub_id_col, _ = _get_cte_source_table(
                 source=expr.args[0].expr,
                 parent_link=expr.args[1].expr,
                 ctx=subctx
@@ -3757,7 +3764,7 @@ def process_set_as_traverse_function(
     with contextlib.ExitStack() as cstack:
         ctx1 = cstack.enter_context(ctx.subrel())
         cte_src_query = ctx1.rel
-        src_table, _, id_col = _get_cte_source_table(
+        src_table, _, id_col, ppid = _get_cte_source_table(
             source=rel_src,
             parent_link=expr.args[1].expr,
             ctx=ctx1
@@ -3815,7 +3822,7 @@ def process_set_as_traverse_function(
 
         ctx3 = cstack.enter_context(ctx2.subrel())
         cte_recur_query = ctx3.rel
-        table_child, child_parent_col, child_id_col = _get_cte_source_table(
+        table_child, child_parent_col, child_id_col, _ = _get_cte_source_table(
             source=expr.args[0].expr,
             parent_link=expr.args[1].expr,
             ctx=ctx3
@@ -3923,10 +3930,19 @@ def process_set_as_traverse_function(
         stmt, relctx.rvar_for_rel(main_query, ctx=ctx),
         ir_set.path_id, ctx=ctx
     )
+    pathctx.put_path_value_var(
+        main_query, ppid,
+        pgast.ColumnRef(name=[id_col.name[-1]]),
+        env=ctx.env)
 
     src_rvar = relctx.new_primitive_rvar(
         rel_src, path_id=ir_set.path_id,
         lateral=True, ctx=ctx)
+
+    src_rvar.query.path_scope.clear()  # we need overwrite default join
+    pathctx.put_rvar_path_bond(
+        src_rvar, ir_set.path_id, ppid, ppid)
+
     relctx.include_rvar(stmt, src_rvar, ir_set.path_id, ctx=ctx)
 
     return new_rvars
