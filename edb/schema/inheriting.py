@@ -921,7 +921,18 @@ class AlterInheritingObjectOrFragment(
         props: Tuple[str, ...],
         mark_propagate: bool = False
     ) -> None:
+        from . import pointers as s_pointers
+
         for descendant in scls.ordered_descendants(schema):
+            if (
+                isinstance(descendant, s_pointers.Pointer)
+                and (
+                    descendant.id in context.currently_altered_computables
+                    or descendant.is_pure_computable(schema))
+            ):
+                # skip pointer alias
+                continue
+
             d_root_cmd, d_alter_cmd, ctx_stack = descendant.init_delta_branch(
                 schema, context, sd.AlterObject)
 

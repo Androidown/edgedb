@@ -1244,6 +1244,7 @@ class CommandContext:
             Command,
             List[Tuple[Command, AlterObject[so.Object], List[str]]],
         ] = collections.defaultdict(list)
+        self.currently_altered_computables = set()
         self.compat_ver = compat_ver
         self.module = module
         self.module_is_implicit = module_is_implicit
@@ -2080,6 +2081,8 @@ class ObjectCommand(Command, Generic[so.Object_T]):
                             inherited=ref.field_is_inherited(schema, fn),
                             computed=ref.field_is_computed(schema, fn),
                         )
+                        if fn == 'expr' and value is not None:
+                            context.currently_altered_computables.add(ref.id)
 
                     context.affected_finalization[self].append(
                         (delta_create, cmd_create, this_ref_desc)
