@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import logging
+import os.path
 from typing import *
 
 import collections
@@ -2570,6 +2571,22 @@ class Compiler:
         database_config: immutables.Map[str, config.SettingValue],
         protocol_version: Tuple[int, int],
     ) -> DumpDescriptor:
+        included_modules = None
+        dump_modules = '/edgedb/edgedb/dump_modules.txt'
+        if os.path.isfile(dump_modules):
+            with open(dump_modules, 'r') as fp:
+                included_modules = [s_name.UnqualName(name=mod) for mod in eval(fp.read())] or None
+
+            if included_modules:
+                current_modules = {mod.get_name(user_schema) for mod in user_schema.get_modules()}
+                if not set(included_modules).issubset(current_modules):
+                    raise errors.SchemaError(
+                        f'dump including modules contains unknown modules,'
+                        f'current modules: {current_modules}'
+                    )
+
+        logger.info(f'dump including modules : {included_modules}')
+
         schema = s_schema.ChainedSchema(
             self._std_schema,
             user_schema,
@@ -2579,12 +2596,14 @@ class Compiler:
         config_ddl = config.to_edgeql(config.get_settings(), database_config)
 
         schema_ddl = s_ddl.ddl_text_from_schema(
-            schema, include_migrations=True
+            schema, include_migrations=True,
+            included_modules=included_modules,
         )
 
         all_objects = schema.get_objects(
             exclude_stdlib=True,
             exclude_global=True,
+            included_modules=included_modules,
         )
         ids = []
         sequences = []
@@ -2606,7 +2625,8 @@ class Compiler:
         objtypes = schema.get_objects(
             type=s_objtypes.ObjectType,
             exclude_stdlib=True,
-            extra_filters=[lambda s, o: not o.get_external(s)]
+            extra_filters=[lambda s, o: not o.get_external(s)],
+            included_modules=included_modules
         )
         descriptors = []
 
@@ -2628,7 +2648,8 @@ class Compiler:
 
         external_ids = []
         for obj in schema.get_objects(
-            extra_filters=[lambda s, o: o.get_external(s) and (pg_delta.has_table(o, s))]
+            extra_filters=[lambda s, o: o.get_external(s) and (pg_delta.has_table(o, s))],
+            included_modules=included_modules
         ):
             if isinstance(obj, s_links.Link):
                 external_ids.append(

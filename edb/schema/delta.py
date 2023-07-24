@@ -3311,6 +3311,11 @@ class RenameObject(AlterObjectFragment[so.Object_T]):
                 value=self.new_name,
                 orig_value=self.classname,
             )
+            self.set_attribute_value(
+                'module_name',
+                value=self.new_name.module,
+                orig_value=self.classname.module
+            )
 
         return super()._alter_begin(schema, context)
 
