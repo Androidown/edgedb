@@ -15,11 +15,18 @@ def as_dict(self=None) -> Dict:
             continue
         if isinstance(v, list):
             payload[k] = [e.as_dict() for e in v]
-        elif isinstance(v, (PropertyDetail, LinkDetail,)):
+        elif isinstance(v, (PropertyDetail, LinkDetail, Annotation)):
             payload[k] = v.as_dict()
         else:
             payload[k] = v
     return payload
+
+
+class Annotation(NamedTuple):
+    name: str
+    value: str = None
+
+    as_dict = as_dict
 
 
 class PropertyDetail(NamedTuple):
@@ -30,6 +37,7 @@ class PropertyDetail(NamedTuple):
     required: bool = None
     expr: str = None
     exclusive: bool = None
+    annotations: List[Annotation] = None
 
     as_dict = as_dict
 
@@ -47,6 +55,7 @@ class LinkDetail(NamedTuple):
     source: str = None
     target: str = None
     properties: List[PropertyDetail] = None
+    annotations: List[Annotation] = None
 
     as_dict = as_dict
 
@@ -57,12 +66,13 @@ class CreateTypeBody(NamedTuple):
     relation: str
     properties: List[PropertyDetail] = None
     links: List[LinkDetail] = None
+    annotations: List[Annotation] = None
 
     as_dict = as_dict
 
 
 RE_CASE = re.compile(
-    'test\_link\_(?P<from_>[a-z]*)\_(?P<to_>[a-z]*)(?:\_(?P<link_type>[a-z]*)\_link)?(?:\_(?P<with_prop>[a-z\_]*))?'
+    'test\_link\_(?P<from_>[a-z]*)\_(?P<to_>[a-z]*)(?:\_(?P<link_type>[a-z]*)\_link)?(?:\_(?P<with_prop>with\_prop))?'
 )
 
 
@@ -781,6 +791,80 @@ class HttpCreateTypeMixin:
                 '''
             )
 
+    async def link_outer_inner_multi_link_with_prop_check_annotations(self):
+        await self.assert_query_result(
+            r'''
+            with module schema
+            select ObjectType {
+                name,
+                links: {
+                    name,
+                    properties: { name, annotations: {name, value := @value} } 
+                                filter .name not in {'source', 'target'}
+                                order by .name,
+                } filter .name != '__type__',
+                properties: {
+                    name,
+                    annotations: {name, value := @value}
+                } filter .name != 'id'
+                  order by .name,
+                annotations: {name, value := @value} order by .name,
+                external
+            }
+            filter .name = 'default::Facility'
+            ''',
+            [
+                {
+                    'name': 'default::Facility',
+                    'links': [
+                        {
+                            'name': 'bookedby',
+                            'properties': [
+                                {'name': 'slots', 'annotations': []},
+                                {'name': 'start_at',
+                                 'annotations': [{'name': 'std::description', 'value': 'start time for booking'}]},
+                            ]
+                        }
+                    ],
+                    'properties': [
+                        {
+                            'name': 'discount',
+                            'annotations': []
+                        },
+                        {
+                            'name': 'fid',
+                            'annotations': [
+                                {'name': 'std::description', 'value': 'facid from Facility'}
+                            ]
+                        },
+                        {
+                            'name': 'guest_cost',
+                            'annotations': [
+                                {'name': 'std::description', 'value': 'guestcost from Facility'}
+                            ]
+                        },
+                        {
+                            'name': 'member_cost',
+                            'annotations': [
+                                {'name': 'std::description', 'value': 'membercost from Facility'}
+                            ]
+                        },
+                        {
+                            'name': 'name',
+                            'annotations': [
+                                {'name': 'std::description', 'value': 'name from Facility'}
+                            ]
+                        },
+                    ],
+                    'annotations': [
+                        {'name': 'std::description', 'value': 'Facility type from outter'},
+                        {'name': 'std::title', 'value': 'Facility(external)'},
+                    ],
+                    'external': True
+                }
+            ]
+        )
+
 
 class TestHttpCreateType(http_tb.ExternTestCase, HttpCreateTypeMixin):
     SCHEMA = os.path.join(
@@ -875,13 +959,19 @@ class TestHttpCreateType(http_tb.ExternTestCase, HttpCreateTypeMixin):
                         PropertyDetail(
                             name="starttime",
                             type="timestamp",
-                            alias="start_at"
+                            alias="start_at",
+                            annotations=[
+                                Annotation(name='description', value='start time for booking')
+                            ]
                         ),
                         PropertyDetail(
                             name="slots",
                             type="int4"
                         )
                     ] if has_link_prop else None,
+                    annotations=[
+                        Annotation(name='description', value='booked by link with link prop')
+                    ]
                 ),
             ]
         else:
@@ -890,10 +980,16 @@ class TestHttpCreateType(http_tb.ExternTestCase, HttpCreateTypeMixin):
                     name="booked_by",
                     type=link_to,
                     to="mid",
+                    annotations=[
+                        Annotation(name='description', value='booked by link')
+                    ]
                 ),
                 LinkDetail(
                     name="comp_booked_by",
                     expr=f"SELECT {link_to} filter .mid = __source__.fid",
+                    annotations=[
+                        Annotation(name='description', value='booked by computable link')
+                    ]
                 )
             ]
 
@@ -908,27 +1004,46 @@ class TestHttpCreateType(http_tb.ExternTestCase, HttpCreateTypeMixin):
                         type="int4",
                         alias="fid",
                         exclusive=True,
+                        annotations=[
+                            Annotation(name='description', value='facid from Facility')
+                        ]
                     ),
                     PropertyDetail(
                         name="membercost",
                         type="numeric",
-                        alias="member_cost"
+                        alias="member_cost",
+                        annotations=[
+                            Annotation(name='description', value='membercost from Facility')
+                        ]
                     ),
                     PropertyDetail(
                         name="name",
-                        type="str"
+                        type="str",
+                        annotations=[
+                            Annotation(name='description', value='name from Facility')
+                        ]
                     ),
                     PropertyDetail(
                         name="guestcost",
                         type="numeric",
-                        alias="guest_cost"
+                        alias="guest_cost",
+                        annotations=[
+                            Annotation(name='description', value='guestcost from Facility')
+                        ]
                     ),
                     PropertyDetail(
                         name="discount",
-                        expr=".member_cost / .guest_cost"
+                        expr=".member_cost / .guest_cost",
+                        annotations=[
+                            Annotation(name='description', value='discount from Facility')
+                        ]
                     )
                 ],
-                links=link_detail
+                links=link_detail,
+                annotations=[
+                    Annotation(name='description', value='Facility type from outter'),
+                    Annotation(name='title', value='Facility(external)')
+                ]
             )
         )
 
@@ -1005,6 +1120,9 @@ class TestHttpCreateType(http_tb.ExternTestCase, HttpCreateTypeMixin):
     async def test_link_inner_outer_multi_link_on_source_delete(self):
         await self.link_inner_outer_multi_link_on_source_delete()
 
+    async def test_link_outer_inner_multi_link_with_prop_check_annotations(self):
+        await self.link_outer_inner_multi_link_with_prop_check_annotations()
+
     async def test_dml_reject(self):
         await self.dml_reject()
 
@@ -1069,6 +1187,12 @@ class TestHttpCreateTypeDumpRestore(TestHttpCreateType, server_tb.StableDumpTest
             restore_db_prepare=self.prepare
         )
         self.new_outter_type.remove("NameList")
+
+    async def test_link_outer_inner_multi_link_with_prop_check_annotations(self):
+        await self.check_dump_restore(
+            check_method=HttpCreateTypeMixin.link_outer_inner_multi_link_with_prop_check_annotations,
+            restore_db_prepare=self.prepare
+        )
 
     async def test_dml_reject(self):
         await self.check_dump_restore(

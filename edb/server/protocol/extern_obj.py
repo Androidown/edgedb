@@ -73,6 +73,16 @@ class _Request(struct.RTStruct, use_slots=False):
         pass
 
 
+class CreateAnnotation(_Request):
+    #: Annotation名称，应为已有Annotation类
+    name: str = struct.Field(type_=str)
+    #: 声明值
+    value: str = struct.Field(type_=str)
+
+    def to_ddl(self, pretty=False):
+        return f"CREATE ANNOTATION {self.name} := {self.value!r}"
+
+
 class _Pointer(_Request):
     #: 外部表的列名
     name: str = struct.Field(type_=str)
@@ -86,6 +96,15 @@ class _Pointer(_Request):
     cardinality: Cardinality = struct.Field(type_=Cardinality, default=Cardinality.single, coerce=True)
     #: 是否必须
     required: bool = struct.Field(type_=bool, default=False)
+    #: 声明
+    annotations: Sequence[CreateAnnotation] = struct.Field(type_=checked.CheckedList[CreateAnnotation], default=None)
+
+    def check_kwargs(self, kwargs):
+        if annotations := kwargs.get('annotations'):
+            kwargs['annotations'] = checked.CheckedList[CreateAnnotation](
+                CreateAnnotation(**anno) for anno in annotations
+            )
+        return kwargs
 
     @functools.cached_property
     def column_def(self) -> Dict[str, str]:
@@ -94,6 +113,12 @@ class _Pointer(_Request):
     @functools.cached_property
     def realname(self) -> str:
         return self.alias or self.name
+
+    @functools.cached_property
+    def annotation(self) -> List[str]:
+        if self.annotations:
+            return [anno.to_ddl() for anno in self.annotations]
+        return []
 
 
 class CreateProperty(_Pointer):
@@ -118,16 +143,18 @@ class CreateProperty(_Pointer):
         if self.cardinality.is_multi():
             raise ValueError('Multi property is not yet suppported.')
 
-        if self.expr is None:
-            req = ' required ' if self.required else ' '
-            stmt = f"CREATE{req}PROPERTY {self.realname} -> {self.edb_type}"
+        if self.expr:
+            return f"CREATE PROPERTY {self.realname} := {self.expr}"
 
-            if self.exclusive:
-                stmt += "{ create constraint exclusive }"
+        subcommands = list(self.annotation)
+        req = ' required ' if self.required else ' '
+        stmt = f"CREATE{req}PROPERTY {self.realname} -> {self.edb_type}"
 
-        else:
-            stmt = f"CREATE PROPERTY {self.realname} := {self.expr}"
-        return stmt
+        if self.exclusive:
+            subcommands.append("create constraint exclusive")
+
+        body = ";\n".join(subcommands)
+        return stmt + f"{{{body}}}"
 
 
 class CreateLink(_Pointer):
@@ -142,6 +169,7 @@ class CreateLink(_Pointer):
     properties: Sequence[CreateProperty] = struct.Field(type_=checked.CheckedList[CreateProperty], default=None)
 
     def check_kwargs(self, kwargs):
+        kwargs = super().check_kwargs(kwargs)
         if props := kwargs.get('properties'):
             kwargs['properties'] = checked.CheckedList[CreateProperty](
                 CreateProperty(**p) for p in props)
@@ -186,18 +214,20 @@ class CreateLink(_Pointer):
         return [p.to_ddl() for p in self.properties]
 
     def to_ddl(self, pretty=False):
-        if self.expr is None:
-            create_link = f"CREATE {self.cardinality.value} LINK {self.realname} -> {self.type}"
-            body = ";\n".join([f"ON {self.from_} TO {self.to}"] + self.lprops)
+        if self.expr:
+            return f"CREATE LINK {self.realname} := ({self.expr})"
 
-            if pretty:
-                stmt = f"{create_link} {{\n{textwrap.indent(body, '  ')}\n}}"
-            else:
-                stmt = f"{create_link} {{{body}}}"
-        else:
-            stmt = f"CREATE LINK {self.realname} := ({self.expr})"
+        subcommands = list(self.annotation)
+        stmt = f"CREATE {self.cardinality.value} LINK {self.realname} -> {self.type}"
+        subcommands.append(f"ON {self.from_} TO {self.to}")
+        subcommands.extend(self.lprops)
 
-        return stmt
+        body = ";\n".join(subcommands)
+
+        if pretty:
+            return stmt + f"{{\n{textwrap.indent(body, '  ')}\n}}"
+
+        return stmt + f"{{{body}}}"
 
     @functools.cached_property
     def has_table(self):
@@ -238,6 +268,7 @@ class CreateObjectType(BaseObjectType):
     relation: str = struct.Field(type_=str)
     properties: Sequence[CreateProperty] = struct.Field(type_=checked.CheckedList[CreateProperty], default=None)
     links: Sequence[CreateLink] = struct.Field(type_=checked.CheckedList[CreateLink], default=None)
+    annotations: Sequence[CreateAnnotation] = struct.Field(type_=checked.CheckedList[CreateAnnotation], default=None)
 
     @classmethod
     def from_dict(cls, query: Dict):
@@ -251,7 +282,12 @@ class CreateObjectType(BaseObjectType):
             query.get('links', [])
         )
 
-        upd_query = {**query, "properties": props, "links": links}
+        annotations = checked.CheckedList[CreateAnnotation](
+            CreateAnnotation(**anno) for anno in
+            query.get('annotations', [])
+        )
+
+        upd_query = {**query, "properties": props, "links": links, "annotations": annotations}
         return cls(**upd_query)
 
     def pointers(self):
@@ -265,8 +301,14 @@ class CreateObjectType(BaseObjectType):
         columns = {k: v for ptr in self.pointers() for k, v in ptr.column_def.items()}
         return ViewDef(relation=self.relation, columns=columns)
 
+    @functools.cached_property
+    def annotation(self) -> List[str]:
+        if self.annotations:
+            return [anno.to_ddl() for anno in self.annotations]
+        return []
+
     def to_ddl(self, pretty=False):
-        body = ';\n'.join(ptr.to_ddl(pretty=pretty) for ptr in self.pointers())
+        body = ';\n'.join([ptr.to_ddl(pretty=pretty) for ptr in self.pointers()] + self.annotation)
         if pretty:
             stmt = f"CREATE TYPE {self.qualname} {{\n{textwrap.indent(body, '  ')}\n}}"
         else:
