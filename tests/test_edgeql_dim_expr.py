@@ -901,9 +901,10 @@ class TestDimExpr(tb.QueryTestCase):
             r"""
                 SELECT Graph {
                     name,
-                    bases := array_agg(cal::base(
-                        (select Graph filter .name = .name)
-                    ).name)
+                    bases := array_agg(
+                        (select cal::base((select Graph filter .name = .name))
+                         order by .name).name
+                    )
                 }
                 ORDER BY .name;
             """,
