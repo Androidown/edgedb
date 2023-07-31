@@ -1707,11 +1707,18 @@ def process_link_update(
 
     if not is_insert and shape_op is not qlast.ShapeOp.APPEND:
 
-        source_ref = pathctx.get_rvar_path_identity_var(
-            dml_cte_rvar,
-            ir_stmt.subject.path_id,
-            env=ctx.env,
-        )
+        if src_prop := mptrref.source_property:
+            source_ref = pathctx.get_rvar_path_value_var(
+                dml_cte_rvar,
+                ir_stmt.subject.path_id.extend(ptrref=src_prop),
+                env=ctx.env,
+            )
+        else:
+            source_ref = pathctx.get_rvar_path_identity_var(
+                dml_cte_rvar,
+                ir_stmt.subject.path_id,
+                env=ctx.env,
+            )
 
         if shape_op is qlast.ShapeOp.SUBTRACT:
             data_rvar = relctx.rvar_for_rel(data_select, ctx=ctx)
